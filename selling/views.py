@@ -32,6 +32,27 @@ def parse_date_safe(val):
     return timezone.now().date()
 
 
+def _resolve_request_user(request):
+    if getattr(request, 'user', None) and request.user.is_authenticated:
+        return request.user
+    raw_req = getattr(request, '_request', None)
+    if raw_req and getattr(raw_req, 'user', None) and raw_req.user.is_authenticated:
+        return raw_req.user
+    from django.contrib.auth import get_user_model
+    UserModel = get_user_model()
+    user_id = request.headers.get('X-User-ID') or request.GET.get('user_id')
+    username = request.headers.get('X-Username')
+    if user_id:
+        u = UserModel.objects.filter(id=user_id).first()
+        if u:
+            return u
+    if username:
+        u = UserModel.objects.filter(username=username).first()
+        if u:
+            return u
+    return None
+
+
 def get_request_company(request):
     comp_id = (
         request.GET.get('company_id')
@@ -261,7 +282,7 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
         if grand_total == 0 and net_total > 0:
             grand_total = net_total + tax_amount
 
-        user = request.user if request.user.is_authenticated else None
+        user = _resolve_request_user(request)
 
         validate_sales_invoice_stock(data.get('items', []), comp.id if comp else None)
 
@@ -324,6 +345,17 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
         new_status = str(getattr(invoice, 'status', '')).strip().lower()
         if old_status != 'approved' and new_status == 'approved':
             approve_and_post_sales_invoice(invoice)
+            from django.utils import timezone
+            approver = _resolve_request_user(self.request)
+            uf = []
+            if hasattr(invoice, 'approved_by') and approver and not invoice.approved_by_id:
+                invoice.approved_by = approver
+                uf.append('approved_by')
+            if hasattr(invoice, 'approval_date') and not invoice.approval_date:
+                invoice.approval_date = timezone.now()
+                uf.append('approval_date')
+            if uf:
+                invoice.save(update_fields=uf)
 
     def perform_destroy(self, instance):
         reverse_sales_invoice_on_delete(instance)
@@ -360,7 +392,18 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
 
 class SalesInvoiceApproveAPIView(APIView):
     def post(self, request, pk):
+        from django.utils import timezone
         from selling.models import SalesInvoice
         invoice = get_object_or_404(SalesInvoice, pk=pk)
         approve_and_post_sales_invoice(invoice)
+        approver = _resolve_request_user(request)
+        update_fields = []
+        if hasattr(invoice, 'approved_by') and approver and not invoice.approved_by_id:
+            invoice.approved_by = approver
+            update_fields.append('approved_by')
+        if hasattr(invoice, 'approval_date') and not invoice.approval_date:
+            invoice.approval_date = timezone.now()
+            update_fields.append('approval_date')
+        if update_fields:
+            invoice.save(update_fields=update_fields)
         return Response({'status': 'Approved', 'id': invoice.id})

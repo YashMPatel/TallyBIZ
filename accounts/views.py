@@ -553,11 +553,43 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
         dtype = str(doc_type).strip().lower()
 
         try:
+            def _stamp_approval_audit(doc):
+                from django.utils import timezone
+                from django.contrib.auth import get_user_model
+                UserModel = get_user_model()
+                approver = None
+                if getattr(request, 'user', None) and request.user.is_authenticated:
+                    approver = request.user
+                else:
+                    uid = (
+                        request.headers.get('X-User-ID')
+                        or request.META.get('HTTP_X_USER_ID')
+                        or request.GET.get('user_id')
+                    )
+                    uname = (
+                        request.headers.get('X-Username')
+                        or request.META.get('HTTP_X_USERNAME')
+                    )
+                    if uid:
+                        approver = UserModel.objects.filter(id=uid).first()
+                    if not approver and uname:
+                        approver = UserModel.objects.filter(username=uname).first()
+                uf = []
+                if hasattr(doc, 'approved_by') and approver:
+                    doc.approved_by = approver
+                    uf.append('approved_by')
+                if hasattr(doc, 'approval_date'):
+                    doc.approval_date = timezone.now()
+                    uf.append('approval_date')
+                if uf:
+                    doc.save(update_fields=uf)
+
             if dtype in ('sales-invoice', 'sales_invoice', 'invoice'):
                 from selling.models import SalesInvoice
                 inv = _get_obj_404(SalesInvoice, pk=pk)
                 if action == 'approve':
                     approve_and_post_sales_invoice(inv)
+                    _stamp_approval_audit(inv)
                     return _ApprovalResponse({'status': 'Approved', 'id': inv.id})
                 elif action == 'reject':
                     reverse_sales_invoice_on_delete(inv)
@@ -572,6 +604,7 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
                     bill.status = 'Approved'
                     bill.save(update_fields=['status'])
                     sync_purchase_invoice(bill)
+                    _stamp_approval_audit(bill)
                     return _ApprovalResponse({'status': 'Approved', 'id': bill.id})
                 elif action == 'reject':
                     reverse_purchase_invoice_on_delete(bill)
