@@ -5,14 +5,16 @@ import type { FinancialStatements } from '../types/erp';
 interface FinancialReportPrintModalProps {
   finance: FinancialStatements | null;
   onClose: () => void;
+  companyName?: string;
+  company?: any;
 }
 
 export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps> = ({
   finance,
   onClose,
+  companyName = 'Company Financial Statements',
+  company,
 }) => {
-  // Hooks must run unconditionally, so the effect is declared before the
-  // null-guard below.
   const targetFileName = `Financial_Statements_${new Date().toISOString().split('T')[0]}`;
 
   useEffect(() => {
@@ -28,6 +30,8 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
   const handlePrint = () => {
     window.print();
   };
+
+  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
 
   return (
     <div
@@ -158,11 +162,14 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
             <div>
               <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
-                TallyBIZ ENTERPRISE
+                {company?.name || companyName}
               </h1>
               <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-                SG Highway, Ahmedabad, Gujarat - 380054<br />
-                GSTIN: <strong>24ABCDE1234F1Z5</strong> | State: Gujarat (24)
+                {company?.address || ''}<br />
+                {company?.gstin ? (
+                  <>GSTIN / Tax ID: <strong>{company.gstin}</strong></>
+                ) : null}
+                {company?.state ? <> | State: {company.state}</> : null}
               </p>
             </div>
             <div style={{ textAlign: 'right' }}>
@@ -184,16 +191,16 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
               <tbody>
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <td style={{ padding: '8px 0' }}>Revenue from Sales (Net Sales Turnover)</td>
-                  <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600' }}>Rs. {finance.income.sales.toFixed(2)}</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {finance.income.sales.toFixed(2)}</td>
                 </tr>
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <td style={{ padding: '8px 0', color: '#b91c1c' }}>Less: Cost of Goods Procured (Net Purchases)</td>
-                  <td style={{ padding: '8px 0', textAlign: 'right', color: '#b91c1c', fontWeight: '600' }}>- Rs. {finance.expense.purchases.toFixed(2)}</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right', color: '#b91c1c', fontWeight: '600' }}>- {sym} {finance.expense.purchases.toFixed(2)}</td>
                 </tr>
                 <tr style={{ background: '#f8fafc', fontWeight: 'bold', fontSize: '14px' }}>
                   <td style={{ padding: '10px 0' }}>Gross Operating Profit / (Loss)</td>
                   <td style={{ padding: '10px 0', textAlign: 'right', color: finance.profit.gross_profit >= 0 ? '#15803d' : '#b91c1c' }}>
-                    Rs. {finance.profit.gross_profit.toFixed(2)}
+                    {sym} {finance.profit.gross_profit.toFixed(2)}
                   </td>
                 </tr>
               </tbody>
@@ -209,16 +216,16 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
               <tbody>
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <td style={{ padding: '8px 0' }}>Output GST Collected (Tax Liability on Sales)</td>
-                  <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600' }}>Rs. {finance.gst.output_liability.toFixed(2)}</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {finance.gst.output_liability.toFixed(2)}</td>
                 </tr>
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <td style={{ padding: '8px 0', color: '#15803d' }}>Less: Input Tax Credit Available (GST Paid on Purchases)</td>
-                  <td style={{ padding: '8px 0', textAlign: 'right', color: '#15803d', fontWeight: '600' }}>- Rs. {finance.gst.input_itc.toFixed(2)}</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right', color: '#15803d', fontWeight: '600' }}>- {sym} {finance.gst.input_itc.toFixed(2)}</td>
                 </tr>
                 <tr style={{ background: '#f8fafc', fontWeight: 'bold', fontSize: '14px' }}>
                   <td style={{ padding: '10px 0' }}>{finance.gst.net_payable > 0 ? 'Net GST Payable to Government' : 'Eligible ITC Refund / Carry Forward'}</td>
                   <td style={{ padding: '10px 0', textAlign: 'right', color: finance.gst.net_payable > 0 ? '#b91c1c' : '#0284c7' }}>
-                    Rs. {Math.abs(finance.gst.net_payable).toFixed(2)}
+                    {sym} {Math.abs(finance.gst.net_payable).toFixed(2)}
                   </td>
                 </tr>
               </tbody>
@@ -234,26 +241,26 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
               <div>
                 <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Current Assets</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e2e8f0', fontSize: '13px' }}>
-                  <span>Bank & Cash Balances:</span><strong>Rs. {finance.balance_sheet.assets.bank_cash.toFixed(2)}</strong>
+                  <span>Bank & Cash Balances:</span><strong>{sym} {finance.balance_sheet.assets.bank_cash.toFixed(2)}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e2e8f0', fontSize: '13px' }}>
-                  <span>Sundry Debtors (Receivables):</span><strong>Rs. {finance.balance_sheet.assets.debtors_receivable.toFixed(2)}</strong>
+                  <span>Sundry Debtors (Receivables):</span><strong>{sym} {finance.balance_sheet.assets.debtors_receivable.toFixed(2)}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', fontWeight: 'bold', fontSize: '14px', color: '#0369a1' }}>
-                  <span>Total Assets:</span><span>Rs. {finance.balance_sheet.assets.total_assets.toFixed(2)}</span>
+                  <span>Total Assets:</span><span>{sym} {finance.balance_sheet.assets.total_assets.toFixed(2)}</span>
                 </div>
               </div>
 
               <div>
                 <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#64748b', textTransform: 'uppercase' }}>Current Liabilities</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e2e8f0', fontSize: '13px' }}>
-                  <span>Sundry Creditors (Payables):</span><strong>Rs. {finance.balance_sheet.liabilities.creditors_payable.toFixed(2)}</strong>
+                  <span>Sundry Creditors (Payables):</span><strong>{sym} {finance.balance_sheet.liabilities.creditors_payable.toFixed(2)}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e2e8f0', fontSize: '13px' }}>
-                  <span>GST Tax Payable:</span><strong>Rs. {finance.balance_sheet.liabilities.gst_payable.toFixed(2)}</strong>
+                  <span>GST Tax Payable:</span><strong>{sym} {finance.balance_sheet.liabilities.gst_payable.toFixed(2)}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', fontWeight: 'bold', fontSize: '14px', color: '#b91c1c' }}>
-                  <span>Total Liabilities:</span><span>Rs. {finance.balance_sheet.liabilities.total_liabilities.toFixed(2)}</span>
+                  <span>Total Liabilities:</span><span>{sym} {finance.balance_sheet.liabilities.total_liabilities.toFixed(2)}</span>
                 </div>
               </div>
             </div>
@@ -267,7 +274,7 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
               </span>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, TallyBIZ Enterprise</p>
+              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, {company?.name || companyName}</p>
               <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px' }}>
                 Managing Director / Partner
               </span>

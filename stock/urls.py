@@ -1,5 +1,9 @@
 from django.urls import path
-from .views import ItemListCreateAPIView, ItemRetrieveUpdateDestroyAPIView, StockLedgerAPIView
+from .views import (
+    ItemListCreateAPIView,
+    ItemRetrieveUpdateDestroyAPIView,
+    StockLedgerAPIView
+)
 
 urlpatterns = [
     path('items/', ItemListCreateAPIView.as_view(), name='item-list-create'),

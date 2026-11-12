@@ -21,19 +21,21 @@ export const CustomersTab: FC<CustomersTabProps> = ({
   setCustomerForm,
   setShowCustomerModal,
 }) => {
+  const symbol = localStorage.getItem('active_company_symbol') || '₹';
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Customers</h1>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer registry & party master</p>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Client accounts, contact directories & GST status</p>
         </div>
         <button
           onClick={() => {
             setEditingId(null);
             setCustomerForm({
               customer_name: '',
-              customer_type: 'Company',
+              customer_type: 'Individual',
               gst_category: 'Unregistered',
               gstin: '',
               email: '',
@@ -52,24 +54,24 @@ export const CustomersTab: FC<CustomersTabProps> = ({
       {/* Total Receivables Summary Card */}
       <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
         <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Receivables (Debtors)</span>
-        <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0369a1' }}>
-          Rs. {partyOutstanding.total_receivable.toFixed(2)}
+        <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#0284c7' }}>
+          {symbol} {partyOutstanding.total_receivable.toFixed(2)}
         </h3>
       </div>
 
       <DataTable<Customer>
         columns={[
           { header: 'Customer Name', accessor: 'customer_name' },
-          { header: 'Type', accessor: 'customer_type' },
           { header: 'GSTIN', accessor: r => r.gstin || '-' },
+          { header: 'GST Category', accessor: 'gst_category' },
           { header: 'City', accessor: r => r.city || '-' },
           {
-            header: 'Outstanding Balance',
+            header: `Outstanding Balance (${symbol})`,
             accessor: (row) => {
               const bal = partyOutstanding.customers[row.customer_name] || 0;
               return (
-                <strong style={{ color: bal > 0 ? '#b91c1c' : '#15803d' }}>
-                  Rs. {bal.toFixed(2)} {bal > 0 ? 'Dr' : ''}
+                <strong style={{ color: bal > 0 ? '#0284c7' : '#64748b' }}>
+                  {symbol} {bal.toFixed(2)} {bal > 0 ? 'Dr' : ''}
                 </strong>
               );
             }
@@ -91,7 +93,7 @@ export const CustomersTab: FC<CustomersTabProps> = ({
           }
         ]}
         data={customers}
-        emptyMessage="No customers yet."
+        emptyMessage="No customers registered yet."
       />
     </div>
   );

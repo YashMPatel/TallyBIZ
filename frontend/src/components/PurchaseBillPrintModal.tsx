@@ -7,6 +7,7 @@ interface PurchaseBillPrintModalProps {
   bill: PurchaseInvoice | null;
   supplier?: Supplier;
   itemsMaster: Item[];
+  company?: any;
   onClose: () => void;
 }
 
@@ -14,10 +15,9 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
   bill,
   supplier,
   itemsMaster,
+  company,
   onClose,
 }) => {
-  // Hooks must run unconditionally, so the effect is declared before the
-  // null-guard below.
   const formattedParty = (bill?.supplier_name || 'Supplier').replace(/[^a-zA-Z0-9]/g, '_');
   const targetFileName = bill ? `PurchaseBill_${bill.bill_number}_${formattedParty}` : '';
 
@@ -54,6 +54,9 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
   const taxTotal = parseFloat(bill.tax_amount.toString()) || 0;
   const grandTotal = parseFloat(bill.grand_total.toString()) || 0;
   const halfTax = taxTotal / 2;
+
+  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
+  const companyStateCode = company?.gstin ? company.gstin.substring(0, 2) : '24';
 
   return (
     <div
@@ -150,7 +153,7 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
               <Printer size={16} /> Print / Save PDF
             </button>
 
-<button
+            <button
               onClick={handleDownloadPDF}
               style={{
                 display: 'flex',
@@ -205,11 +208,15 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
             <div style={{ maxWidth: '60%' }}>
               <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
-                TallyBIZ ENTERPRISE
+                {company?.name || 'TallyBIZ Pvt Ltd'}
               </h1>
               <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-                SG Highway, Ahmedabad, Gujarat - 380054<br />
-                GSTIN: <strong>24ABCDE1234F1Z5</strong> | State: Gujarat (24)<br />
+                {company?.address || ''}<br />
+                {company?.gstin ? (
+                  <>GSTIN / Tax ID: <strong>{company.gstin}</strong></>
+                ) : null}
+                {company?.state ? <> | State: {company.state}</> : null}
+                {(company?.gstin || company?.state) ? <br /> : null}
                 Recipient Branch: Central Warehouse
               </p>
             </div>
@@ -235,7 +242,7 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
             <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
               {supplier?.address && <>{supplier.address}<br /></>}
               {[supplier?.city, supplier?.postal_code].filter(Boolean).join(' - ') || 'Vendor Address Registered'}<br />
-              <strong>GSTIN:</strong> {supplier?.gstin || 'Unregistered'} | <strong>Category:</strong> {supplier?.gst_category || 'Regular Registered'}
+              <strong>GSTIN / Tax ID:</strong> {supplier?.gstin || 'Unregistered'} | <strong>Category:</strong> {supplier?.gst_category || 'Regular Registered'}
             </p>
           </div>
 
@@ -246,9 +253,9 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                 <th style={{ padding: '8px 10px', textAlign: 'left', width: '30px' }}>#</th>
                 <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item Inward Description</th>
                 <th style={{ padding: '8px 10px', textAlign: 'right', width: '60px' }}>Qty</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Cost (Rs.)</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '85px' }}>Cost ({sym})</th>
                 <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '100px' }}>Net Amount (Rs.)</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '105px' }}>Net Amount ({sym})</th>
               </tr>
             </thead>
             <tbody>
@@ -280,7 +287,7 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                         {discPct > 0 ? `${discPct}%` : '-'}
                       </td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600' }}>
-                        Rs. {parseFloat(itemRow.amount.toString()).toFixed(2)}
+                        {sym} {parseFloat(itemRow.amount.toString()).toFixed(2)}
                       </td>
                     </tr>
                   );
@@ -295,39 +302,39 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
 
           {/* Tax Breakdown & Total */}
           {(() => {
-            const isInterState = supplier?.gstin && !supplier.gstin.startsWith('24');
+            const isInterState = supplier?.gstin && !supplier.gstin.startsWith(companyStateCode);
             return (
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
                 <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
                     <span>Subtotal (Net Purchases):</span>
-                    <span>Rs. {netTotal.toFixed(2)}</span>
+                    <span>{sym} {netTotal.toFixed(2)}</span>
                   </div>
                   {isInterState ? (
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
                       <span>Input IGST ITC (18.00%):</span>
-                      <span>Rs. {taxTotal.toFixed(2)}</span>
+                      <span>{sym} {taxTotal.toFixed(2)}</span>
                     </div>
                   ) : (
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
                         <span>Input CGST ITC (9.00%):</span>
-                        <span>Rs. {halfTax.toFixed(2)}</span>
+                        <span>{sym} {halfTax.toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
                         <span>Input SGST ITC (9.00%):</span>
-                        <span>Rs. {halfTax.toFixed(2)}</span>
+                        <span>{sym} {halfTax.toFixed(2)}</span>
                       </div>
                     </>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d', fontWeight: 'bold' }}>
                     <span>Total Input Tax Credit:</span>
-                    <span>Rs. {taxTotal.toFixed(2)}</span>
+                    <span>{sym} {taxTotal.toFixed(2)}</span>
                   </div>
                   <hr style={{ border: 'none', borderTop: '2px solid #0284c7', margin: '4px 0' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
                     <span>Total Amount Payable:</span>
-                    <span style={{ color: '#0284c7' }}>Rs. {grandTotal.toFixed(2)}</span>
+                    <span style={{ color: '#0284c7' }}>{sym} {grandTotal.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -343,7 +350,7 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
               3. Voucher posted to Creditors & Inventory Ledgers.
             </div>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>Warehouse Manager / Accountant</p>
+              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, {company?.name || 'Authorised Signatory'}</p>
               <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px' }}>
                 Verified & Passed By
               </span>

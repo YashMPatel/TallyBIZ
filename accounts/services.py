@@ -5,6 +5,9 @@ from .models import GLEntry
 @transaction.atomic
 def make_gl_entries(gl_map: list):
     """
+    # ગાર્ડ: જો કોઈ એન્ટ્રીમાં status મોકલેલું હોય અને તે 'Approved' ન હોય તો GL એન્ટ્રી અટકાવો
+    if any(row.get('status') and row.get('status') != 'Approved' for row in gl_map):
+        return []
     gl_map list of dicts:
     [
         {

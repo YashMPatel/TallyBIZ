@@ -2,29 +2,17 @@ import type { FC } from 'react';
 import { Printer } from 'lucide-react';
 import { DataTable } from '../DataTable';
 
-interface GSTDataRow {
-  id?: string | number;
-  month: string;
-  sales: number;
-  purchases: number;
-  output_tax: number;
-  input_itc: number;
-  net_gst_payable: number;
-  [key: string]: any;
-}
-
 interface GSTTabProps {
-  gstData: GSTDataRow [];
+  gstData: any[];
   setShowGSTPrintModal: (show: boolean) => void;
 }
 
-export const GSTTab: FC<GSTTabProps> = ({
-  gstData,
-  setShowGSTPrintModal,
-}) => {
-  const totalOutput = gstData.reduce((sum, d: any) => sum + (Number(d.output_gst || d.output_tax) || 0), 0);
-  const totalInput = gstData.reduce((sum, d: any) => sum + (Number(d.input_gst || d.input_itc) || 0), 0);
-  const netPayable = totalOutput - totalInput;
+export const GSTTab: FC<GSTTabProps> = ({ gstData, setShowGSTPrintModal }) => {
+  const symbol = localStorage.getItem('active_company_symbol') || '₹';
+
+  const totalOutput = gstData.reduce((sum, r) => sum + (parseFloat(r.output_gst) || 0), 0);
+  const totalInput = gstData.reduce((sum, r) => sum + (parseFloat(r.input_gst) || 0), 0);
+  const netPayable = Math.max(0, totalOutput - totalInput);
 
   return (
     <div>
@@ -35,46 +23,68 @@ export const GSTTab: FC<GSTTabProps> = ({
         </div>
         <button
           onClick={() => setShowGSTPrintModal(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
         >
           <Printer size={16} /> Print GST Summary
         </button>
       </div>
 
-      {/* GST Summary Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Output GST (Liability)</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>Rs. {totalOutput.toFixed(2)}</h3>
+        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>TOTAL OUTPUT GST (LIABILITY)</span>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
+            {symbol} {totalOutput.toFixed(2)}
+          </h3>
         </div>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Input GST (ITC)</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>Rs. {totalInput.toFixed(2)}</h3>
+        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>TOTAL INPUT GST (ITC)</span>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>
+            {symbol} {totalInput.toFixed(2)}
+          </h3>
         </div>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Net GST {netPayable >= 0 ? 'Payable' : 'Credit Balance'}</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: netPayable >= 0 ? '#b91c1c' : '#0284c7' }}>
-            Rs. {Math.abs(netPayable).toFixed(2)} {netPayable < 0 ? '(ITC Carry Forward)' : ''}
+        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>NET GST PAYABLE</span>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#0369a1' }}>
+            {symbol} {netPayable.toFixed(2)}
           </h3>
         </div>
       </div>
 
-      {/* Monthly Breakdown Table */}
-      <DataTable<GSTDataRow>
+      <DataTable<any>
         columns={[
           { header: 'Month', accessor: 'month' },
-          { header: 'Taxable Sales (Rs.)', accessor: r => `Rs. ${(r.sales || 0).toFixed(2)}` },
-          { header: 'Output GST (Rs.)', accessor: r => <span style={{ color: '#dc2626', fontWeight: '600' }}>Rs. {(r.output_gst || 0).toFixed(2)}</span> },
-          { header: 'Taxable Purchases (Rs.)', accessor: r => `Rs. ${(r.purchases || 0).toFixed(2)}` },
-          { header: 'Input GST / ITC (Rs.)', accessor: r => <span style={{ color: '#15803d', fontWeight: '600' }}>Rs. {(r.input_gst || 0).toFixed(2)}</span> },
           {
-            header: 'Net Payable / (Credit)',
-            accessor: r => (
-              <strong style={{ color: r.net_gst >= 0 ? '#b91c1c' : '#0284c7' }}>
-                Rs. {r.net_gst >= 0 ? r.net_gst.toFixed(2) : `(${Math.abs(r.net_gst).toFixed(2)})`}
+            header: `Taxable Sales (${symbol})`,
+            accessor: (r) => `${symbol} ${Number(r.sales || 0).toFixed(2)}`,
+          },
+          {
+            header: `Output GST (${symbol})`,
+            accessor: (r) => (
+              <span style={{ color: '#dc2626', fontWeight: '600' }}>
+                {symbol} {Number(r.output_gst || 0).toFixed(2)}
+              </span>
+            ),
+          },
+          {
+            header: `Taxable Purchases (${symbol})`,
+            accessor: (r) => `${symbol} ${Number(r.purchases || 0).toFixed(2)}`,
+          },
+          {
+            header: `Input GST / ITC (${symbol})`,
+            accessor: (r) => (
+              <span style={{ color: '#15803d', fontWeight: '600' }}>
+                {symbol} {Number(r.input_gst || 0).toFixed(2)}
+              </span>
+            ),
+          },
+          {
+            header: `Net Payable / (Credit) (${symbol})`,
+            accessor: (r) => (
+              <strong>
+                {symbol} {Number(r.net_gst || 0).toFixed(2)}
               </strong>
-            )
-          }
+            ),
+          },
         ]}
         data={gstData}
         emptyMessage="No GST transaction history available."

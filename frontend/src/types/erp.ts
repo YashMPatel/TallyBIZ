@@ -66,6 +66,7 @@ export interface SalesInvoice {
   tax_amount: number | string;
   grand_total: number | string;
   status: string;
+  rejection_reason?: string;
   items: SalesInvoiceItem[];
   discount_percentage?: number;
   discount_amount?: number;
@@ -90,6 +91,7 @@ export interface PurchaseInvoice {
   tax_amount: number | string;
   grand_total: number | string;
   status: string;
+  rejection_reason?: string;
   items: PurchaseInvoiceItem[];
   discount_percentage?: number;
   discount_amount?: number;

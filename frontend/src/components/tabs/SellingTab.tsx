@@ -14,9 +14,10 @@ import {
 } from '../../utils/erpHelpers';
 
 interface SellingTabProps {
+  user?: any;
   invoices: SalesInvoice[];
   filteredInvoices: SalesInvoice[];
-  customers: Customer[]; // <-- Added
+  customers: Customer[];
   salesStatusMap: Record<number, { status: 'Paid' | 'Partially Paid' | 'Unpaid'; paid: number; balance: number }>;
   dashboardSummary: DashboardSummary;
   gstData: any[];
@@ -30,9 +31,10 @@ interface SellingTabProps {
 }
 
 export const SellingTab: FC<SellingTabProps> = ({
+  user,
   invoices,
   filteredInvoices,
-  customers, // <-- Added
+  customers,
   salesStatusMap,
   dashboardSummary,
   gstData,
@@ -44,6 +46,8 @@ export const SellingTab: FC<SellingTabProps> = ({
   setSelectedInvoiceForPrint,
   handleDeleteInvoice,
 }) => {
+  const symbol = dashboardSummary.currency_symbol || (localStorage.getItem('active_company_symbol') || '₹');
+
   return (
     <div>
       {/* Header Actions */}
@@ -59,11 +63,11 @@ export const SellingTab: FC<SellingTabProps> = ({
                 'Invoice No': inv.invoice_number,
                 'Customer': inv.customer_name,
                 'Date': inv.posting_date,
-                'Net Total (Rs)': inv.net_total,
-                'Tax (Rs)': inv.tax_amount,
-                'Grand Total (Rs)': inv.grand_total,
+                [`Net Total (${symbol})`]: inv.net_total,
+                [`Tax (${symbol})`]: inv.tax_amount,
+                [`Grand Total (${symbol})`]: inv.grand_total,
                 'Payment Status': salesStatusMap[inv.id || 0]?.status || 'Unpaid',
-                'Balance Due (Rs)': (salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total))).toFixed(2)
+                [`Balance Due (${symbol})`]: (salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total))).toFixed(2)
               }));
               exportToCSV(exportData, 'Sales_Invoices');
             }}
@@ -79,7 +83,7 @@ export const SellingTab: FC<SellingTabProps> = ({
                 invoice_number: getNextInvoiceNumber(invoices),
                 customer_id: '',
                 tax_rate: '18',
-                status: 'Submitted',
+                status: 'Draft',
                 lines: [newLine()]
               }));
               setShowInvoiceModal(true);
@@ -95,15 +99,21 @@ export const SellingTab: FC<SellingTabProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
         <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Sales</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#0284c7' }}>Rs. {dashboardSummary.total_sales.toFixed(2)}</h3>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#0284c7' }}>
+            {symbol} {(dashboardSummary.total_sales || 0).toFixed(2)}
+          </h3>
         </div>
         <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Purchases</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>Rs. {dashboardSummary.total_purchases.toFixed(2)}</h3>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
+            {symbol} {(dashboardSummary.total_purchases || 0).toFixed(2)}
+          </h3>
         </div>
         <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Bank Balance</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>Rs. {dashboardSummary.bank_balance.toFixed(2)}</h3>
+          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>
+            {symbol} {(dashboardSummary.bank_balance || 0).toFixed(2)}
+          </h3>
         </div>
       </div>
 
@@ -142,7 +152,7 @@ export const SellingTab: FC<SellingTabProps> = ({
                   Payment Reminder: {overdueInvoices.length} {overdueInvoices.length === 1 ? 'Invoice is' : 'Invoices are'} Overdue!
                 </strong>
                 <p style={{ margin: '2px 0 0 0', color: '#7f1d1d', fontSize: '12px' }}>
-                  Total overdue receivables: <strong>Rs. {totalOverdueAmount.toFixed(2)}</strong> (Parties: {overdueInvoices.map(i => i.customer_name).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}).
+                  Total overdue receivables: <strong>{symbol} {totalOverdueAmount.toFixed(2)}</strong> (Parties: {overdueInvoices.map(i => i.customer_name).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}).
                 </p>
               </div>
             </div>
@@ -203,9 +213,50 @@ export const SellingTab: FC<SellingTabProps> = ({
               );
             }
           },
-          { header: 'Net (Rs.)', accessor: r => `Rs. ${r.net_total}` },
-          { header: 'Tax (Rs.)', accessor: r => `Rs. ${r.tax_amount}` },
-          { header: 'Grand Total (Rs.)', accessor: r => <strong>Rs. {r.grand_total}</strong> },
+          { header: `Net (${symbol})`, accessor: r => `${symbol} ${r.net_total}` },
+          { header: `Tax (${symbol})`, accessor: r => `${symbol} ${r.tax_amount}` },
+          { header: `Grand Total (${symbol})`, accessor: r => <strong>{symbol} {r.grand_total}</strong> },
+          {
+            header: 'Approval Status',
+            accessor: (row) => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <span
+                  style={{
+                    width: 'fit-content',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    background:
+                      row.status === 'Approved' ? '#dcfce7' :
+                      row.status === 'Rejected' ? '#fee2e2' : '#fef3c7',
+                    color:
+                      row.status === 'Approved' ? '#15803d' :
+                      row.status === 'Rejected' ? '#b91c1c' : '#b45309'
+                  }}
+                >
+                  {row.status || 'Draft'}
+                </span>
+
+                {row.status === 'Rejected' && row.rejection_reason && (
+                  <span 
+                    title={row.rejection_reason}
+                    style={{ 
+                      fontSize: '11px', 
+                      color: '#dc2626', 
+                      fontStyle: 'italic',
+                      maxWidth: '150px',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    ⚠️ {row.rejection_reason}
+                  </span>
+                )}
+              </div>
+            )
+          },
           {
             header: 'Payment Status',
             accessor: (row) => {
@@ -221,7 +272,7 @@ export const SellingTab: FC<SellingTabProps> = ({
                   <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', width: 'fit-content' }}>
                     Partially Paid
                   </span>
-                  <span style={{ fontSize: '11px', color: '#64748b' }}>Bal: Rs. {info.balance.toFixed(2)}</span>
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>Bal: {symbol} {info.balance.toFixed(2)}</span>
                 </div>
               );
             }
@@ -229,42 +280,51 @@ export const SellingTab: FC<SellingTabProps> = ({
           {
             header: 'Actions',
             accessor: (row) => (
-              <div style={{ display: 'flex', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <button
                   onClick={() => setSelectedInvoiceForPrint(row)}
                   style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
                 >
                   <Printer size={12} /> Print
                 </button>
-                <button
-                  onClick={() => {
-                    setEditingId(row.id || null);
-                    const matchedCustomer = (customers || []).find(
-                      (c: any) => c.id === row.customer || c.customer_name === row.customer_name
-                    );
-                    const selectedCustId = matchedCustomer ? String(matchedCustomer.id) : (row.customer ? String(row.customer) : '');
 
-                    setInvoiceForm({
-                      invoice_number: row.invoice_number,
-                      customer_id: selectedCustId,
-                      posting_date: row.posting_date,
-                      due_date: (row as any).due_date || row.posting_date,
-                      tax_rate: inferTaxRate(row.net_total, row.tax_amount),
-                      status: row.status || 'Submitted',
-                      lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
-                    });
-                    setShowInvoiceModal(true);
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#475569' }}
-                >
-                  <Edit2 size={12} /> Edit
-                </button>
-                <button
-                  onClick={() => { if (row.id !== undefined) void handleDeleteInvoice(row.id, row.invoice_number); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
-                >
-                  <Trash2 size={12} /> Delete
-                </button>
+                {row.status !== 'Approved' || user?.role === 'ADMIN' ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setEditingId(row.id || null);
+                        const matchedCustomer = (customers || []).find(
+                          (c: any) => c.id === row.customer || c.customer_name === row.customer_name
+                        );
+                        const selectedCustId = matchedCustomer ? String(matchedCustomer.id) : (row.customer ? String(row.customer) : '');
+
+                        setInvoiceForm({
+                          invoice_number: row.invoice_number,
+                          customer_id: selectedCustId,
+                          posting_date: row.posting_date,
+                          due_date: (row as any).due_date || row.posting_date,
+                          tax_rate: inferTaxRate(row.net_total, row.tax_amount),
+                          status: row.status || 'Draft',
+                          lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
+                        });
+                        setShowInvoiceModal(true);
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#475569' }}
+                    >
+                      <Edit2 size={12} /> Edit
+                    </button>
+                    <button
+                      onClick={() => { if (row.id !== undefined) void handleDeleteInvoice(row.id, row.invoice_number); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
+                    >
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  </>
+                ) : (
+                  <span style={{ fontSize: '11px', color: '#10b981', fontWeight: '600', padding: '3px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '4px' }}>
+                    🔒 Locked
+                  </span>
+                )}
               </div>
             )
           }

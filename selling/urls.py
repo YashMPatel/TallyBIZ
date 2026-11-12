@@ -1,3 +1,4 @@
+from selling.views import SalesInvoiceApproveAPIView
 from django.urls import path
 from .views import (
     CreditNoteListCreateAPIView,
@@ -9,6 +10,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('invoices/<int:pk>/approve/', SalesInvoiceApproveAPIView.as_view()),
     path('customers/', CustomerListCreateAPIView.as_view(), name='customer-list-create'),
     path('customers/<int:pk>/', CustomerRetrieveUpdateDestroyAPIView.as_view(), name='customer-detail'),
     path('invoices/', SalesInvoiceListCreateAPIView.as_view(), name='sales-invoice-list-create'),

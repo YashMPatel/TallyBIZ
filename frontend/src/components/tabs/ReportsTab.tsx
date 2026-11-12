@@ -7,7 +7,7 @@ interface ReportsTabProps {
   loading: boolean;
   loadError: string | null;
   setShowFinancePrintModal: (show: boolean) => void;
-  onDrillDown?: (accountName: string) => void;
+  onDrillDown: (accountName: string) => void;
 }
 
 export const ReportsTab: FC<ReportsTabProps> = ({
@@ -17,134 +17,120 @@ export const ReportsTab: FC<ReportsTabProps> = ({
   setShowFinancePrintModal,
   onDrillDown,
 }) => {
-  if (loading) return <div>Loading Financial Statements...</div>;
-  if (loadError) return <div style={{ color: '#b91c1c' }}>{loadError}</div>;
-  if (!finance) return <div>No data available.</div>;
+  const symbol = (finance as any)?.currency_symbol || localStorage.getItem('active_company_symbol') || '₹';
 
-  // ક્લિક કરવા માટેની હેલ્પર સ્ટાઇલ
-  const clickableStyle = {
-    cursor: onDrillDown ? 'pointer' : 'default',
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '8px 12px',
-    borderRadius: '6px',
-    transition: 'background 0.2s',
-  };
+  if (loading && !finance) {
+    return (
+      <div style={{ padding: '24px', color: '#64748b', fontSize: '14px' }}>
+        Loading financial statements...
+      </div>
+    );
+  }
+
+  if (!finance && loadError) {
+    return (
+      <div style={{ padding: '16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', color: '#b91c1c', fontSize: '13px' }}>
+        {loadError}
+      </div>
+    );
+  }
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Profit & Loss / Balance Sheet</h1>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real-time trial balance derived financial reports (Click on accounts to drill down)</p>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Real time trial balance derived financial reports (Click on accounts to drill down)</p>
         </div>
         <button
           onClick={() => setShowFinancePrintModal(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
         >
           <Printer size={16} /> Print Statements
         </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-        {/* PROFIT & LOSS */}
-        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '24px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', borderBottom: '2px solid #0284c7', paddingBottom: '8px' }}>Income Statement (P&L)</h2>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <h4 style={{ margin: '8px 0 4px 0', color: '#475569', fontSize: '14px' }}>INCOME</h4>
-            <div
-              style={clickableStyle}
-              onClick={() => onDrillDown?.('Sales Income')}
-              title="Click to view Sales Income Ledger"
-            >
-              <span style={{ color: '#0369a1', textDecoration: 'underline' }}>Sales Income</span>
-              <strong>Rs. {finance.income.sales.toFixed(2)}</strong>
+        {/* Income Statement (P&L) */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0', borderBottom: '2px solid #0284c7', paddingBottom: '8px' }}>
+            Income Statement (P&L)
+          </h2>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b' }}>INCOME</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '14px' }}>
+                <span onClick={() => onDrillDown('Sales Income')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                  Sales Income
+                </span>
+                <strong>{symbol} {(finance?.income?.sales ?? 0).toFixed(2)}</strong>
+              </div>
             </div>
 
-            <h4 style={{ margin: '16px 0 4px 0', color: '#475569', fontSize: '14px' }}>EXPENSES / COGS</h4>
-            <div
-              style={clickableStyle}
-              onClick={() => onDrillDown?.('Stock Received But Not Billed')}
-              title="Click to view Purchases / Stock Ledger"
-            >
-              <span style={{ color: '#0369a1', textDecoration: 'underline' }}>Purchases (Cost of Goods)</span>
-              <strong>Rs. {finance.expense.purchases.toFixed(2)}</strong>
+            <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b' }}>EXPENSES / COGS</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '14px' }}>
+                <span onClick={() => onDrillDown('Stock Received')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                  Purchases (Cost of Goods)
+                </span>
+                <strong>{symbol} {(finance?.expense?.purchases ?? 0).toFixed(2)}</strong>
+              </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', marginTop: '16px', paddingTop: '12px', fontSize: '16px' }}>
+            <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', fontSize: '16px' }}>
               <strong>Gross & Net Profit</strong>
-              <strong style={{ color: finance.profit.net_profit >= 0 ? '#15803d' : '#b91c1c' }}>
-                Rs. {finance.profit.net_profit.toFixed(2)}
+              <strong style={{ color: (finance?.profit?.net_profit ?? 0) >= 0 ? '#15803d' : '#dc2626' }}>
+                {symbol} {(finance?.profit?.net_profit ?? 0).toFixed(2)}
               </strong>
             </div>
           </div>
         </div>
 
-        {/* BALANCE SHEET */}
-        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '24px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', borderBottom: '2px solid #0284c7', paddingBottom: '8px' }}>Balance Sheet</h2>
+        {/* Balance Sheet */}
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0', borderBottom: '2px solid #10b981', paddingBottom: '8px' }}>
+            Balance Sheet
+          </h2>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <h4 style={{ margin: '8px 0 4px 0', color: '#475569', fontSize: '14px' }}>ASSETS</h4>
-            <div
-              style={clickableStyle}
-              onClick={() => onDrillDown?.('Bank Account')}
-              title="Click to view Bank Ledger"
-            >
-              <span style={{ color: '#0369a1', textDecoration: 'underline' }}>Bank & Cash Accounts</span>
-              <strong>Rs. {finance.balance_sheet.assets.bank_cash.toFixed(2)}</strong>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b' }}>ASSETS</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span onClick={() => onDrillDown('Bank Account')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                Bank & Cash Accounts
+              </span>
+              <span>{symbol} {(finance?.balance_sheet?.assets?.bank_cash ?? 0).toFixed(2)}</span>
             </div>
-            <div
-              style={clickableStyle}
-              onClick={() => onDrillDown?.('Debtors')}
-              title="Click to view Debtors Ledger"
-            >
-              <span style={{ color: '#0369a1', textDecoration: 'underline' }}>Debtors (Customer Receivables)</span>
-              <strong>Rs. {finance.balance_sheet.assets.debtors_receivable.toFixed(2)}</strong>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span onClick={() => onDrillDown('Debtors')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                Debtors (Customer Receivables)
+              </span>
+              <span>{symbol} {(finance?.balance_sheet?.assets?.debtors_receivable ?? 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span onClick={() => onDrillDown('Input GST')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                GST Input Credit (ITC Asset)
+              </span>
+              <span>{symbol} {(((finance?.balance_sheet?.assets as any)?.gst_credit ?? finance?.gst?.input_itc ?? 0)).toFixed(2)}</span>
             </div>
 
-            {((finance.balance_sheet.assets as any).gst_credit > 0) && (
-              <div
-                style={clickableStyle}
-                onClick={() => onDrillDown?.('Input GST')}
-                title="Click to view Input GST / ITC Ledger"
-              >
-                <span style={{ color: '#0369a1', textDecoration: 'underline' }}>GST Input Credit (ITC Asset)</span>
-                <strong style={{ color: '#15803d' }}>Rs. {(finance.balance_sheet.assets as any).gst_credit.toFixed(2)}</strong>
-              </div>
-            )}
-
-            <h4 style={{ margin: '16px 0 4px 0', color: '#475569', fontSize: '14px' }}>LIABILITIES</h4>
-            <div
-              style={clickableStyle}
-              onClick={() => onDrillDown?.('Creditors')}
-              title="Click to view Creditors Ledger"
-            >
-              <span style={{ color: '#0369a1', textDecoration: 'underline' }}>Creditors (Supplier Payables)</span>
-              <strong>Rs. {finance.balance_sheet.liabilities.creditors_payable.toFixed(2)}</strong>
+            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b', marginTop: '8px' }}>LIABILITIES</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span onClick={() => onDrillDown('Creditors')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                Creditors (Supplier Payables)
+              </span>
+              <span>{symbol} {(finance?.balance_sheet?.liabilities?.creditors_payable ?? 0).toFixed(2)}</span>
             </div>
-            {finance.balance_sheet.liabilities.gst_payable > 0 ? (
-              <div
-                style={clickableStyle}
-                onClick={() => onDrillDown?.('Output GST')}
-                title="Click to view GST Liability Ledger"
-              >
-                <span style={{ color: '#0369a1', textDecoration: 'underline' }}>GST Payable</span>
-                <strong style={{ color: '#b91c1c' }}>Rs. {finance.balance_sheet.liabilities.gst_payable.toFixed(2)}</strong>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', fontSize: '13px', color: '#64748b' }}>
-                <span>GST Net Payable</span>
-                <span>Rs. 0.00 (ITC Surplus)</span>
-              </div>
-            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+              <span onClick={() => onDrillDown('Output GST')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                GST Net Payable
+              </span>
+              <span>{symbol} {(finance?.balance_sheet?.liabilities?.gst_payable ?? 0).toFixed(2)}</span>
+            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', marginTop: '16px', paddingTop: '12px', fontSize: '16px' }}>
+            <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', fontSize: '15px' }}>
               <strong>Total Assets / Liabilities</strong>
-              <strong style={{ color: '#0f172a' }}>
-                Rs. {finance.balance_sheet.assets.total_assets.toFixed(2)}
-              </strong>
+              <strong>{symbol} {(finance?.balance_sheet?.assets?.total_assets ?? 0).toFixed(2)}</strong>
             </div>
           </div>
         </div>

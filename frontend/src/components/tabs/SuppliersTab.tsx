@@ -21,6 +21,8 @@ export const SuppliersTab: FC<SuppliersTabProps> = ({
   setSupplierForm,
   setShowSupplierModal,
 }) => {
+  const symbol = localStorage.getItem('active_company_symbol') || '₹';
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -53,7 +55,7 @@ export const SuppliersTab: FC<SuppliersTabProps> = ({
       <div style={{ maxWidth: '340px', background: '#fff', padding: '16px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
         <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Payables (Creditors)</span>
         <h3 style={{ margin: '6px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
-          Rs. {partyOutstanding.total_payable.toFixed(2)}
+          {symbol} {partyOutstanding.total_payable.toFixed(2)}
         </h3>
       </div>
 
@@ -64,12 +66,12 @@ export const SuppliersTab: FC<SuppliersTabProps> = ({
           { header: 'GST Category', accessor: 'gst_category' },
           { header: 'City', accessor: r => r.city || '-' },
           {
-            header: 'Outstanding Payable',
+            header: `Outstanding Payable (${symbol})`,
             accessor: (row) => {
               const bal = partyOutstanding.suppliers[row.supplier_name] || 0;
               return (
                 <strong style={{ color: bal > 0 ? '#dc2626' : '#15803d' }}>
-                  Rs. {bal.toFixed(2)} {bal > 0 ? 'Cr' : ''}
+                  {symbol} {bal.toFixed(2)} {bal > 0 ? 'Cr' : ''}
                 </strong>
               );
             }

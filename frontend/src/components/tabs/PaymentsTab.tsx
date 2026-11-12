@@ -22,6 +22,8 @@ export const PaymentsTab: FC<PaymentsTabProps> = ({
   onOpenReconciliation,
   setEditingId,
 }) => {
+  const symbol = localStorage.getItem('active_company_symbol') || '₹';
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -66,7 +68,14 @@ export const PaymentsTab: FC<PaymentsTabProps> = ({
           { header: 'Type', accessor: 'payment_type' },
           { header: 'Party', accessor: 'party_name' },
           { header: 'Mode', accessor: 'mode_of_payment' },
-          { header: 'Amount (Rs.)', accessor: r => <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>Rs. {r.paid_amount}</strong> },
+          { 
+            header: `Amount (${symbol})`, 
+            accessor: r => (
+              <strong style={{ color: r.payment_type === 'Receive' ? '#15803d' : '#b91c1c' }}>
+                {symbol} {r.paid_amount}
+              </strong>
+            ) 
+          },
           {
             header: 'Action',
             accessor: (row) => (

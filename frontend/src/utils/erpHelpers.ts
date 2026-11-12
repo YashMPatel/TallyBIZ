@@ -3,7 +3,14 @@ import type { SalesInvoice, PurchaseInvoice, PaymentEntry } from '../types/erp';
 
 export const API_BASE = 'http://127.0.0.1:8000/api';
 
-export type DashboardSummary = { total_sales: number; total_purchases: number; bank_balance: number };
+
+export type DashboardSummary = {
+  total_sales: number;
+  total_purchases: number;
+  bank_balance: number;
+  currency?: string;
+  currency_symbol?: string;
+};
 
 export const GST_SLABS = ['0', '5', '12', '18', '28'];
 

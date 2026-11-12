@@ -4,15 +4,15 @@ import type { PaymentEntry } from '../types/erp';
 
 interface PaymentPrintModalProps {
   payment: PaymentEntry | null;
+  company?: any;
   onClose: () => void;
 }
 
 export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
   payment,
+  company,
   onClose,
 }) => {
-  // Hooks must run unconditionally, so the effect is declared before the
-  // null-guard below.
   const formattedParty = (payment?.party_name || 'Party').replace(/[^a-zA-Z0-9]/g, '_');
   const targetFileName = payment ? `Payment_${payment.voucher_no}_${formattedParty}` : '';
 
@@ -32,6 +32,7 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
 
   const amount = parseFloat(payment.paid_amount.toString()) || 0;
   const isReceive = payment.payment_type === 'Receive';
+  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
 
   return (
     <div
@@ -163,12 +164,14 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
             <div style={{ maxWidth: '60%' }}>
               <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
-                TallyBIZ ENTERPRISE
+                {company?.name || 'TallyBIZ Pvt Ltd'}
               </h1>
               <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-                SG Highway, Ahmedabad, Gujarat - 380054<br />
-                GSTIN: <strong>24ABCDE1234F1Z5</strong> | State: Gujarat (24)<br />
-                Email: accounts@tallybiz.com | Phone: +91 98765 43210
+                {company?.address || ''}<br />
+                {company?.gstin ? (
+                  <>GSTIN / Tax ID: <strong>{company.gstin}</strong></>
+                ) : null}
+                {company?.state ? <> | State: {company.state}</> : null}
               </p>
             </div>
             <div style={{ textAlign: 'right' }}>
@@ -223,7 +226,7 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <td style={{ padding: '12px 16px', fontWeight: '600', color: '#64748b' }}>Narration / Remarks:</td>
                   <td style={{ padding: '12px 16px', color: '#475569' }}>
-                    {payment.remarks || (isReceive ? `Settlement received against customer outstanding ledger.` : `Vendor payment released via ${payment.mode_of_payment}.`)}
+                    {payment.remarks || (isReceive ? 'Settlement received against customer outstanding ledger.' : `Vendor payment released via ${payment.mode_of_payment}.`)}
                   </td>
                 </tr>
                 <tr style={{ background: '#f0fdf4' }}>
@@ -231,7 +234,7 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
                     Amount Transacted:
                   </td>
                   <td style={{ padding: '16px', fontWeight: 'bold', fontSize: '20px', color: isReceive ? '#15803d' : '#b91c1c' }}>
-                    Rs. {amount.toFixed(2)}
+                    {sym} {amount.toFixed(2)}
                   </td>
                 </tr>
               </tbody>
@@ -245,11 +248,11 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
             </span>
             {isReceive ? (
               <p style={{ margin: 0, color: '#475569' }}>
-                Debit: <strong>Bank/Cash Account</strong> (Rs. {amount.toFixed(2)}) &nbsp;|&nbsp; Credit: <strong>Debtors - {payment.party_name}</strong> (Rs. {amount.toFixed(2)})
+                Debit: <strong>Bank/Cash Account</strong> ({sym} {amount.toFixed(2)}) &nbsp;|&nbsp; Credit: <strong>Debtors - {payment.party_name}</strong> ({sym} {amount.toFixed(2)})
               </p>
             ) : (
               <p style={{ margin: 0, color: '#475569' }}>
-                Debit: <strong>Creditors - {payment.party_name}</strong> (Rs. {amount.toFixed(2)}) &nbsp;|&nbsp; Credit: <strong>Bank/Cash Account</strong> (Rs. {amount.toFixed(2)})
+                Debit: <strong>Creditors - {payment.party_name}</strong> ({sym} {amount.toFixed(2)}) &nbsp;|&nbsp; Credit: <strong>Bank/Cash Account</strong> ({sym} {amount.toFixed(2)})
               </p>
             )}
           </div>
@@ -262,7 +265,7 @@ export const PaymentPrintModal: React.FC<PaymentPrintModalProps> = ({
               </span>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: '0 0 36px 0', fontWeight: 'bold', color: '#334155' }}>For, TallyBIZ Enterprise</p>
+              <p style={{ margin: '0 0 36px 0', fontWeight: 'bold', color: '#334155' }}>For, {company?.name || 'Authorised Signatory'}</p>
               <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px' }}>
                 Authorised Cashier / Accountant
               </span>

@@ -19,15 +19,100 @@ import { ReportsTab } from './components/tabs/ReportsTab';
 import { JournalEntryModal } from './components/JournalEntryModal';
 import { PaymentReconciliationModal } from './components/PaymentReconciliationModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements, JournalEntryPayload } from './types/erp';
-import { ShoppingCart, ShoppingBag, Users, Truck, Package, BookOpen, CreditCard, PieChart } from 'lucide-react';
-import { X, RefreshCw, Layers } from 'lucide-react';
+import { X, RefreshCw } from 'lucide-react';
 import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
 import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, type DashboardSummary, type LineForm } from './utils/erpHelpers';
 import ReturnsTab from './components/tabs/ReturnsTab';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Login } from './components/Login';
+import { ApprovalsTab } from './components/tabs/ApprovalsTab';
+import { CompanySwitcher } from './company_users/CompanySwitcher';
+import { UserProfileModal } from './company_users/UserProfileModal';
+import { UserManagementTab } from './company_users/UserManagementTab';
+import { useTallyNavigation } from './hooks/useTallyNavigation';
+import { QuitConfirmModal } from './components/QuitConfirmModal';
+import { CompanyGateway } from './components/CompanyGateway';
+import { AppSidebar } from './components/AppSidebar';
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' |  'ReturnsTab'  | 'reports' | 'gst'>('selling');
+function MainERPApp() {
+  const { isAuthenticated, user, logout } = useAuth();
+
+  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'ReturnsTab' | 'reports' | 'gst' | 'approvals'| 'users_management'>('selling');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [activeCompany, setActiveCompany] = useState<any>(() => {
+    const saved = localStorage.getItem('active_company');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return null;
+  });
+
+  // --- Company Gateway States ---
+  const [companies, setCompanies] = useState<any[]>([]);
+
+  // Sync logged-in user to localStorage for RBAC API headers
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('rbac_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('rbac_user');
+    }
+  }, [user]);
+
+  const handleCleanLogout = useCallback(() => {
+    setActiveCompany(null);
+    setCompanies([]);
+    setShowUserDropdown(false);
+    localStorage.removeItem('active_company');
+    localStorage.removeItem('active_company_id');
+    localStorage.removeItem('active_company_symbol');
+    localStorage.removeItem('rbac_user');
+    setActiveTab('selling');
+    logout();
+  }, [logout]);
+
+  // 1. Fetch accessible companies on login (filtered by logged-in user)
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    const fetchCompanies = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (user?.id) params.append('user_id', String(user.id));
+        if (user?.username) params.append('username', user.username);
+
+        const res = await fetch(`${API_BASE}/accounts/companies/?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          const compList = Array.isArray(data) ? data : (data.results || []);
+          setCompanies(compList);
+
+          // Single company user hoy to direct te j company lock kari do
+          if (compList.length === 1) {
+            handleCompanyChange(compList[0]);
+          } else if (compList.length > 1) {
+            // Refresh activeCompany with latest address/gstin/bank_details from API
+            setActiveCompany((prev: any) => {
+              if (!prev) return null;
+              const matched = compList.find((c: any) => c.id === prev.id);
+              if (matched) {
+                localStorage.setItem('active_company', JSON.stringify(matched));
+                return matched;
+              }
+              localStorage.removeItem('active_company');
+              return null;
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load companies:', err);
+      }
+    };
+
+    fetchCompanies();
+  }, [isAuthenticated, user]);
+
+  const currencySymbol = activeCompany?.symbol || activeCompany?.currency_symbol || (localStorage.getItem('active_company_symbol') || '₹');
 
   // Data states
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -42,7 +127,8 @@ export default function App() {
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({
     total_sales: 0,
     total_purchases: 0,
-    bank_balance: 0
+    bank_balance: 0,
+    currency_symbol: currencySymbol
   });
   const [partyOutstanding, setPartyOutstanding] = useState<{
     customers: Record<string, number>;
@@ -60,6 +146,8 @@ export default function App() {
   const [showGstModal, setShowGstModal] = useState<boolean>(false);
   const [showJournalModal, setShowJournalModal] = useState<boolean>(false);
   const [showReconciliationModal, setShowReconciliationModal] = useState<boolean>(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   // Request status
   const [loading, setLoading] = useState(false);
@@ -73,7 +161,7 @@ export default function App() {
   const [toDate, setToDate] = useState<string>('');
   const [stockItemFilter, setStockItemFilter] = useState<string>('all');
 
-  // Print Modal
+  // Print Modals
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState<SalesInvoice | null>(null);
   const [selectedPurchaseForPrint, setSelectedPurchaseForPrint] = useState<PurchaseInvoice | null>(null);
   const [selectedPaymentForPrint, setSelectedPaymentForPrint] = useState<PaymentEntry | null>(null);
@@ -81,7 +169,7 @@ export default function App() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // Modals
+  // Form Modals
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [showItemModal, setShowItemModal] = useState(false);
@@ -91,68 +179,141 @@ export default function App() {
 
   // Forms
   const [customerForm, setCustomerForm] = useState<Customer>({
-    customer_name: '', customer_type: 'Company', gst_category: 'Unregistered', gstin: '', email: '', mobile_no: '', city: '', postal_code: ''
+    customer_name: '',
+    customer_type: 'Company',
+    gst_category: 'Unregistered',
+    gstin: '',
+    email: '',
+    mobile_no: '',
+    city: '',
+    postal_code: '',
+    address: ''
   });
 
   const [supplierForm, setSupplierForm] = useState<Supplier>({
-    supplier_name: '', supplier_type: 'Company', gst_category: 'Registered Regular', gstin: '', email: '', mobile_no: '', city: '', postal_code: ''
+    supplier_name: '',
+    supplier_type: 'Company',
+    gst_category: 'Registered Regular',
+    gstin: '',
+    email: '',
+    mobile_no: '',
+    city: '',
+    postal_code: '',
+    address: ''
   });
 
   const [itemForm, setItemForm] = useState({
-    item_code: '', item_name: '', category: 'General', unit: 'Nos', standard_rate: '0', current_stock: '0'
+    item_code: '',
+    item_name: '',
+    category: 'General',
+    unit: 'Nos',
+    standard_rate: '0',
+    current_stock: '0'
   });
 
   const [invoiceForm, setInvoiceForm] = useState(() => ({
     invoice_number: 'INV-0001', 
     customer_id: '', 
     posting_date: new Date().toISOString().split('T')[0],
-    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0], // 30 days credit
+    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
     tax_rate: '18', 
-    status: 'Submitted', 
+    status: 'Draft', 
     lines: [newLine()]
   }));
 
   const [paymentForm, setPaymentForm] = useState({
-    voucher_no: 'PAY-0001', payment_type: 'Receive' as 'Receive' | 'Pay', posting_date: new Date().toISOString().split('T')[0], party_type: 'Customer', party_name: '', mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque', paid_amount: '0', reference_no: '', remarks: ''
+    voucher_no: 'PAY-0001',
+    payment_type: 'Receive' as 'Receive' | 'Pay',
+    posting_date: new Date().toISOString().split('T')[0],
+    party_type: 'Customer',
+    party_name: '',
+    mode_of_payment: 'Bank' as 'Bank' | 'Cash' | 'Cheque',
+    paid_amount: '0',
+    reference_no: '',
+    remarks: ''
   });
 
   const [purchaseForm, setPurchaseForm] = useState(() => ({
     bill_number: 'PUR-0001', 
     supplier_id: '', 
     posting_date: new Date().toISOString().split('T')[0],
-    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0], // 30 days credit
+    due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
     tax_rate: '18', 
     status: 'Submitted', 
     lines: [newLine()]
   }));
 
-  const loadData = useCallback(async () => {
+  // --- Tally Style Navigation Setup ---
+  const isAnyModalOpen = Boolean(
+    showCustomerModal || showSupplierModal || showItemModal ||
+    showInvoiceModal || showPurchaseModal || showPaymentModal ||
+    showFinancePrintModal || showGstModal || showJournalModal ||
+    showReconciliationModal || isProfileOpen || selectedInvoiceForPrint ||
+    selectedPurchaseForPrint || selectedPaymentForPrint || showLedgerPrintModal
+  );
+
+  const closeAllModals = () => {
+    setShowCustomerModal(false);
+    setShowSupplierModal(false);
+    setShowItemModal(false);
+    setShowInvoiceModal(false);
+    setShowPurchaseModal(false);
+    setShowPaymentModal(false);
+    setShowFinancePrintModal(false);
+    setShowGstModal(false);
+    setShowJournalModal(false);
+    setShowReconciliationModal(false);
+    setIsProfileOpen(false);
+    setSelectedInvoiceForPrint(null);
+    setSelectedPurchaseForPrint(null);
+    setSelectedPaymentForPrint(null);
+    setShowLedgerPrintModal(false);
+    setEditingId(null);
+  };
+
+  const { showQuitModal, setShowQuitModal, handleStepBack } = useTallyNavigation({
+    isModalOpen: isAnyModalOpen,
+    closeActiveModal: closeAllModals,
+    activeView: activeTab,
+    setActiveView: (view: any) => setActiveTab(view),
+    activeCompany,
+    setActiveCompany,
+    onLogout: handleCleanLogout,
+    defaultView: 'selling',
+  });
+
+  const loadData = useCallback(async (targetCompId?: string | number) => {
     const seq = ++requestSeq.current;
     setLoading(true);
     setLoadError(null);
     try {
+      const compId = targetCompId || activeCompany?.id || localStorage.getItem('active_company_id') || '';
+      const compParam = compId ? `company_id=${compId}` : '';
+
       const glParams = new URLSearchParams();
       if (glAccountFilter !== 'all') glParams.append('account', glAccountFilter);
       if (glPartyFilter !== 'all') glParams.append('party', glPartyFilter);
       if (fromDate) glParams.append('from_date', fromDate);
       if (toDate) glParams.append('to_date', toDate);
+      if (compId) glParams.append('company_id', compId.toString());
 
       const stockParams = new URLSearchParams();
       if (stockItemFilter !== 'all') stockParams.append('item_id', stockItemFilter);
+      if (compId) stockParams.append('company_id', compId.toString());
 
       const [resCust, resSupp, resItems, resInvoices, resPurch, resPay, resGL, resStock, resFin, resGST, resDash, resParty] = await Promise.all([
-        fetch(`${API_BASE}/selling/customers/`),
-        fetch(`${API_BASE}/buying/suppliers/`),
-        fetch(`${API_BASE}/stock/items/`),
-        fetch(`${API_BASE}/selling/invoices/`),
-        fetch(`${API_BASE}/buying/invoices/`),
-        fetch(`${API_BASE}/accounts/payments/`),
+        fetch(`${API_BASE}/selling/customers/?${compParam}`),
+        fetch(`${API_BASE}/buying/suppliers/?${compParam}`),
+        fetch(`${API_BASE}/stock/items/?${compParam}`),
+        fetch(`${API_BASE}/selling/invoices/?${compParam}`),
+        fetch(`${API_BASE}/buying/invoices/?${compParam}`),
+        fetch(`${API_BASE}/accounts/payments/?${compParam}`),
         fetch(`${API_BASE}/accounts/general-ledger/?${glParams.toString()}`),
         fetch(`${API_BASE}/stock/stock-ledger/?${stockParams.toString()}`),
-        fetch(`${API_BASE}/accounts/financial-statements/`),
-        fetch(`${API_BASE}/accounts/gst-returns/`),
-        fetch(`${API_BASE}/accounts/dashboard-summary/`),
-        fetch(`${API_BASE}/accounts/party-outstanding/`)
+        fetch(`${API_BASE}/accounts/financial-statements/?${compParam}`),
+        fetch(`${API_BASE}/accounts/gst-returns/?${compParam}`),
+        fetch(`${API_BASE}/accounts/dashboard-summary/?${compParam}`),
+        fetch(`${API_BASE}/accounts/party-outstanding/?${compParam}`)
       ]);
 
       if (seq !== requestSeq.current) return;
@@ -179,14 +340,14 @@ export default function App() {
         read<any>('Party Outstanding', resParty)
       ]);
 
-      if (cust) setCustomers(cust);
-      if (supp) setSuppliers(supp);
-      if (itemList) setItems(itemList);
-      if (inv) setInvoices(inv);
-      if (pur) setPurchases(pur);
-      if (pay) setPayments(pay);
-      if (gl) setGlEntries(gl);
-      if (stock) setStockLedger(stock);
+      if (cust) setCustomers([...cust].sort((a: any, b: any) => b.id - a.id));
+      if (supp) setSuppliers([...supp].sort((a: any, b: any) => b.id - a.id));
+      if (itemList) setItems([...itemList].sort((a: any, b: any) => b.id - a.id));
+      if (inv) setInvoices([...inv].sort((a: any, b: any) => b.id - a.id));
+      if (pur) setPurchases([...pur].sort((a: any, b: any) => b.id - a.id));
+      if (pay) setPayments([...pay].sort((a: any, b: any) => b.id - a.id));
+      if (gl) setGlEntries([...gl].sort((a: any, b: any) => b.id - a.id));
+      if (stock) setStockLedger([...stock].sort((a: any, b: any) => b.id - a.id));
       if (fin) setFinance(fin);
       if (gst) setGstData(gst);
       if (dash) setDashboardSummary(dash);
@@ -196,32 +357,47 @@ export default function App() {
     } catch (err) {
       if (seq !== requestSeq.current) return;
       console.error("API error:", err);
-      setLoadError('Could not reach the server. Is the Django backend running on http://127.0.0.1:8000?');
+      setLoadError('Could not reach the server.');
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [glAccountFilter, glPartyFilter, fromDate, toDate, stockItemFilter]);
+  }, [activeCompany, glAccountFilter, glPartyFilter, fromDate, toDate, stockItemFilter]);
 
-  const loadDashboardSummary = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/accounts/dashboard-summary/`);
-      if (!res.ok) throw new Error('Failed to load dashboard summary');
-      const data = await res.json();
-      setDashboardSummary(data);
-    } catch (err) {
-      console.error("API error:", err);
-    }
+  const handleCompanyChange = (comp: any) => {
+    setActiveCompany(comp);
+    const sym =
+      comp.currency_symbol ||
+      comp.symbol ||
+      (String(comp.name).includes('CAD') || String(comp.name).includes('USD') || String(comp.name).includes('$') ? '$' : '₹');
+    localStorage.setItem('active_company', JSON.stringify(comp));
+    localStorage.setItem('active_company_id', comp.id.toString());
+    localStorage.setItem('active_company_symbol', sym);
+    void loadData(comp.id);
   };
 
   useEffect(() => {
-    setSearchQuery('');
-    void loadData();
-    void loadDashboardSummary();
-  }, [activeTab, loadData]);
+    const cid = activeCompany?.id || localStorage.getItem('active_company_id');
+    if (isAuthenticated && cid) {
+      void loadData(cid);
+    }
+  }, [isAuthenticated, activeCompany?.id, loadData]);
 
-    // Safe Deletion Handlers
+  useEffect(() => {
+    if (showInvoiceModal || showPurchaseModal) {
+      const compId = activeCompany?.id || localStorage.getItem('active_company_id') || '';
+      const compParam = compId ? `company_id=${compId}` : '';
+      fetch(`${API_BASE}/stock/items/?${compParam}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (Array.isArray(data)) setItems([...data].sort((a: any, b: any) => b.id - a.id));
+          else if (data && Array.isArray(data.results)) setItems([...data.results].sort((a: any, b: any) => b.id - a.id));
+        })
+        .catch(() => {});
+    }
+  }, [showInvoiceModal, showPurchaseModal, activeCompany]);
+
   const handleDeleteInvoice = async (id: number, invNo: string) => {
-    if (!window.confirm(`Are you sure you want to delete Sales Invoice #${invNo}? This will automatically reverse stock deduction and General Ledger entries.`)) return;
+    if (!window.confirm(`Delete Sales Invoice #${invNo}?`)) return;
     try {
       const res = await fetch(`${API_BASE}/selling/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete invoice');
@@ -230,7 +406,7 @@ export default function App() {
   };
 
   const handleDeletePurchase = async (id: number, billNo: string) => {
-    if (!window.confirm(`Are you sure you want to delete Purchase Bill #${billNo}? This will automatically deduct added stock and reverse GL liabilities.`)) return;
+    if (!window.confirm(`Delete Purchase Bill #${billNo}?`)) return;
     try {
       const res = await fetch(`${API_BASE}/buying/invoices/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete purchase bill');
@@ -239,7 +415,7 @@ export default function App() {
   };
 
   const handleDeletePayment = async (id: number, voucherNo: string) => {
-    if (!window.confirm(`Are you sure you want to delete Payment Entry #${voucherNo}? This will reverse General Ledger entries.`)) return;
+    if (!window.confirm(`Delete Payment Entry #${voucherNo}?`)) return;
     try {
       const res = await fetch(`${API_BASE}/accounts/payments/${id}/`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete payment entry');
@@ -250,47 +426,127 @@ export default function App() {
   const handleSaveCustomer = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const url = editingId ? `${API_BASE}/selling/customers/${editingId}/` : `${API_BASE}/selling/customers/`;
+      const activeCompanyId = activeCompany?.id || localStorage.getItem('active_company_id');
+      const compParam = activeCompanyId ? `?company_id=${activeCompanyId}` : '';
+      const url = editingId
+        ? `${API_BASE}/selling/customers/${editingId}/${compParam}`
+        : `${API_BASE}/selling/customers/${compParam}`;
       const method = editingId ? 'PUT' : 'POST';
+
       const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(customerForm)
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...customerForm,
+          company: activeCompanyId ? parseInt(String(activeCompanyId), 10) : undefined
+        })
       });
-      if (!res.ok) throw new Error('Failed to save customer');
+
+      if (!res.ok) {
+        let msg = 'Failed to save customer';
+        try {
+          const errData = await res.json();
+          if (errData && Object.keys(errData).length > 0) {
+            msg = typeof errData === 'string' ? errData : JSON.stringify(errData);
+          }
+        } catch {
+          msg = `Server error (${res.status}: ${res.statusText})`;
+        }
+        throw new Error(msg);
+      }
+
       setShowCustomerModal(false);
       setEditingId(null);
       void loadData();
-    } catch (err: unknown) { alert(getErrorMessage(err)); }
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
+    }
   };
+
+  const pendingApprovalsCount = 
+    invoices.filter(i => i.status !== 'Approved' && i.status !== 'Rejected').length + 
+    purchases.filter(p => p.status !== 'Approved' && p.status !== 'Rejected').length;
 
   const handleSaveSupplier = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const url = editingId ? `${API_BASE}/buying/suppliers/${editingId}/` : `${API_BASE}/buying/suppliers/`;
+      const activeCompanyId = activeCompany?.id || localStorage.getItem('active_company_id');
+      const compParam = activeCompanyId ? `?company_id=${activeCompanyId}` : '';
+      const url = editingId
+        ? `${API_BASE}/buying/suppliers/${editingId}/${compParam}`
+        : `${API_BASE}/buying/suppliers/${compParam}`;
       const method = editingId ? 'PUT' : 'POST';
+
       const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(supplierForm)
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...supplierForm,
+          company: activeCompanyId ? parseInt(String(activeCompanyId), 10) : undefined
+        })
       });
-      if (!res.ok) throw new Error('Failed to save supplier');
+
+      if (!res.ok) {
+        let msg = 'Failed to save supplier';
+        try {
+          const errData = await res.json();
+          if (errData && Object.keys(errData).length > 0) {
+            msg = typeof errData === 'string' ? errData : JSON.stringify(errData);
+          }
+        } catch {
+          msg = `Server error (${res.status}: ${res.statusText})`;
+        }
+        throw new Error(msg);
+      }
+
       setShowSupplierModal(false);
       setEditingId(null);
       void loadData();
-    } catch (err: unknown) { alert(getErrorMessage(err)); }
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
+    }
   };
 
   const handleSaveItem = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const url = editingId ? `${API_BASE}/stock/items/${editingId}/` : `${API_BASE}/stock/items/`;
+      const activeCompanyId = activeCompany?.id || localStorage.getItem('active_company_id');
+      const compParam = activeCompanyId ? `?company_id=${activeCompanyId}` : '';
+      const url = editingId
+        ? `${API_BASE}/stock/items/${editingId}/${compParam}`
+        : `${API_BASE}/stock/items/${compParam}`;
       const method = editingId ? 'PUT' : 'POST';
+
       const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...itemForm, standard_rate: parseFloat(itemForm.standard_rate) || 0, current_stock: parseFloat(itemForm.current_stock) || 0 })
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...itemForm,
+          company: activeCompanyId ? parseInt(String(activeCompanyId), 10) : undefined,
+          standard_rate: parseFloat(itemForm.standard_rate) || 0,
+          current_stock: parseFloat(itemForm.current_stock) || 0
+        })
       });
-      if (!res.ok) throw new Error('Failed to save item');
+
+      if (!res.ok) {
+        let msg = 'Failed to save item';
+        try {
+          const errData = await res.json();
+          if (errData && Object.keys(errData).length > 0) {
+            msg = typeof errData === 'string' ? errData : JSON.stringify(errData);
+          }
+        } catch {
+          msg = `Server error (${res.status}: ${res.statusText})`;
+        }
+        throw new Error(msg);
+      }
+
       setShowItemModal(false);
       setEditingId(null);
       void loadData();
-    } catch (err: unknown) { alert(getErrorMessage(err)); }
+    } catch (err: unknown) {
+      alert(getErrorMessage(err));
+    }
   };
 
   const buildLines = (lines: LineForm[]) =>
@@ -322,7 +578,7 @@ export default function App() {
 
   const sumLines = (lines: LineForm[]) =>
     lines.reduce((sum, l) => {
-      if (l.is_foc) return sum; // FOC હોય તો રકમ 0
+      if (l.is_foc) return sum;
       const qty = parseFloat(l.quantity) || 0;
       const rate = parseFloat(l.rate) || 0;
       const base = qty * rate;
@@ -341,7 +597,7 @@ export default function App() {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || 'Failed to save Journal Entry');
     }
-    void loadData(); // Ledgers અને balances તરત રીફ્રેશ થશે
+    void loadData();
   };
 
   const handleSaveInvoice = async (e: FormEvent<HTMLFormElement>) => {
@@ -351,52 +607,6 @@ export default function App() {
       return;
     }
 
-    // 1. એડિટ વખતે જૂના ઇન્વોઇસની ક્વોન્ટિટી મેપ કરો
-    const existingQtyMap: Record<number, number> = {};
-    if (editingId) {
-      const currentInvoice = invoices.find((inv: any) => inv.id === editingId);
-      if (currentInvoice && currentInvoice.items) {
-        for (const itm of currentInvoice.items) {
-          const itmId = typeof itm.item === 'object' ? (itm.item as any).id : itm.item;
-          existingQtyMap[itmId] = (existingQtyMap[itmId] || 0) + parseFloat(itm.quantity.toString());
-        }
-      }
-    }
-
-    // 2. એક જ આઇટમ મલ્ટિપલ લાઇન્સમાં હોય તો સરવાળો (Aggregate) કરો
-    const requestedQtyMap: Record<number, number> = {};
-    for (const line of invoiceForm.lines) {
-      if (!line.item_id) {
-        alert('Please select an item for all line rows.');
-        return;
-      }
-      const itemId = parseInt(line.item_id, 10);
-      const qty = parseFloat(line.quantity) || 0;
-      if (qty <= 0) {
-        alert('Quantity must be greater than 0.');
-        return;
-      }
-      requestedQtyMap[itemId] = (requestedQtyMap[itemId] || 0) + qty;
-    }
-
-    // 3. ઓવરસેલ ગાર્ડ ચેક: (Available Stock + Existing Invoiced Qty)
-    for (const [itemIdStr, totalRequestedQty] of Object.entries(requestedQtyMap)) {
-      const itemId = parseInt(itemIdStr, 10);
-      const masterItem = items.find((i: any) => i.id === itemId);
-      const currentStock = masterItem ? parseFloat(masterItem.current_stock?.toString() || '0') : 0;
-      const alreadyInThisInvoice = existingQtyMap[itemId] || 0;
-      const effectiveAvailableStock = currentStock + alreadyInThisInvoice;
-
-      if (totalRequestedQty > effectiveAvailableStock) {
-        alert(
-          `Insufficient Stock for "${masterItem?.item_name || 'Item'}". ` +
-          `Available: ${effectiveAvailableStock}, Requested Total: ${totalRequestedQty}`
-        );
-        return;
-      }
-    }
-
-    // Customer Name મેળવો
     const selectedCustomer = customers.find((c: any) => c.id.toString() === invoiceForm.customer_id.toString());
     const customerName = selectedCustomer ? selectedCustomer.customer_name : '';
 
@@ -406,18 +616,18 @@ export default function App() {
     const tax = (net * taxRate) / 100;
     const grand = net + tax;
 
-    // 4. API Request
     const payload = {
       invoice_number: invoiceForm.invoice_number,
       customer: parseInt(invoiceForm.customer_id, 10),
       customer_name: customerName,
+      company: activeCompany?.id || localStorage.getItem('active_company_id'),
       posting_date: invoiceForm.posting_date,
       due_date: invoiceForm.due_date,
       tax_rate: taxRate.toFixed(2),
       net_total: net.toFixed(2),
       tax_amount: tax.toFixed(2),
       grand_total: grand.toFixed(2),
-      status: invoiceForm.status || 'Submitted',
+      status: 'Draft',
       items: lineItems
     };
 
@@ -464,8 +674,9 @@ export default function App() {
           bill_number: purchaseForm.bill_number, 
           supplier: selSupp.id, 
           supplier_name: selSupp.supplier_name,
+          company: activeCompany?.id || localStorage.getItem('active_company_id'),
           posting_date: purchaseForm.posting_date, 
-          due_date: purchaseForm.due_date, // <--- aa line add karo
+          due_date: purchaseForm.due_date,
           net_total: net.toFixed(2), 
           tax_amount: tax.toFixed(2), 
           grand_total: (net + tax).toFixed(2),
@@ -491,7 +702,12 @@ export default function App() {
       const res = await fetch(url, {
         method, 
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...paymentForm, party_type: partyType, paid_amount: amount.toFixed(2) })
+        body: JSON.stringify({ 
+          ...paymentForm, 
+          company: activeCompany?.id || localStorage.getItem('active_company_id'),
+          party_type: partyType, 
+          paid_amount: amount.toFixed(2) 
+        })
       });
       if (!res.ok) throw new Error('Payment failed');
       setShowPaymentModal(false);
@@ -515,298 +731,492 @@ export default function App() {
   const purchaseTax = (purchaseNet * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
   const salesStatusMap = getSalesPaymentStatusMap(invoices, payments);
   const purchaseStatusMap = getPurchasePaymentStatusMap(purchases, payments);
-  void purchaseStatusMap;
+
   const filteredInvoices = invoices.filter(inv =>
-    inv.invoice_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    inv.customer_name.toLowerCase().includes(searchQuery.toLowerCase())
+    String(inv?.invoice_number || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    String(inv?.customer_name || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const filteredPurchases = purchases.filter(pur =>
-    pur.bill_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    pur.supplier_name.toLowerCase().includes(searchQuery.toLowerCase())
+    String(pur?.bill_number || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    String(pur?.supplier_name || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const filteredItems = items.filter(it =>
-    it.item_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    it.item_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    String(it?.item_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    String(it?.item_code || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
     it.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // --- CONDITIONAL RENDERS AFTER ALL HOOKS (Prevents Blank Page on Logout/Login) ---
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
+  if (!activeCompany) {
+    return (
+      <>
+        <CompanyGateway
+          companies={companies}
+          onSelectCompany={handleCompanyChange}
+          onQuit={() => setShowQuitModal(true)}
+          userName={user?.first_name || user?.username}
+        />
+        <QuitConfirmModal
+          isOpen={showQuitModal}
+          onConfirm={() => {
+            setShowQuitModal(false);
+            handleCleanLogout();
+          }}
+          onCancel={() => setShowQuitModal(false)}
+        />
+      </>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'sans-serif', background: '#f8fafc', color: '#0f172a' }}>
-      {/* Sidebar */}
-      <aside className="no-print" style={{ width: '250px', background: '#090d16', color: '#f8fafc', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#38bdf8', margin: '0 0 4px 8px' }}>TallyBIZ ERP</h2>
-          <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>MODULAR ENGINE</span>
-        </div>
+      <AppSidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        user={user}
+        pendingApprovalsCount={pendingApprovalsCount}
+      />
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <button onClick={() => setActiveTab('selling')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'selling' ? '#1e293b' : 'transparent', color: activeTab === 'selling' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <ShoppingCart size={18} /> Selling (Invoices)
-          </button>
-          <button onClick={() => setActiveTab('buying')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'buying' ? '#1e293b' : 'transparent', color: activeTab === 'buying' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <ShoppingBag size={18} /> Buying (Bills)
-          </button>
-          <button onClick={() => setActiveTab('customers')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'customers' ? '#1e293b' : 'transparent', color: activeTab === 'customers' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <Users size={18} /> Customers
-          </button>
-          <button onClick={() => setActiveTab('suppliers')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'suppliers' ? '#1e293b' : 'transparent', color: activeTab === 'suppliers' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <Truck size={18} /> Suppliers
-          </button>
-          <button onClick={() => setActiveTab('payments')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'payments' ? '#1e293b' : 'transparent', color: activeTab === 'payments' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <CreditCard size={18} /> Payments
-          </button>
-          <button onClick={() => setActiveTab('ReturnsTab')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'ReturnsTab' ? '#1e293b' : 'transparent', color: activeTab === 'ReturnsTab' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <CreditCard size={18} /> Credit & Debit Notes
-          </button>
-          <button onClick={() => setActiveTab('stock')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock' ? '#1e293b' : 'transparent', color: activeTab === 'stock' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <Package size={18} /> Stock (Items)
-          </button>
-          <button onClick={() => setActiveTab('stock-ledger')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'stock-ledger' ? '#1e293b' : 'transparent', color: activeTab === 'stock-ledger' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <Layers size={18} /> Stock Movement Ledger
-          </button>
-          <button onClick={() => setActiveTab('accounts')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'accounts' ? '#1e293b' : 'transparent', color: activeTab === 'accounts' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <BookOpen size={18} /> General Ledger
-          </button>
-          <button onClick={() => setActiveTab('reports')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'reports' ? '#1e293b' : 'transparent', color: activeTab === 'reports' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <PieChart size={18} /> Profit & Loss / Balance Sheet
-          </button>
-          <button onClick={() => setActiveTab('gst')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', border: 'none', background: activeTab === 'gst' ? '#1e293b' : 'transparent', color: activeTab === 'gst' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left' }}>
-            <PieChart size={18} /> GST Returns (GSTR-1/3B)
-          </button>
-        </nav>
-      </aside>
-
-      {/* Main Content Area */}
-      <main style={{ flex: 1, minWidth: 0, padding: '36px 40px', overflowY: 'auto' }}>
-        {loadError && (
-          <div
-            role="alert"
-            style={{
-              display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px',
-              padding: '12px 16px', borderRadius: '8px',
-              background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px'
-            }}
-          >
-            <X size={16} />
-            <span style={{ flex: 1 }}>{loadError}</span>
+      <main style={{ flex: 1, minWidth: 0, padding: 0, overflowY: 'auto' }}>
+        <header
+          className="no-print"
+          style={{
+            position: 'sticky', top: 0, left: 0, right: 0, zIndex: 100, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 24px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button
-              onClick={() => void loadData()}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', fontWeight: '600' }}
+              type="button"
+              onClick={handleStepBack}
+              title="Back (Esc)"
+              style={{display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px',
+                height: '30px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc',
+                color: '#334155', cursor: 'pointer', fontWeight: 'bold', fontSize: '15px'
+              }}
             >
-              <RefreshCw size={13} /> Retry
+              ←
             </button>
+            <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
+              {activeTab.toUpperCase().replace('-', ' ')}
+            </span>
           </div>
-        )}
-        {loading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', color: '#64748b', fontSize: '13px' }}>
-            <RefreshCw size={14} className="spin" /> Loading data...
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', position: 'relative' }}>
+            {companies.length > 1 ? (
+              <CompanySwitcher onCompanyChange={handleCompanyChange} />
+            ) : (
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '700',
+                color: '#0f172a',
+                backgroundColor: '#f1f5f9',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                border: '1px solid #cbd5e1'
+              }}>
+                {activeCompany?.name}
+              </div>
+            )}
+
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowUserDropdown(prev => !prev)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', borderRadius: '50%', background: '#10b981', color: '#ffffff', border: 'none', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', textTransform: 'uppercase'
+                }}
+              >
+                {(user?.first_name?.[0] || user?.username?.[0] || 'U')}
+              </button>
+
+              {showUserDropdown && (
+                <div style={{ position: 'absolute', right: 0, top: '46px', width: '200px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 1000, overflow: 'hidden' }}>
+                  <div style={{ padding: '12px 14px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#0f172a' }}>{user?.first_name || user?.username}</div>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>{user?.role}</div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', padding: '4px 0' }}>
+                    <button
+                      onClick={() => { setShowUserDropdown(false); setIsProfileOpen(true); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: 'transparent', border: 'none', borderBottom: '1px solid #f1f5f9', textAlign: 'left', fontSize: '12px', color: '#0f172a', fontWeight: '600', cursor: 'pointer', width: '100%' }}
+                    >
+                      My Profile &amp; Permissions
+                    </button>
+                    <button onClick={handleCleanLogout} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: 'transparent', border: 'none', textAlign: 'left', fontSize: '12px', color: '#ef4444', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </header>
 
-        {/* TAB 1: SELLING */}
-        {activeTab === 'selling' && (
-          <SellingTab
-            invoices={invoices}
-            filteredInvoices={filteredInvoices}
-            customers={customers}
-            salesStatusMap={salesStatusMap}
-            dashboardSummary={dashboardSummary}
-            gstData={gstData}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            setEditingId={setEditingId}
-            setInvoiceForm={setInvoiceForm}
-            setShowInvoiceModal={setShowInvoiceModal}
-            setSelectedInvoiceForPrint={setSelectedInvoiceForPrint}
-            handleDeleteInvoice={handleDeleteInvoice}
-          />
-        )}
+        <div style={{ padding: '28px 36px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {loadError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px' }}>
+              <X size={16} />
+              <span style={{ flex: 1 }}>{loadError}</span>
+              <button onClick={() => void loadData()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', fontWeight: '600' }}>
+                <RefreshCw size={13} /> Retry
+              </button>
+            </div>
+          )}
 
-        {/* TAB 2: BUYING */}
-        {activeTab === 'buying' && (
-          <BuyingTab
-            purchases={purchases}
-            filteredPurchases={filteredPurchases}
-            purchaseStatusMap={purchaseStatusMap}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            setEditingId={setEditingId}
-            setPurchaseForm={setPurchaseForm}
-            setShowPurchaseModal={setShowPurchaseModal}
-            setSelectedPurchaseForPrint={setSelectedPurchaseForPrint}
-            handleDeletePurchase={handleDeletePurchase}
-          />
-        )}
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748b', fontSize: '13px' }}>
+              <RefreshCw size={14} className="spin" /> Loading data...
+            </div>
+          )}
 
-        {/* TAB 3: CUSTOMERS */}
-        {activeTab === 'customers' && (
-          <CustomersTab
-            customers={customers}
-            partyOutstanding={partyOutstanding}
-            setEditingId={setEditingId}
-            setCustomerForm={setCustomerForm}
-            setShowCustomerModal={setShowCustomerModal}
-          />
-        )}
+          {activeTab === 'selling' && (
+            <SellingTab
+              user={user}
+              invoices={invoices}
+              filteredInvoices={filteredInvoices}
+              customers={customers}
+              salesStatusMap={salesStatusMap}
+              dashboardSummary={{ ...dashboardSummary, currency_symbol: currencySymbol }}
+              gstData={gstData}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              setEditingId={setEditingId}
+              setInvoiceForm={setInvoiceForm}
+              setShowInvoiceModal={setShowInvoiceModal}
+              setSelectedInvoiceForPrint={setSelectedInvoiceForPrint}
+              handleDeleteInvoice={handleDeleteInvoice}
+            />
+          )}
 
-        {/* TAB 4: SUPPLIERS */}
-        {activeTab === 'suppliers' && (
-          <SuppliersTab
-            suppliers={suppliers}
-            partyOutstanding={partyOutstanding}
-            setEditingId={setEditingId}
-            setSupplierForm={setSupplierForm}
-            setShowSupplierModal={setShowSupplierModal}
-          />
-        )}
+          {activeTab === 'buying' && (
+            <BuyingTab
+              user={user}
+              purchases={purchases}
+              filteredPurchases={filteredPurchases}
+              purchaseStatusMap={purchaseStatusMap}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              setEditingId={setEditingId}
+              setPurchaseForm={setPurchaseForm}
+              setShowPurchaseModal={setShowPurchaseModal}
+              setSelectedPurchaseForPrint={setSelectedPurchaseForPrint}
+              handleDeletePurchase={handleDeletePurchase}
+            />
+          )}
 
-        {/* TAB 5: PAYMENTS */}
-        {activeTab === 'payments' && (
-          <PaymentsTab
-            payments={payments}
-            setPaymentForm={setPaymentForm}
-            setShowPaymentModal={setShowPaymentModal}
-            setSelectedPaymentForPrint={setSelectedPaymentForPrint}
-            handleDeletePayment={handleDeletePayment}
-            onOpenReconciliation={() => setShowReconciliationModal(true)}
-            setEditingId={setEditingId} // <-- aa pass kari do
-          />
-        )}
+          {activeTab === 'customers' && (
+            <CustomersTab
+              customers={customers}
+              partyOutstanding={partyOutstanding}
+              setEditingId={setEditingId}
+              setCustomerForm={setCustomerForm}
+              setShowCustomerModal={setShowCustomerModal}
+            />
+          )}
 
-        {/* TAB 6: STOCK */}
-        {activeTab === 'stock' && (
-          <StockTab
-            items={items}
-            filteredItems={filteredItems}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            setEditingId={setEditingId}
-            setItemForm={setItemForm}
-            setShowItemModal={setShowItemModal}
-          />
-        )}
+          {activeTab === 'suppliers' && (
+            <SuppliersTab
+              suppliers={suppliers}
+              partyOutstanding={partyOutstanding}
+              setEditingId={setEditingId}
+              setSupplierForm={setSupplierForm}
+              setShowSupplierModal={setShowSupplierModal}
+            />
+          )}
 
-        {/* TAB 7: STOCK MOVEMENT LEDGER */}
-        {activeTab === 'stock-ledger' && (
-          <StockLedgerTab
-            stockLedger={stockLedger}
-            items={items}
-            stockItemFilter={stockItemFilter}
-            setStockItemFilter={setStockItemFilter}
-          />
-        )}
+          {activeTab === 'payments' && (
+            <PaymentsTab
+              payments={payments}
+              setPaymentForm={setPaymentForm}
+              setShowPaymentModal={setShowPaymentModal}
+              setSelectedPaymentForPrint={setSelectedPaymentForPrint}
+              handleDeletePayment={handleDeletePayment}
+              onOpenReconciliation={() => setShowReconciliationModal(true)}
+              setEditingId={setEditingId}
+            />
+          )}
 
-        {/* TAB 8: GL WITH FILTERS */}
-        {activeTab === 'accounts' && (
-          <AccountsTab
-            glEntries={glEntries}
-            allPartyNames={allPartyNames}
-            glAccountFilter={glAccountFilter}
-            setGlAccountFilter={setGlAccountFilter}
-            glPartyFilter={glPartyFilter}
-            setGlPartyFilter={setGlPartyFilter}
-            fromDate={fromDate}
-            setFromDate={setFromDate}
-            toDate={toDate}
-            setToDate={setToDate}
-            totalDebit={totalDebit}
-            totalCredit={totalCredit}
-            closingBalance={closingBalance}
-            setShowLedgerPrintModal={setShowLedgerPrintModal}
-            onNewJournalEntry={() => setShowJournalModal(true)}
-          />
-        )}
+          {activeTab === 'stock' && (
+            <StockTab
+              items={items}
+              filteredItems={filteredItems}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              setEditingId={setEditingId}
+              setItemForm={setItemForm}
+              setShowItemModal={setShowItemModal}
+            />
+          )}
 
-        {/* TAB 9: GST */}
-        {activeTab === 'gst' && (
-          <GSTTab
-            gstData={gstData}
-            setShowGSTPrintModal={setShowGstModal}
-          />
-        )}
+          {activeTab === 'stock-ledger' && (
+            <StockLedgerTab
+              stockLedger={stockLedger}
+              items={items}
+              stockItemFilter={stockItemFilter}
+              setStockItemFilter={setStockItemFilter}
+            />
+          )}
 
-        {/* TAB 10: REPORTS */}
-        {activeTab === 'reports' && (
-          <ReportsTab
-            finance={finance}
-            loading={loading}
-            loadError={loadError}
-            setShowFinancePrintModal={setShowFinancePrintModal}
-            onDrillDown={(accountName: string) => {
-              setGlAccountFilter(accountName);
-              setActiveTab('accounts');
-            }}
-          />
-        )}
+          {activeTab === 'accounts' && (
+            <AccountsTab
+              glEntries={glEntries}
+              allPartyNames={allPartyNames}
+              glAccountFilter={glAccountFilter}
+              setGlAccountFilter={setGlAccountFilter}
+              glPartyFilter={glPartyFilter}
+              setGlPartyFilter={setGlPartyFilter}
+              fromDate={fromDate}
+              setFromDate={setFromDate}
+              toDate={toDate}
+              setToDate={setToDate}
+              totalDebit={totalDebit}
+              totalCredit={totalCredit}
+              closingBalance={closingBalance}
+              setShowLedgerPrintModal={setShowLedgerPrintModal}
+              onNewJournalEntry={() => setShowJournalModal(true)}
+            />
+          )}
 
-        {/* TAB 11: RETURNS */}
-        {activeTab === 'ReturnsTab' && <ReturnsTab />}
+          {activeTab === 'gst' && <GSTTab gstData={gstData} setShowGSTPrintModal={setShowGstModal} />}
+
+          {activeTab === 'reports' && (
+            <ReportsTab
+              finance={finance}
+              loading={loading}
+              loadError={loadError}
+              setShowFinancePrintModal={setShowFinancePrintModal}
+              onDrillDown={(accountName: string) => {
+                setGlAccountFilter(accountName);
+                setActiveTab('accounts');
+              }}
+            />
+          )}
+
+          {activeTab === 'ReturnsTab' && <ReturnsTab />}
+
+          {activeTab === 'approvals' && (
+            <ApprovalsTab invoices={invoices} purchases={purchases} onRefresh={() => void loadData()} />
+          )}
+
+          {activeTab === 'users_management' && <UserManagementTab />}
+        </div>
       </main>
 
-      {/* Invoice Print Modal */}
-      {selectedInvoiceForPrint && (
-        <InvoicePrintModal
-          invoice={selectedInvoiceForPrint}
-          customer={customers.find(c => c.id === selectedInvoiceForPrint.customer || c.customer_name === selectedInvoiceForPrint.customer_name)}
-          itemsMaster={items}
-          onClose={() => setSelectedInvoiceForPrint(null)}
-        />
-      )}
+      {/* Customer Modal with Compliance Lock for Sales Users */}
+      {showCustomerModal && (() => {
+        const isSalesUser = String(user?.role || '').toUpperCase().replace(/\s+/g, '_') === 'SALES_USER';
+        const isCustomerCoreLocked = Boolean(editingId && isSalesUser);
 
-      {/* Purchase Bill Print Modal */}
-      {selectedPurchaseForPrint && (
-        <PurchaseBillPrintModal
-          bill={selectedPurchaseForPrint}
-          supplier={suppliers.find(s => s.id === selectedPurchaseForPrint.supplier || s.supplier_name === selectedPurchaseForPrint.supplier_name)}
-          itemsMaster={items}
-          onClose={() => setSelectedPurchaseForPrint(null)}
-        />
-      )}
+        return (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+          }}>
+            <div style={{
+              background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0f172a' }}>
+                  {editingId ? (isSalesUser ? 'Update Customer Contact & Address' : 'Edit Customer') : 'New Customer'}
+                </h2>
+                <button
+                  onClick={() => setShowCustomerModal(false)}
+                  style={{ background: '#fee2e2', color: '#dc2626', border: 'none', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  ✕
+                </button>
+              </div>
 
-      {/* Payment Print Modal */}
-      {selectedPaymentForPrint && (
-        <PaymentPrintModal
-          payment={selectedPaymentForPrint}
-          onClose={() => setSelectedPaymentForPrint(null)}
-        />
-      )}
+              {isCustomerCoreLocked && (
+                <div style={{
+                  background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
+                  padding: '8px 12px', borderRadius: '6px', fontSize: '11px', marginBottom: '14px', lineHeight: '1.4'
+                }}>
+                  <strong>GST Compliance Lock:</strong> Sales Users can only update phone, email, and dispatch address. Legal Name and GSTIN can only be modified by a Manager or Admin.
+                </div>
+              )}
 
-      {/* Ledger Statement Print Modal */}
-      {showLedgerPrintModal && (
-        <LedgerPrintModal
-          entries={glEntries}
-          accountFilter={glAccountFilter}
-          partyFilter={glPartyFilter}
-          totalDebit={totalDebit}
-          totalCredit={totalCredit}
-          closingBalance={closingBalance}
-          onClose={() => setShowLedgerPrintModal(false)}
-        />
-      )}
+              <form onSubmit={handleSaveCustomer} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                    Customer Name * {isCustomerCoreLocked && <span style={{ color: '#b45309' }}>(Locked)</span>}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isCustomerCoreLocked}
+                    value={customerForm.customer_name}
+                    onChange={e => setCustomerForm({ ...customerForm, customer_name: e.target.value })}
+                    placeholder="e.g. Acme Corp / John Doe"
+                    style={{
+                      width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box',
+                      background: isCustomerCoreLocked ? '#f1f5f9' : '#fff',
+                      color: isCustomerCoreLocked ? '#64748b' : '#0f172a',
+                      cursor: isCustomerCoreLocked ? 'not-allowed' : 'text'
+                    }}
+                  />
+                </div>
 
-      <JournalEntryModal
-        isOpen={showJournalModal}
-        onClose={() => setShowJournalModal(false)}
-        onSave={handleSaveJournalEntry}
-        allPartyNames={allPartyNames}
-      />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Customer Type</label>
+                    <select
+                      disabled={isCustomerCoreLocked}
+                      value={customerForm.customer_type}
+                      onChange={e => setCustomerForm({ ...customerForm, customer_type: e.target.value as any })}
+                      style={{
+                        width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box',
+                        background: isCustomerCoreLocked ? '#f1f5f9' : '#fff',
+                        color: isCustomerCoreLocked ? '#64748b' : '#0f172a',
+                        cursor: isCustomerCoreLocked ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <option value="Individual">Individual (B2C / Retail)</option>
+                      <option value="Company">Company (B2B)</option>
+                    </select>
+                  </div>
 
-      <PaymentReconciliationModal
-        isOpen={showReconciliationModal}
-        onClose={() => setShowReconciliationModal(false)}
-        customers={customers}
-        suppliers={suppliers}
-        onReconciliationDone={() => void loadData()}
-      />
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Tax / GST Category</label>
+                    <select
+                      disabled={isCustomerCoreLocked}
+                      value={customerForm.gst_category}
+                      onChange={e => {
+                        const cat = e.target.value;
+                        setCustomerForm({
+                          ...customerForm,
+                          gst_category: cat as any,
+                          gstin: cat === 'Unregistered' ? '' : customerForm.gstin
+                        });
+                      }}
+                      style={{
+                        width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box',
+                        background: isCustomerCoreLocked ? '#f1f5f9' : '#fff',
+                        color: isCustomerCoreLocked ? '#64748b' : '#0f172a',
+                        cursor: isCustomerCoreLocked ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <option value="Unregistered">Unregistered</option>
+                      <option value="Registered Regular">Registered Regular</option>
+                      <option value="Registered Composition">Registered Composition</option>
+                    </select>
+                  </div>
+                </div>
 
-      {/* Financial Statements Print Modal */}
-      {showFinancePrintModal && finance && (
-        <FinancialReportPrintModal finance={finance} onClose={() => setShowFinancePrintModal(false)} />
-      )}
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
+                    Tax ID / GSTIN {isCustomerCoreLocked ? <span style={{ color: '#b45309' }}>(Locked)</span> : <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Optional - Leave blank for B2C)</span>}
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={15}
+                    disabled={isCustomerCoreLocked}
+                    value={customerForm.gstin || ''}
+                    onChange={e => {
+                      const val = e.target.value.toUpperCase();
+                      setCustomerForm({
+                        ...customerForm,
+                        gstin: val,
+                        gst_category: val.length > 0 ? 'Registered Regular' : customerForm.gst_category
+                      });
+                    }}
+                    placeholder="e.g. 24AAAAA0000A1Z5"
+                    style={{
+                      width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box',
+                      background: isCustomerCoreLocked ? '#f1f5f9' : '#fff',
+                      color: isCustomerCoreLocked ? '#64748b' : '#0f172a',
+                      cursor: isCustomerCoreLocked ? 'not-allowed' : 'text'
+                    }}
+                  />
+                </div>
 
-      {/* SUPPLIER MODAL */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Mobile Number</label>
+                    <input
+                      type="text"
+                      value={customerForm.mobile_no || ''}
+                      onChange={e => setCustomerForm({ ...customerForm, mobile_no: e.target.value })}
+                      placeholder="e.g. 9876543210"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email Address</label>
+                    <input
+                      type="email"
+                      value={customerForm.email || ''}
+                      onChange={e => setCustomerForm({ ...customerForm, email: e.target.value })}
+                      placeholder="client@example.com"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>City</label>
+                    <input
+                      type="text"
+                      value={customerForm.city || ''}
+                      onChange={e => setCustomerForm({ ...customerForm, city: e.target.value })}
+                      placeholder="e.g. Ahmedabad / North Bay"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Postal Code / PIN</label>
+                    <input
+                      type="text"
+                      value={customerForm.postal_code || ''}
+                      onChange={e => setCustomerForm({ ...customerForm, postal_code: e.target.value })}
+                      placeholder="e.g. 380001"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Address (Street / Building)</label>
+                  <textarea
+                    rows={2}
+                    value={customerForm.address || ''}
+                    onChange={e => setCustomerForm({ ...customerForm, address: e.target.value })}
+                    placeholder="e.g. Suite 400, Financial District"
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', resize: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomerModal(false)}
+                    style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                  >
+                    {editingId ? 'Update Customer' : 'Save Customer'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Supplier Modal */}
       {showSupplierModal && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -829,7 +1239,6 @@ export default function App() {
             </div>
 
             <form onSubmit={handleSaveSupplier} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {/* Supplier Name */}
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Supplier / Vendor Name *</label>
                 <input
@@ -837,12 +1246,11 @@ export default function App() {
                   required
                   value={supplierForm.supplier_name}
                   onChange={e => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })}
-                  placeholder="e.g. Patel & Sons LLP / Amazon India"
+                  placeholder="e.g. Apex Industrial Supplies"
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                 />
               </div>
 
-              {/* Supplier Type & GST Category */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Supplier Type</label>
@@ -857,7 +1265,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>GST Category</label>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Tax / GST Category</label>
                   <select
                     value={supplierForm.gst_category}
                     onChange={e => {
@@ -877,10 +1285,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* GSTIN */}
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
-                  GSTIN <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Unregistered હોય તો ખાલી રાખો)</span>
+                  Tax ID / GSTIN <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Optional - Leave blank if unregistered)</span>
                 </label>
                 <input
                   type="text"
@@ -894,12 +1301,11 @@ export default function App() {
                       gst_category: val.length > 0 ? 'Registered Regular' : supplierForm.gst_category
                     });
                   }}
-                  placeholder="24AAAAA0000A1Z5"
+                  placeholder="e.g. 24AAAAA0000A1Z5"
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                 />
               </div>
 
-              {/* Mobile & Email */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Mobile Number</label>
@@ -907,13 +1313,13 @@ export default function App() {
                     type="text"
                     value={supplierForm.mobile_no || ''}
                     onChange={e => setSupplierForm({ ...supplierForm, mobile_no: e.target.value })}
-                    placeholder="9876543210"
+                    placeholder="e.g. 9876543210"
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email ID</label>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email Address</label>
                   <input
                     type="email"
                     value={supplierForm.email || ''}
@@ -924,7 +1330,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* City & Postal Code */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>City</label>
@@ -932,47 +1337,35 @@ export default function App() {
                     type="text"
                     value={supplierForm.city || ''}
                     onChange={e => setSupplierForm({ ...supplierForm, city: e.target.value })}
-                    placeholder="Mumbai / Ahmedabad"
+                    placeholder="e.g. Ahmedabad / New York"
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Pincode / Postal Code</label>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Postal Code / PIN</label>
                   <input
                     type="text"
                     value={supplierForm.postal_code || ''}
                     onChange={e => setSupplierForm({ ...supplierForm, postal_code: e.target.value })}
-                    placeholder="400001"
+                    placeholder="e.g. 400001"
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
               </div>
 
-              {/* Address */}
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
-                  Address (Street / Building / Area)
-                </label>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Address (Street / Building)</label>
                 <textarea
                   rows={2}
                   value={supplierForm.address || ''}
                   onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
                   placeholder="e.g. 101, Industrial Estate, Ring Road"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #cbd5e1',
-                    marginTop: '4px',
-                    resize: 'none',
-                    boxSizing: 'border-box'
-                  }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', resize: 'none', boxSizing: 'border-box' }}
                 />
               </div>
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setShowSupplierModal(false)}
@@ -992,291 +1385,10 @@ export default function App() {
         </div>
       )}
 
-      {showPurchaseModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Purchase Bill' : 'Record Purchase Bill'}</h3><button onClick={() => setShowPurchaseModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
-            <form onSubmit={handleSavePurchase} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Bill #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={purchaseForm.bill_number} onChange={e => setPurchaseForm({ ...purchaseForm, bill_number: e.target.value })} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Posting Date</label><input type="date" required style={fieldStyle} value={purchaseForm.posting_date} onChange={e => setPurchaseForm({ ...purchaseForm, posting_date: e.target.value })} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={purchaseForm.due_date} onChange={e => setPurchaseForm({ ...purchaseForm, due_date: e.target.value })} /></div>
-                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={purchaseForm.tax_rate} onChange={e => setPurchaseForm({ ...purchaseForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
-              </div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Supplier *</label><select required style={fieldStyle} value={purchaseForm.supplier_id} onChange={e => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })}><option value="">-- Choose Supplier --</option>{suppliers.map(s => (<option key={s.id} value={s.id}>{s.supplier_name}</option>))}</select></div>
-
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
-                <LineItemsEditor
-                  lines={purchaseForm.lines}
-                  items={items}
-                  showStock={false}
-                  onChange={lines => setPurchaseForm(prev => ({ ...prev, lines }))}
-                />
-              </div>
-
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Net Total</span><strong>Rs. {purchaseNet.toFixed(2)}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Input GST ({purchaseForm.tax_rate}%)</span><strong>Rs. {purchaseTax.toFixed(2)}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}><strong>Total Payable</strong><strong style={{ color: '#0369a1' }}>Rs. {(purchaseNet + purchaseTax).toFixed(2)}</strong></div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowPurchaseModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Bill' : 'Submit Bill'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* CUSTOMER MODAL */}
-      {showCustomerModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div style={{
-            background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0f172a' }}>
-                {editingId ? 'Edit Customer' : 'New Customer'}
-              </h2>
-              <button
-                onClick={() => setShowCustomerModal(false)}
-                style={{ background: '#fee2e2', color: '#dc2626', border: 'none', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveCustomer} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {/* Customer Name */}
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Customer Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={customerForm.customer_name}
-                  onChange={e => setCustomerForm({ ...customerForm, customer_name: e.target.value })}
-                  placeholder="e.g. Ramesh Patel / ABC Enterprises"
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              {/* Customer Type & GST Category */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Customer Type</label>
-                  <select
-                    value={customerForm.customer_type}
-                    onChange={e => setCustomerForm({ ...customerForm, customer_type: e.target.value as any })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
-                  >
-                    <option value="Individual">Individual (B2C / Retail)</option>
-                    <option value="Company">Company (B2B)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>GST Category</label>
-                  <select
-                    value={customerForm.gst_category}
-                    onChange={e => {
-                      const cat = e.target.value;
-                      setCustomerForm({
-                        ...customerForm,
-                        gst_category: cat as any,
-                        gstin: cat === 'Unregistered' ? '' : customerForm.gstin
-                      });
-                    }}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
-                  >
-                    <option value="Unregistered">Unregistered</option>
-                    <option value="Registered Regular">Registered Regular</option>
-                    <option value="Registered Composition">Registered Composition</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* GSTIN (Optional) */}
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
-                  GSTIN <span style={{ fontWeight: 'normal', color: '#94a3b8' }}>(Optional - B2C હોય તો ખાલી રાખો)</span>
-                </label>
-                <input
-                  type="text"
-                  maxLength={15}
-                  value={customerForm.gstin || ''}
-                  onChange={e => {
-                    const val = e.target.value.toUpperCase();
-                    setCustomerForm({
-                      ...customerForm,
-                      gstin: val,
-                      gst_category: val.length > 0 ? 'Registered Regular' : customerForm.gst_category
-                    });
-                  }}
-                  placeholder="24AAAAA0000A1Z5"
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              {/* Mobile & Email */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Mobile Number</label>
-                  <input
-                    type="text"
-                    value={customerForm.mobile_no || ''}
-                    onChange={e => setCustomerForm({ ...customerForm, mobile_no: e.target.value })}
-                    placeholder="9876543210"
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Email ID</label>
-                  <input
-                    type="email"
-                    value={customerForm.email || ''}
-                    onChange={e => setCustomerForm({ ...customerForm, email: e.target.value })}
-                    placeholder="customer@example.com"
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </div>
-
-              {/* City & Postal Code */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>City</label>
-                  <input
-                    type="text"
-                    value={customerForm.city || ''}
-                    onChange={e => setCustomerForm({ ...customerForm, city: e.target.value })}
-                    placeholder="Ahmedabad"
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Pincode / Postal Code</label>
-                  <input
-                    type="text"
-                    value={customerForm.postal_code || ''}
-                    onChange={e => setCustomerForm({ ...customerForm, postal_code: e.target.value })}
-                    placeholder="380001"
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </div>
-
-              {/* Address */}
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>
-                  Address (Street / Building / Area)
-                </label>
-                <textarea
-                  rows={2}
-                  value={customerForm.address || ''}
-                  onChange={e => setCustomerForm({ ...customerForm, address: e.target.value })}
-                  placeholder="e.g. 402, Shivalik Business Center, SG Highway"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #cbd5e1',
-                    marginTop: '4px',
-                    resize: 'none',
-                    boxSizing: 'border-box'
-                  }}
-                />
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowCustomerModal(false)}
-                  style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-                >
-                  {editingId ? 'Update Customer' : 'Save Customer'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showItemModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '420px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Item' : 'Create New Item'}</h3><button onClick={() => setShowItemModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
-            <form onSubmit={handleSaveItem} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate (Rs.)</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock (Ledger Synced)</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowItemModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Item' : 'Save Item'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showInvoiceModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Sales Invoice' : 'Create Sales Invoice'}</h3><button onClick={() => setShowInvoiceModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button></div>
-            <form onSubmit={handleSaveInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={fieldStyle} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={invoiceForm.due_date} onChange={e => setInvoiceForm({ ...invoiceForm, due_date: e.target.value })} /></div>
-                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label><select style={fieldStyle} value={invoiceForm.tax_rate} onChange={e => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
-              </div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={fieldStyle} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
-
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
-                <LineItemsEditor
-                  lines={invoiceForm.lines}
-                  items={items}
-                  showStock={true}
-                  onChange={lines => setInvoiceForm(prev => ({ ...prev, lines }))}
-                />
-              </div>
-
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Net Total</span><strong>Rs. {invoiceNet.toFixed(2)}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}><span>Output GST ({invoiceForm.tax_rate}%)</span><strong>Rs. {invoiceTax.toFixed(2)}</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}><strong>Grand Total</strong><strong style={{ color: '#0369a1' }}>Rs. {(invoiceNet + invoiceTax).toFixed(2)}</strong></div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" onClick={() => setShowInvoiceModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Invoice' : 'Submit Invoice'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
+      {/* Payment Entry Modal */}
       {showPaymentModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '480px' }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '520px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Payment Entry' : 'Payment Entry'}</h3>
               <button onClick={() => { setShowPaymentModal(false); setEditingId(null); }} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
@@ -1285,23 +1397,32 @@ export default function App() {
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Payment Type</label>
-                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.payment_type} onChange={e => {
-                    const type = e.target.value as 'Receive' | 'Pay';
-                    setPaymentForm(prev => ({
-                      ...prev,
-                      payment_type: type,
-                      party_type: type === 'Receive' ? 'Customer' : 'Supplier',
-                      party_name: ''
-                    }));
-                  }}>
+                  <select
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+                    value={paymentForm.payment_type}
+                    onChange={e => {
+                      const type = e.target.value as 'Receive' | 'Pay';
+                      setPaymentForm(prev => ({
+                        ...prev,
+                        payment_type: type,
+                        party_type: type === 'Receive' ? 'Customer' : 'Supplier',
+                        party_name: '',
+                        reference_no: ''
+                      }));
+                    }}
+                  >
                     <option value="Receive">Receive (From Customer)</option>
                     <option value="Pay">Pay (To Supplier)</option>
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '12px', fontWeight: '600' }}>Mode</label>
-                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.mode_of_payment} onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as 'Bank' | 'Cash' | 'Cheque' })}>
-                    <option value="Bank">Bank Transfer / UPI</option>
+                  <select
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+                    value={paymentForm.mode_of_payment}
+                    onChange={e => setPaymentForm({ ...paymentForm, mode_of_payment: e.target.value as any })}
+                  >
+                    <option value="Bank">Bank Transfer / Wire</option>
                     <option value="Cash">Cash</option>
                     <option value="Cheque">Cheque</option>
                   </select>
@@ -1310,23 +1431,99 @@ export default function App() {
 
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Party Name *</label>
-                <select required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.party_name} onChange={e => setPaymentForm({ ...paymentForm, party_name: e.target.value })}>
+                <select
+                  required
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+                  value={paymentForm.party_name}
+                  onChange={e => setPaymentForm({ ...paymentForm, party_name: e.target.value })}
+                >
                   <option value="">-- Choose Party --</option>
-                  {paymentForm.payment_type === 'Receive' ? customers.map(c => <option key={c.id} value={c.customer_name}>{c.customer_name}</option>) : suppliers.map(s => <option key={s.id} value={s.supplier_name}>{s.supplier_name}</option>)}
+                  {paymentForm.payment_type === 'Receive'
+                    ? customers.map(c => <option key={c.id} value={c.customer_name}>{c.customer_name}</option>)
+                    : suppliers.map(s => <option key={s.id} value={s.supplier_name}>{s.supplier_name}</option>)}
                 </select>
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount (Rs.) *</label>
-                <input type="number" step="0.01" required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={paymentForm.paid_amount} onChange={e => setPaymentForm({ ...paymentForm, paid_amount: e.target.value })} />
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Amount ({currencySymbol}) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  value={paymentForm.paid_amount}
+                  onChange={e => setPaymentForm({ ...paymentForm, paid_amount: e.target.value })}
+                />
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '600' }}>Reference / UTR / Cheque No</label>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>
+                  Against Invoice / Bill <span style={{ fontWeight: 'normal', color: '#64748b' }}>(Leave blank for direct / advance payment)</span>
+                </label>
+                <select
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff', boxSizing: 'border-box' }}
+                  value={paymentForm.reference_no?.startsWith('INV-') || paymentForm.reference_no?.startsWith('PUR-') ? paymentForm.reference_no : ''}
+                  onChange={e => {
+                    const selRef = e.target.value;
+                    let dueAmount = '0';
+
+                    if (paymentForm.payment_type === 'Receive') {
+                      const inv = invoices.find(i => i.invoice_number === selRef);
+                      if (inv) {
+                        const statusInfo = salesStatusMap[inv.id || 0];
+                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(inv.grand_total))).toFixed(2);
+                      }
+                    } else {
+                      const bill = purchases.find(p => p.bill_number === selRef);
+                      if (bill) {
+                        const statusInfo = purchaseStatusMap[bill.id || 0];
+                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(bill.grand_total))).toFixed(2);
+                      }
+                    }
+
+                    setPaymentForm(prev => ({
+                      ...prev,
+                      reference_no: selRef,
+                      paid_amount: dueAmount !== '0' ? dueAmount : prev.paid_amount,
+                      remarks: selRef ? `Payment against ${selRef}` : prev.remarks
+                    }));
+                  }}
+                >
+                  <option value="">-- Direct / Advance Payment (No Reference) --</option>
+                  {paymentForm.payment_type === 'Receive'
+                    ? invoices
+                        .filter(inv => inv.customer_name === paymentForm.party_name && inv.status === 'Approved')
+                        .map(inv => {
+                          const info = salesStatusMap[inv.id || 0];
+                          if (info && info.status === 'Paid') return null;
+                          const bal = info ? info.balance : parseFloat(String(inv.grand_total));
+                          return (
+                            <option key={inv.id} value={inv.invoice_number}>
+                              {inv.invoice_number} (Due: {currencySymbol} {bal.toFixed(2)})
+                            </option>
+                          );
+                        })
+                    : purchases
+                        .filter(pur => pur.supplier_name === paymentForm.party_name && pur.status === 'Approved')
+                        .map(pur => {
+                          const info = purchaseStatusMap[pur.id || 0];
+                          if (info && info.status === 'Paid') return null;
+                          const bal = info ? info.balance : parseFloat(String(pur.grand_total));
+                          return (
+                            <option key={pur.id} value={pur.bill_number}>
+                              {pur.bill_number} (Due: {currencySymbol} {bal.toFixed(2)})
+                            </option>
+                          );
+                        })}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Reference / UTR / Cheque No (Optional)</label>
                 <input
-                  placeholder="e.g. UPI-123456789 or CHQ-00123"
+                  placeholder="e.g. WIRE-89472 / CHQ-1002"
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                  value={paymentForm.reference_no || ''}
+                  value={paymentForm.reference_no?.startsWith('INV-') || paymentForm.reference_no?.startsWith('PUR-') ? '' : paymentForm.reference_no}
                   onChange={e => setPaymentForm({ ...paymentForm, reference_no: e.target.value })}
                 />
               </div>
@@ -1334,7 +1531,7 @@ export default function App() {
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Remarks / Narration</label>
                 <input
-                  placeholder="e.g. Paid against Invoice INV-0002"
+                  placeholder="e.g. Settlement for INV-0001"
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
                   value={paymentForm.remarks || ''}
                   onChange={e => setPaymentForm({ ...paymentForm, remarks: e.target.value })}
@@ -1351,9 +1548,220 @@ export default function App() {
           </div>
         </div>
       )}
-      {showGstModal && (
-        <GSTPrintModal data={gstData} onClose={() => setShowGstModal(false)} />
+
+      {/* Item Modal */}
+      {showItemModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Item' : 'Create New Item'}</h3>
+              <button onClick={() => setShowItemModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleSaveItem} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                <button type="button" onClick={() => setShowItemModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Item' : 'Save Item'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
+
+      {/* Sales Invoice Modal */}
+      {showInvoiceModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Sales Invoice' : 'Create Sales Invoice'}</h3>
+              <button onClick={() => setShowInvoiceModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleSaveInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={fieldStyle} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={invoiceForm.due_date} onChange={e => setInvoiceForm({ ...invoiceForm, due_date: e.target.value })} /></div>
+                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Tax / GST %</label><select style={fieldStyle} value={invoiceForm.tax_rate} onChange={e => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
+              </div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Customer</label><select required style={fieldStyle} value={invoiceForm.customer_id} onChange={e => setInvoiceForm({ ...invoiceForm, customer_id: e.target.value })}><option value="">-- Choose Customer --</option>{customers.map(c => (<option key={c.id} value={c.id}>{c.customer_name}</option>))}</select></div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
+                <LineItemsEditor
+                  lines={invoiceForm.lines}
+                  items={items}
+                  showStock={true}
+                  currencySymbol={currencySymbol}
+                  onChange={lines => setInvoiceForm(prev => ({ ...prev, lines }))}
+                />
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>Net Total</span><strong>{currencySymbol} {invoiceNet.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>Tax ({invoiceForm.tax_rate}%)</span><strong>{currencySymbol} {invoiceTax.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}>
+                  <strong>Grand Total</strong><strong style={{ color: '#0369a1' }}>{currencySymbol} {(invoiceNet + invoiceTax).toFixed(2)}</strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                <button type="button" onClick={() => setShowInvoiceModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Invoice' : 'Submit Invoice'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Purchase Bill Modal */}
+      {showPurchaseModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Purchase Bill' : 'Record Purchase Bill'}</h3>
+              <button onClick={() => setShowPurchaseModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleSavePurchase} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Bill #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={purchaseForm.bill_number} onChange={e => setPurchaseForm({ ...purchaseForm, bill_number: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Posting Date</label><input type="date" required style={fieldStyle} value={purchaseForm.posting_date} onChange={e => setPurchaseForm({ ...purchaseForm, posting_date: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Due Date</label><input type="date" required style={fieldStyle} value={purchaseForm.due_date} onChange={e => setPurchaseForm({ ...purchaseForm, due_date: e.target.value })} /></div>
+                <div style={{ width: '110px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Tax / GST %</label><select style={fieldStyle} value={purchaseForm.tax_rate} onChange={e => setPurchaseForm({ ...purchaseForm, tax_rate: e.target.value })}>{GST_SLABS.map(s => (<option key={s} value={s}>{s}%</option>))}</select></div>
+              </div>
+              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Select Supplier *</label><select required style={fieldStyle} value={purchaseForm.supplier_id} onChange={e => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })}><option value="">-- Choose Supplier --</option>{suppliers.map(s => (<option key={s.id} value={s.id}>{s.supplier_name}</option>))}</select></div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
+                <LineItemsEditor
+                  lines={purchaseForm.lines}
+                  items={items}
+                  showStock={false}
+                  currencySymbol={currencySymbol}
+                  onChange={lines => setPurchaseForm(prev => ({ ...prev, lines }))}
+                />
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>Net Total</span><strong>{currencySymbol} {purchaseNet.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>Input Tax ({purchaseForm.tax_rate}%)</span><strong>{currencySymbol} {purchaseTax.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}>
+                  <strong>Total Payable</strong><strong style={{ color: '#0369a1' }}>{currencySymbol} {(purchaseNet + purchaseTax).toFixed(2)}</strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                <button type="button" onClick={() => setShowPurchaseModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>{editingId ? 'Update Bill' : 'Submit Bill'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {selectedInvoiceForPrint && (
+        <InvoicePrintModal
+          invoice={selectedInvoiceForPrint}
+          customer={customers.find(c => c.id === selectedInvoiceForPrint.customer || c.customer_name === selectedInvoiceForPrint.customer_name)}
+          itemsMaster={items}
+          company={activeCompany}
+          onClose={() => setSelectedInvoiceForPrint(null)}
+        />
+      )}
+
+      {selectedPurchaseForPrint && (
+        <PurchaseBillPrintModal
+          bill={selectedPurchaseForPrint}
+          supplier={suppliers.find(s => s.id === selectedPurchaseForPrint.supplier || s.supplier_name === selectedPurchaseForPrint.supplier_name)}
+          itemsMaster={items}
+          company={activeCompany} 
+          onClose={() => setSelectedPurchaseForPrint(null)}
+        />
+      )}
+
+      {selectedPaymentForPrint && (
+        <PaymentPrintModal
+          payment={selectedPaymentForPrint}
+          company={activeCompany}
+          onClose={() => setSelectedPaymentForPrint(null)}
+        />
+      )}
+
+      {showLedgerPrintModal && (
+        <LedgerPrintModal
+          entries={glEntries}
+          accountFilter={glAccountFilter}
+          partyFilter={glPartyFilter}
+          totalDebit={totalDebit}
+          totalCredit={totalCredit}
+          closingBalance={closingBalance}
+          company={activeCompany}
+          onClose={() => setShowLedgerPrintModal(false)}
+        />
+      )}
+
+      <JournalEntryModal
+        isOpen={showJournalModal}
+        onClose={() => setShowJournalModal(false)}
+        onSave={handleSaveJournalEntry}
+        allPartyNames={allPartyNames}
+      />
+
+      <PaymentReconciliationModal
+        isOpen={showReconciliationModal}
+        onClose={() => setShowReconciliationModal(false)}
+        customers={customers}
+        suppliers={suppliers}
+        onReconciliationDone={() => void loadData()}
+      />
+
+      {showFinancePrintModal && finance && (
+        <FinancialReportPrintModal 
+          finance={finance}
+          company={activeCompany} 
+          companyName={activeCompany?.name}
+          onClose={() => setShowFinancePrintModal(false)} 
+        />
+      )}
+
+      {showGstModal && (
+        <GSTPrintModal 
+          data={gstData} 
+          companyName={activeCompany?.name || 'TallyBIZ Enterprise'}
+          onClose={() => setShowGstModal(false)} 
+        />
+      )}
+      <UserProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
+
+      {/* Tally Style Quit Confirmation Popup */}
+      <QuitConfirmModal
+        isOpen={showQuitModal}
+        onConfirm={() => {
+          setShowQuitModal(false);
+          handleCleanLogout();
+        }}
+        onCancel={() => setShowQuitModal(false)}
+      />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainERPApp />
+    </AuthProvider>
   );
 }

@@ -9,6 +9,7 @@ interface LedgerPrintModalProps {
   totalDebit: number;
   totalCredit: number;
   closingBalance: number;
+  company?: any;
   onClose: () => void;
 }
 
@@ -19,6 +20,7 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
   totalDebit,
   totalCredit,
   closingBalance,
+  company,
   onClose,
 }) => {
   const partyLabel = partyFilter !== 'all' ? partyFilter : (accountFilter !== 'all' ? accountFilter : 'General_Ledger');
@@ -36,7 +38,8 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
     window.print();
   };
 
-  // Chronological order for statement (oldest to newest)
+  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
+
   const sortedEntries = [...entries].sort((a, b) => {
     if (a.posting_date !== b.posting_date) {
       return a.posting_date.localeCompare(b.posting_date);
@@ -174,12 +177,14 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
             <div style={{ maxWidth: '60%' }}>
               <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
-                TallyBIZ ENTERPRISE
+                {company?.name || 'TallyBIZ Pvt Ltd'}
               </h1>
               <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-                SG Highway, Ahmedabad, Gujarat - 380054<br />
-                GSTIN: <strong>24ABCDE1234F1Z5</strong> | State: Gujarat (24)<br />
-                Email: accounts@tallybiz.com | Phone: +91 98765 43210
+                {company?.address || ''}<br />
+                {company?.gstin ? (
+                  <>GSTIN / Tax ID: <strong>{company.gstin}</strong></>
+                ) : null}
+                {company?.state ? <> | State: {company.state}</> : null}
               </p>
             </div>
             <div style={{ textAlign: 'right' }}>
@@ -208,7 +213,7 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
                 Closing Outstanding Balance
               </span>
               <div style={{ fontSize: '16px', fontWeight: 'bold', color: closingBalance >= 0 ? '#0f172a' : '#b91c1c' }}>
-                Rs. {Math.abs(closingBalance).toFixed(2)} {closingBalance >= 0 ? 'Dr' : 'Cr'}
+                {sym} {Math.abs(closingBalance).toFixed(2)} {closingBalance >= 0 ? 'Dr' : 'Cr'}
               </div>
             </div>
           </div>
@@ -220,9 +225,9 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
                 <th style={{ padding: '8px 10px', textAlign: 'left', width: '80px' }}>Date</th>
                 <th style={{ padding: '8px 10px', textAlign: 'left' }}>Voucher Ref</th>
                 <th style={{ padding: '8px 10px', textAlign: 'left' }}>Account / Narration</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '90px' }}>Debit (Rs.)</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '90px' }}>Credit (Rs.)</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '110px' }}>Balance (Rs.)</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '95px' }}>Debit ({sym})</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '95px' }}>Credit ({sym})</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: '115px' }}>Balance ({sym})</th>
               </tr>
             </thead>
             <tbody>
@@ -263,10 +268,10 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
             <tfoot>
               <tr style={{ background: '#f8fafc', borderTop: '2px solid #cbd5e1', fontWeight: 'bold' }}>
                 <td colSpan={3} style={{ padding: '10px', textAlign: 'right' }}>Total Movements:</td>
-                <td style={{ padding: '10px', textAlign: 'right', color: '#0369a1' }}>Rs. {totalDebit.toFixed(2)}</td>
-                <td style={{ padding: '10px', textAlign: 'right', color: '#15803d' }}>Rs. {totalCredit.toFixed(2)}</td>
+                <td style={{ padding: '10px', textAlign: 'right', color: '#0369a1' }}>{sym} {totalDebit.toFixed(2)}</td>
+                <td style={{ padding: '10px', textAlign: 'right', color: '#15803d' }}>{sym} {totalCredit.toFixed(2)}</td>
                 <td style={{ padding: '10px', textAlign: 'right', color: closingBalance >= 0 ? '#0f172a' : '#b91c1c' }}>
-                  Rs. {Math.abs(closingBalance).toFixed(2)} {closingBalance >= 0 ? 'Dr' : 'Cr'}
+                  {sym} {Math.abs(closingBalance).toFixed(2)} {closingBalance >= 0 ? 'Dr' : 'Cr'}
                 </td>
               </tr>
             </tfoot>
@@ -279,7 +284,7 @@ export const LedgerPrintModal: React.FC<LedgerPrintModalProps> = ({
               Please verify all entries against your records. Report any discrepancies within 7 days.
             </div>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, TallyBIZ Enterprise</p>
+              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, {company?.name || 'Authorised Signatory'}</p>
               <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px' }}>
                 Authorised Signatory
               </span>

@@ -3,6 +3,8 @@ from decimal import Decimal
 from django.db import transaction
 from .models import PaymentEntry, JournalEntry, JournalEntryLine
 from .services import make_gl_entries
+from selling.models import SalesInvoice
+from buying.models import PurchaseInvoice
 
 
 class PaymentEntrySerializer(serializers.ModelSerializer):
@@ -15,6 +17,70 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
         if value <= Decimal('0.00'):
             raise serializers.ValidationError("Paid amount must be strictly greater than zero.")
         return value
+
+    def validate(self, data):
+        # 1. ફોર્મ ડેટામાંથી વિગતો મેળવો (અથવા instance માંથી જો partial update હોય)
+        paid_amount = data.get('paid_amount', getattr(self.instance, 'paid_amount', Decimal('0.00')))
+        paid_amount = Decimal(str(paid_amount))
+        
+        party_name = data.get('party_name', getattr(self.instance, 'party_name', ''))
+        payment_type = data.get('payment_type', getattr(self.instance, 'payment_type', ''))
+        reference_no = data.get('reference_no', getattr(self.instance, 'reference_no', ''))
+
+        # 2. જો reference_no માં Sales Invoice કે Purchase Bill નંબર લખ્યો હોય તો તેનું Validation કરો
+        if reference_no:
+            # A. જો ગ્રાહક પાસેથી પૈસા લેવાના હોય (Receive -> Sales Invoice)
+            if payment_type == 'Receive':
+                invoice = SalesInvoice.objects.filter(invoice_number=reference_no.strip()).first()
+                if invoice:
+                    # ફક્ત Approved ઇન્વોઇસ સામે જ પેમેન્ટ લઈ શકાય
+                    if invoice.status != 'Approved':
+                        raise serializers.ValidationError({
+                            "reference_no": f"Sales Invoice {invoice.invoice_number} is '{invoice.status}'. Payment can only be accepted for 'Approved' invoices."
+                        })
+
+                    # આ ઇન્વોઇસ સામે થયેલા અગાઉના તમામ પેમેન્ટ્સનો સરવાળો કરો
+                    existing_payments = PaymentEntry.objects.filter(
+                        reference_no=invoice.invoice_number,
+                        payment_type='Receive'
+                    )
+                    if self.instance:
+                        existing_payments = existing_payments.exclude(pk=self.instance.pk)
+
+                    total_paid_so_far = sum(Decimal(str(p.paid_amount)) for p in existing_payments)
+                    balance_due = Decimal(str(invoice.grand_total)) - total_paid_so_far
+
+                    if paid_amount > balance_due:
+                        raise serializers.ValidationError({
+                            "paid_amount": f"Amount exceeds balance due! Maximum payable balance for {invoice.invoice_number} is ₹{balance_due:.2f} (Total: ₹{invoice.grand_total})."
+                        })
+
+            # B. જો સપ્લાયરને ચુકવણી કરવાની હોય (Pay -> Purchase Bill)
+            elif payment_type == 'Pay':
+                bill = PurchaseInvoice.objects.filter(bill_number=reference_no.strip()).first()
+                if bill:
+                    # ફક્ત Approved બિલ સામે જ ચુકવણી થઈ શકે
+                    if bill.status != 'Approved':
+                        raise serializers.ValidationError({
+                            "reference_no": f"Purchase Bill {bill.bill_number} is '{bill.status}'. Payment can only be made for 'Approved' bills."
+                        })
+
+                    existing_bill_payments = PaymentEntry.objects.filter(
+                        reference_no=bill.bill_number,
+                        payment_type='Pay'
+                    )
+                    if self.instance:
+                        existing_bill_payments = existing_bill_payments.exclude(pk=self.instance.pk)
+
+                    total_paid_so_far = sum(Decimal(str(p.paid_amount)) for p in existing_bill_payments)
+                    balance_due = Decimal(str(bill.grand_total)) - total_paid_so_far
+
+                    if paid_amount > balance_due:
+                        raise serializers.ValidationError({
+                            "paid_amount": f"Amount exceeds balance due! Maximum payable balance for {bill.bill_number} is ₹{balance_due:.2f} (Total: ₹{bill.grand_total})."
+                        })
+
+        return data
 
     @transaction.atomic
     def create(self, validated_data):
