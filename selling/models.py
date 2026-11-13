@@ -42,6 +42,7 @@ class SalesInvoice(models.Model):
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00)
     net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    adjustment = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
     rejection_reason = models.TextField(blank=True, null=True)

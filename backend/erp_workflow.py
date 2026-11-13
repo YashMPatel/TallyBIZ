@@ -128,6 +128,7 @@ def approve_and_post_sales_invoice(invoice):
     net_total = Decimal(str(invoice.net_total or 0))
     tax_amount = Decimal(str(invoice.tax_amount or 0))
     grand_total = Decimal(str(invoice.grand_total or 0))
+    adjustment = Decimal(str(getattr(invoice, 'adjustment', 0) or 0))
     party_name = invoice.customer_name or ''
     rem = f'Sales Invoice #{invoice.invoice_number} - {party_name}'
 
@@ -137,6 +138,10 @@ def approve_and_post_sales_invoice(invoice):
         _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Sales Income', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=net_total, remarks=rem, company=comp)
     if tax_amount > 0:
         _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Output GST', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=tax_amount, remarks=rem, company=comp)
+    if adjustment != 0:
+        adj_debit = abs(adjustment) if adjustment < 0 else Decimal('0.00')
+        adj_credit = adjustment if adjustment > 0 else Decimal('0.00')
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Freight & Adjustments', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=adj_debit, credit=adj_credit, remarks=rem, company=comp)
 
     invoice.status = 'Approved'
     invoice.save(update_fields=['status'])

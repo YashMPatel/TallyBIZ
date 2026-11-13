@@ -151,11 +151,59 @@ class FinancialStatementsAPIView(APIView):
 
         symbol = getattr(company, 'currency_symbol', '$' if company and ('CAD' in company.name or 'USD' in company.name) else '₹') if company else '₹'
 
+        try:
+            adj_qs = gl_entries.filter(account='Freight & Adjustments')
+            adj_cr = adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+            adj_dr = adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+            freight_adj = adj_cr - adj_dr
+
+            excluded_accs = {
+                'Sales Income', 'Cost of Goods Sold', 'Purchases',
+                'Debtors', 'Debtors (Customer Receivables)',
+                'Creditors', 'Creditors (Supplier Payables)',
+                'Bank Account', 'Cash Account', 'Output GST', 'Input GST',
+                'Freight & Adjustments', 'Stock in Hand', 'Inventory',
+                'Opening Balance Equity', 'Capital Account'
+            }
+            other_exp_qs = (
+                gl_entries.exclude(account__in=excluded_accs)
+                .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods)')
+                .values('account')
+                .annotate(dr=Sum('debit'), cr=Sum('credit'))
+            )
+            other_expenses = []
+            other_exp_total = Decimal('0.00')
+            for row in other_exp_qs:
+                net_exp = (row['dr'] or Decimal('0.00')) - (row['cr'] or Decimal('0.00'))
+                if net_exp != Decimal('0.00'):
+                    other_expenses.append({'account': row['account'], 'amount': float(net_exp)})
+                    other_exp_total += net_exp
+            net_profit_val = gross_profit + freight_adj - other_exp_total
+        except Exception:
+            freight_adj = Decimal('0.00')
+            other_expenses = []
+            other_exp_total = Decimal('0.00')
+            net_profit_val = gross_profit
+
         return Response({
             "currency_symbol": symbol,
-            "income": { "sales": float(net_sales), "total_income": float(net_sales) },
-            "expense": { "purchases": float(cogs), "total_expense": float(cogs) },
-            "profit": { "gross_profit": float(gross_profit), "net_profit": float(gross_profit) },
+            "income": {
+                "sales": float(net_sales),
+                "freight_adjustments": float(freight_adj),
+                "total_income": float(net_sales + (freight_adj if freight_adj > 0 else Decimal('0.00'))),
+            },
+            "expense": {
+                "purchases": float(cogs),
+                "other_expenses": other_expenses,
+                "other_expenses_total": float(other_exp_total),
+                "total_expense": float(cogs + other_exp_total + (abs(freight_adj) if freight_adj < 0 else Decimal('0.00'))),
+            },
+            "profit": {
+                "gross_profit": float(gross_profit),
+                "freight_adjustments": float(freight_adj),
+                "other_expenses_total": float(other_exp_total),
+                "net_profit": float(net_profit_val),
+            },
             "gst": { "input_itc": float(input_gst), "output_liability": float(output_gst), "net_payable": float(net_gst) },
             "balance_sheet": {
                 "assets": {

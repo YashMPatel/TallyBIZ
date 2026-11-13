@@ -99,6 +99,7 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             <option value="Cash Account">Cash Account</option>
             <option value="Output GST">Output GST</option>
             <option value="Input GST">Input GST</option>
+                <option value="Freight & Adjustments">Freight & Adjustments</option>
           </select>
         </div>
         <div>
@@ -164,15 +165,36 @@ export const AccountsTab: FC<AccountsTabProps> = ({
           { header: 'Party', accessor: (r) => r.party || '-' },
           {
             header: `Debit (${symbol})`,
-            accessor: (r) => (Number(r.debit) > 0 ? `${symbol} ${Number(r.debit).toFixed(2)}` : '-'),
+            accessor: (r) => {
+              const val = Number(r.debit || 0);
+              if (val <= 0) return '-';
+              if (r.account === 'Freight & Adjustments') {
+                return <span style={{ color: '#dc2626', fontWeight: 600 }}>-{symbol} {val.toFixed(2)}</span>;
+              }
+              return `${symbol} ${val.toFixed(2)}`;
+            },
           },
           {
             header: `Credit (${symbol})`,
-            accessor: (r) => (Number(r.credit) > 0 ? `${symbol} ${Number(r.credit).toFixed(2)}` : '-'),
+            accessor: (r) => {
+              const val = Number(r.credit || 0);
+              if (val <= 0) return '-';
+              if (r.account === 'Freight & Adjustments') {
+                return <span style={{ color: '#16a34a', fontWeight: 600 }}>+{symbol} {val.toFixed(2)}</span>;
+              }
+              return `${symbol} ${val.toFixed(2)}`;
+            },
           },
           {
             header: `Running Bal (${symbol})`,
-            accessor: (r) => <strong>{symbol} {Number(r.balance || 0).toFixed(2)}</strong>,
+            accessor: (r) => {
+              const bal = Number(r.balance || 0);
+              const isLessAdj = r.account === 'Freight & Adjustments' && Number(r.debit || 0) > 0 && Math.abs(bal) === Number(r.debit || 0);
+              if (bal < 0 || isLessAdj) {
+                return <strong style={{ color: '#dc2626' }}>-{symbol} {Math.abs(bal).toFixed(2)}</strong>;
+              }
+              return <strong>{symbol} {bal.toFixed(2)}</strong>;
+            },
           },
         ]}
         data={glEntries}

@@ -7,6 +7,7 @@ interface LineItemsEditorProps {
   lines: LineForm[];
   items: Item[];
   showStock?: boolean;
+  priceMode?: 'selling' | 'buying';
   currencySymbol?: string;
   onChange: (lines: LineForm[]) => void;
 }
@@ -14,6 +15,7 @@ interface LineItemsEditorProps {
 export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
   lines,
   items,
+  priceMode = 'selling',
   showStock = false,
   currencySymbol = '₹',
   onChange,
@@ -27,7 +29,9 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
         (i) => i.id !== undefined && String(i.id) === String(value)
       );
       if (selectedItem) {
-        updated[index].rate = selectedItem.standard_rate?.toString() || '0';
+        const sellVal = Number((selectedItem as any).selling_rate || 0);
+        const costVal = Number(selectedItem.standard_rate || 0);
+        updated[index].rate = (priceMode === 'selling' && sellVal > 0 ? sellVal : costVal).toString();
       }
     }
     onChange(updated);
@@ -79,7 +83,7 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                   >
                     <option value="">-- Choose Item --</option>
-                    {items.map((it, itIdx) => (
+                    {items.filter((opt) => !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc))).map((it, itIdx) => (
                       <option
                         key={it.id !== undefined ? it.id : itIdx}
                         value={it.id !== undefined ? String(it.id) : ''}

@@ -208,6 +208,7 @@ function MainERPApp() {
     category: 'General',
     unit: 'Nos',
     standard_rate: '0',
+    selling_rate: '0',
     current_stock: '0'
   });
 
@@ -524,6 +525,7 @@ function MainERPApp() {
           ...itemForm,
           company: activeCompanyId ? parseInt(String(activeCompanyId), 10) : undefined,
           standard_rate: parseFloat(itemForm.standard_rate) || 0,
+      selling_rate: parseFloat((itemForm as any).selling_rate) || 0,
           current_stock: parseFloat(itemForm.current_stock) || 0
         })
       });
@@ -614,7 +616,8 @@ function MainERPApp() {
     const net = sumLines(invoiceForm.lines);
     const taxRate = parseFloat(invoiceForm.tax_rate) || 0;
     const tax = (net * taxRate) / 100;
-    const grand = net + tax;
+    const adj = parseFloat((invoiceForm as any).adjustment) || 0;
+    const grand = net + tax + adj;
 
     const payload = {
       invoice_number: invoiceForm.invoice_number,
@@ -626,6 +629,7 @@ function MainERPApp() {
       tax_rate: taxRate.toFixed(2),
       net_total: net.toFixed(2),
       tax_amount: tax.toFixed(2),
+      adjustment: adj.toFixed(2),
       grand_total: grand.toFixed(2),
       status: 'Draft',
       items: lineItems
@@ -727,6 +731,7 @@ function MainERPApp() {
 
   const invoiceNet = sumLines(invoiceForm.lines);
   const invoiceTax = (invoiceNet * (parseFloat(invoiceForm.tax_rate) || 0)) / 100;
+  const invoiceAdj = parseFloat((invoiceForm as any).adjustment) || 0;
   const purchaseNet = sumLines(purchaseForm.lines);
   const purchaseTax = (purchaseNet * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
   const salesStatusMap = getSalesPaymentStatusMap(invoices, payments);
@@ -1561,7 +1566,7 @@ function MainERPApp() {
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
               <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Purchase / Cost Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Selling Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={(itemForm as any).selling_rate ?? ''} onChange={e => setItemForm({ ...itemForm, selling_rate: e.target.value } as any)} /></div>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
@@ -1608,8 +1613,19 @@ function MainERPApp() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                   <span>Tax ({invoiceForm.tax_rate}%)</span><strong>{currencySymbol} {invoiceTax.toFixed(2)}</strong>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', fontSize: '15px' }}>
-                  <strong>Grand Total</strong><strong style={{ color: '#0369a1' }}>{currencySymbol} {(invoiceNet + invoiceTax).toFixed(2)}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                <span style={{ fontSize: '13px' }}>Adjustment (+/-) <span style={{ fontSize: '11px', color: '#64748b' }}>(Freight / Round-off)</span></span>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="0.00"
+                  style={{ ...fieldStyle, width: '130px', textAlign: 'right', padding: '5px 8px' }}
+                  value={(invoiceForm as any).adjustment ?? ''}
+                  onChange={e => setInvoiceForm({ ...invoiceForm, adjustment: e.target.value } as any)}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px', marginTop: '6px', fontSize: '15px' }}>
+                <strong>Grand Total</strong><strong style={{ color: '#0369a1' }}>{currencySymbol} {(invoiceNet + invoiceTax + invoiceAdj).toFixed(2)}</strong>
                 </div>
               </div>
 
@@ -1642,6 +1658,7 @@ function MainERPApp() {
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '6px' }}>Line Items</label>
                 <LineItemsEditor
+                  priceMode="buying"
                   lines={purchaseForm.lines}
                   items={items}
                   showStock={false}

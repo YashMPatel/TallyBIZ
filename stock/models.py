@@ -15,6 +15,7 @@ class Item(models.Model):
     category = models.CharField(max_length=100, default='General')
     unit = models.CharField(max_length=50, default='Nos')
     standard_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    selling_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     current_stock = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
     def __str__(self):

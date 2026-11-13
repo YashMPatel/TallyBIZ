@@ -203,6 +203,28 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
                     {sym} {finance.profit.gross_profit.toFixed(2)}
                   </td>
                 </tr>
+                <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                  <td style={{ padding: '8px 0' }}>Freight &amp; Adjustments (Net)</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600', color: ((finance.profit as any).freight_adjustments ?? 0) >= 0 ? '#15803d' : '#b91c1c' }}>
+                    {((finance.profit as any).freight_adjustments ?? 0) >= 0 ? '+' : '-'} {sym} {Math.abs((finance.profit as any).freight_adjustments ?? 0).toFixed(2)}
+                  </td>
+                </tr>
+                {((finance.expense as any).other_expenses || []).map((exp: any) => (
+                  <tr key={exp.account} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                    <td style={{ padding: '8px 0', color: exp.amount >= 0 ? '#b91c1c' : '#15803d' }}>
+                      {exp.amount >= 0 ? `Less: ${exp.account}` : `Add: ${exp.account}`}
+                    </td>
+                    <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: '600', color: exp.amount >= 0 ? '#b91c1c' : '#15803d' }}>
+                      {exp.amount >= 0 ? '-' : '+'} {sym} {Math.abs(Number(exp.amount || 0)).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#f0fdf4', fontWeight: 'bold', fontSize: '15px', borderTop: '2px solid #cbd5e1' }}>
+                  <td style={{ padding: '10px 0' }}>Net Profit / (Loss)</td>
+                  <td style={{ padding: '10px 0', textAlign: 'right', color: ((finance.profit as any).net_profit ?? finance.profit.gross_profit) >= 0 ? '#15803d' : '#b91c1c' }}>
+                    {sym} {((finance.profit as any).net_profit ?? finance.profit.gross_profit).toFixed(2)}
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>

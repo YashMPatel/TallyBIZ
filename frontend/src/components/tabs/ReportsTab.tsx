@@ -78,8 +78,35 @@ export const ReportsTab: FC<ReportsTabProps> = ({
               </div>
             </div>
 
-            <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', fontSize: '16px' }}>
-              <strong>Gross & Net Profit</strong>
+            <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+                  <strong style={{ color: '#475569' }}>Gross Profit</strong>
+                  <strong>{symbol} {(finance?.profit?.gross_profit ?? 0).toFixed(2)}</strong>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748b' }}>ADJUSTMENTS & OPERATING EXPENSES</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '14px' }}>
+                    <span onClick={() => onDrillDown('Freight & Adjustments')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                      Freight & Adjustments (Net)
+                    </span>
+                    <strong style={{ color: (finance?.profit?.freight_adjustments ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {(finance?.profit?.freight_adjustments ?? 0) >= 0 ? '+' : '-'}{symbol} {Math.abs(finance?.profit?.freight_adjustments ?? 0).toFixed(2)}
+                    </strong>
+                  </div>
+                  {((finance?.expense as any)?.other_expenses || []).map((exp: any) => (
+                    <div key={exp.account} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '14px' }}>
+                      <span onClick={() => onDrillDown(exp.account)} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                        {exp.account}
+                      </span>
+                      <strong style={{ color: exp.amount >= 0 ? '#dc2626' : '#16a34a' }}>
+                        {exp.amount >= 0 ? '-' : '+'}{symbol} {Math.abs(Number(exp.amount || 0)).toFixed(2)}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', fontSize: '16px' }}>
+                  <strong>Net Profit</strong>
               <strong style={{ color: (finance?.profit?.net_profit ?? 0) >= 0 ? '#15803d' : '#dc2626' }}>
                 {symbol} {(finance?.profit?.net_profit ?? 0).toFixed(2)}
               </strong>

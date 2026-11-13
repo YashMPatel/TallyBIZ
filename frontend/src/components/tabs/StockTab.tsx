@@ -63,6 +63,7 @@ export const StockTab: FC<StockTabProps> = ({
                 category: 'General',
                 unit: 'Nos',
                 standard_rate: '0',
+      selling_rate: '0',
                 current_stock: '0',
               });
               setShowItemModal(true);
@@ -154,6 +155,7 @@ export const StockTab: FC<StockTabProps> = ({
                     category: row.category,
                     unit: row.unit,
                     standard_rate: String(row.standard_rate),
+        selling_rate: String((row as any).selling_rate ?? '0'),
                     current_stock: String(row.current_stock),
                   });
                   setShowItemModal(true);

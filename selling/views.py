@@ -278,9 +278,10 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
         net_total = Decimal(str(data.get('net_total', 0) or 0))
         tax_rate = Decimal(str(data.get('tax_rate', 18) or 18))
         tax_amount = Decimal(str(data.get('tax_amount', 0) or 0))
+        adjustment = Decimal(str(data.get('adjustment', 0) or 0))
         grand_total = Decimal(str(data.get('grand_total', 0) or 0))
         if grand_total == 0 and net_total > 0:
-            grand_total = net_total + tax_amount
+            grand_total = net_total + tax_amount + adjustment
 
         user = _resolve_request_user(request)
 
@@ -297,7 +298,8 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
                 tax_rate=tax_rate,
                 net_total=net_total,
                 tax_amount=tax_amount,
-                grand_total=grand_total,
+                adjustment=adjustment,
+            grand_total=grand_total,
                 status='Draft',
                 created_by=user,
                 approved_by=None
