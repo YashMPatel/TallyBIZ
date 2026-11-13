@@ -17,9 +17,11 @@ RUN npx vite build
 
 FROM python:3.13-slim AS api
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DJANGO_SETTINGS_MODULE=deploy.prod_settings
+# Base images lag distro security fixes; patch at build.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip uninstall -y pip  # read-only runtime never installs; drops pip vendored-deps CVEs
 COPY . .
 RUN DJANGO_SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput
 USER 65534
@@ -28,6 +30,9 @@ EXPOSE 8000
 CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn backend.wsgi -b 0.0.0.0:8000 -w 3 --no-control-socket --access-logfile -"]
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS web
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=web-build /src/dist /usr/share/nginx/html
 COPY --from=api /app/staticfiles /usr/share/nginx/html/static
