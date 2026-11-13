@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
-import os
 from pathlib import Path
 from datetime import timedelta
 
@@ -22,20 +21,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# Defaults keep `manage.py runserver` working locally; production sets every
-# DJANGO_* / POSTGRES_* variable explicitly (see deploy/docker-compose.yml).
-DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
+SECRET_KEY = 'django-insecure-z03&q=bao6$$!lahwq2l-n5hzbilg=#qygb8kvnu(596d^v_k*'
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
-if not SECRET_KEY:
-    if not DEBUG:
-        raise RuntimeError('DJANGO_SECRET_KEY must be set when DJANGO_DEBUG=0')
-    SECRET_KEY = 'django-insecure-local-dev-only'
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = True
 
-ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
-CSRF_TRUSTED_ORIGINS = [f'https://{h}' for h in ALLOWED_HOSTS]
-# Behind the TLS-terminating reverse proxy, trust its X-Forwarded-Proto.
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -108,12 +99,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('POSTGRES_DB', 'tallybiz_db'),
-        'USER': os.environ.get('POSTGRES_USER', 'postgres'),
-        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),  # local: set POSTGRES_PASSWORD
-        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
-        'CONN_MAX_AGE': 60,
+        'NAME': 'tallybiz_db',
+        'USER': 'postgres',
+        'PASSWORD': 'Manish@2412',  # ઇન્સ્ટોલેશન વખતે સેટ કરેલો પાસવર્ડ
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
@@ -152,7 +142,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
 # Email
@@ -204,11 +193,3 @@ except ImportError:
         'x-user-id',
         'x-username',
     ]
-
-# Send warnings and errors (incl. 500 tracebacks) to stderr, so `docker logs` shows them.
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {'console': {'class': 'logging.StreamHandler'}},
-    'root': {'handlers': ['console'], 'level': 'WARNING'},
-}
