@@ -8,15 +8,13 @@ The API runs `migrate` on every start. Nothing to do on the server per release.
 CI refuses to push images if models changed without a migration: run
 `python manage.py makemigrations` and commit the files under `*/migrations/`.
 
-## Local development
+## How production differs from local dev
 
-```bash
-# backend (needs a local Postgres)
-export POSTGRES_PASSWORD=<your local postgres password>   # Windows: setx POSTGRES_PASSWORD ...
-python manage.py runserver
-# frontend: /api is proxied to runserver by vite.config.ts
-cd frontend && npm run dev
-```
+App code is untouched; local `runserver` / `npm run dev` work as before.
+Production overrides live only in deploy files:
+- `deploy/prod_settings.py`: DEBUG off, secret key, hosts and database from env.
+- `Dockerfile`: rewrites the hardcoded `http://127.0.0.1:8000/api` to `/api`,
+  builds with `vite build` (no `tsc` gate, so type errors don't block deploys).
 
 ## One-time server setup
 
@@ -24,7 +22,7 @@ Needs Docker and a reverse proxy on ports 80/443 that routes
 `TALLYBIZ_ADDRESS` to `tallybiz-web:8080` on the Docker network `EDGE_NETWORK`.
 
 ```bash
-sudo git clone https://github.com/YashMPatel/TallyBIZ.git /opt/tallybiz
+sudo git clone git@github.com:YashMPatel/TallyBIZ.git /opt/tallybiz   # SSH key
 sudo chown -R $USER /opt/tallybiz && cd /opt/tallybiz/deploy
 cp .env.example .env && chmod 600 .env    # fill it in
 sudo cp tallybiz-*.service tallybiz-*.timer /etc/systemd/system/

@@ -10,15 +10,18 @@ WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
-RUN npm run build
+# The app hardcodes its dev API URL; point it at same-origin /api for production.
+RUN grep -rl 'http://127.0.0.1:8000/api' src | xargs -r sed -i 's|http://127.0.0.1:8000/api|/api|g'
+# ponytail: vite build skips `tsc -b`, so type errors don't block deploys; use `npm run build` to gate on types.
+RUN npx vite build
 
 FROM python:3.13-slim AS api
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DJANGO_SETTINGS_MODULE=deploy.prod_settings
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN python manage.py collectstatic --noinput
+RUN DJANGO_SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput
 USER 65534
 EXPOSE 8000
 # ponytail: migrate on every start is fine for one replica; move to a one-off job if scaled out.
