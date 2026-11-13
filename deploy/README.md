@@ -24,7 +24,7 @@ Needs Docker and a reverse proxy on ports 80/443 that routes
 `TALLYBIZ_ADDRESS` to `tallybiz-web:8080` on the Docker network `EDGE_NETWORK`.
 
 ```bash
-sudo git clone https://github.com/ManishRPatel/TallyBIZ.git /opt/tallybiz
+sudo git clone https://github.com/YashMPatel/TallyBIZ.git /opt/tallybiz
 sudo chown -R $USER /opt/tallybiz && cd /opt/tallybiz/deploy
 cp .env.example .env && chmod 600 .env    # fill it in
 sudo cp tallybiz-*.service tallybiz-*.timer /etc/systemd/system/
