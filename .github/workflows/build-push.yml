@@ -42,7 +42,7 @@ jobs:
       # ponytail: add `manage.py test` here once the test suite passes.
       - name: Django checks
         run: |
-          docker run --rm -e DJANGO_DEBUG=0 -e DJANGO_SECRET_KEY=ci tallybiz-api:ci \
+          docker run --rm -e DJANGO_SECRET_KEY=ci tallybiz-api:ci \
             sh -c 'python manage.py check && python manage.py makemigrations --check --dry-run'
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

@@ -40,7 +40,6 @@ services:
         condition: service_healthy
     # Runs `migrate` on start, then gunicorn on :8000.
     environment:
-      DJANGO_DEBUG: "0"
       DJANGO_SECRET_KEY: ${TALLYBIZ_SECRET_KEY:?set in deploy/.env}
       DJANGO_ALLOWED_HOSTS: ${TALLYBIZ_ADDRESS:?set in deploy/.env}
       POSTGRES_HOST: tallybiz-db

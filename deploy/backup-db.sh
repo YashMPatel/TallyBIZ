@@ -2,6 +2,7 @@
 # Daily Postgres dump (custom format), run by tallybiz-backup.timer.
 # Keeps the newest $BACKUP_KEEP dumps. Restore steps: deploy/README.md.
 set -euo pipefail
+umask 077  # dumps hold business data: owner-only
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 dest="${BACKUP_DIR:-./backups}"
