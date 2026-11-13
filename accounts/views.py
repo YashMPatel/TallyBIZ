@@ -792,8 +792,21 @@ class DatabaseRestoreAPIView(APIView):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
                 tmp.write(raw_text)
                 tmp_path = tmp.name
-            with transaction.atomic():
-                call_command('loaddata', tmp_path, verbosity=0)
+            import json as _json
+            from django.db.models.signals import post_save
+            from .models import UserProfile
+            orig_rcv = list(post_save.receivers)
+            post_save.receivers = []
+            post_save.sender_receivers_cache.clear()
+            try:
+                with transaction.atomic():
+                    unames = [x["fields"]["user"][0] for x in _json.load(open(tmp_path, encoding="utf-8")) if x.get("model") == "accounts.userprofile" and isinstance(x.get("fields", {}).get("user"), list)]
+                    if unames:
+                        UserProfile.objects.filter(user__username__in=unames).delete()
+                    call_command("loaddata", tmp_path, verbosity=0)
+            finally:
+                post_save.receivers = orig_rcv
+                post_save.sender_receivers_cache.clear()
             return Response({'message': 'Database restored successfully!'}, status=status.HTTP_200_OK)
         except Exception as exc:
             return Response({'error': f'Restore failed: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
