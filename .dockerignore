@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+frontend/dist
+staticfiles
+db.sqlite3
+**/.env
+deploy/backups
