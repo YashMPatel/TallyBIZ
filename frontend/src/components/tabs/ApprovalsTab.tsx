@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, Clock, Check, AlertCircle, X, RefreshCw, Eye } from 'lucide-react';
 import { API_BASE, getErrorMessage } from '../../utils/erpHelpers';
 import type { SalesInvoice, PurchaseInvoice } from '../../types/erp';
@@ -7,9 +7,37 @@ interface ApprovalsTabProps {
   invoices: SalesInvoice[];
   purchases: PurchaseInvoice[];
   onRefresh: () => void;
+  activeCompany?: any;
 }
 
-export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases, onRefresh }) => {
+export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases, onRefresh, activeCompany }) => {
+  const [prodOrders, setProdOrders] = useState<any[]>([]);
+  const fetchPendingProd = useCallback(async () => {
+    if (!activeCompany?.id) return;
+    try {
+      const res = await fetch(`${API_BASE}/manufacturing/orders/?company_id=${activeCompany.id}`);
+      if (res.ok) {
+        const d = await res.json();
+        setProdOrders((d.orders || []).filter((o: any) => o.status === 'PENDING'));
+      }
+    } catch {}
+  }, [activeCompany?.id]);
+  useEffect(() => { fetchPendingProd(); }, [fetchPendingProd]);
+  const handleProdAction = async (id: number, action: 'approve' | 'cancel') => {
+    try {
+      const res = await fetch(`${API_BASE}/manufacturing/orders/${id}/${action}/?company_id=${activeCompany?.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Action failed');
+      setMsg({ type: 'success', text: action === 'approve' ? `Production ${d.voucher_no} Approved & Posted!` : `Production ${d.voucher_no} Rejected.` });
+      await fetchPendingProd();
+      onRefresh();
+    } catch (err) {
+      setMsg({ type: 'error', text: getErrorMessage(err) });
+    }
+  };
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -416,6 +444,46 @@ export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases,
           </div>
         </div>
       )}
+      {/* 3. Pending Production Orders */}
+      <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '20px', marginTop: '16px' }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: '#0f172a', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          Production Orders Awaiting Approval
+          <span style={{ background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '999px', fontSize: '11px' }}>{prodOrders.length}</span>
+        </h3>
+        {prodOrders.length === 0 ? (
+          <div style={{ color: '#94a3b8', fontSize: '12px' }}>No pending production orders.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#64748b' }}>
+                <th style={{ padding: '8px' }}>Voucher #</th>
+                <th style={{ padding: '8px' }}>Date</th>
+                <th style={{ padding: '8px' }}>Finished Item (BOM)</th>
+                <th style={{ padding: '8px', textAlign: 'right' }}>Qty</th>
+                <th style={{ padding: '8px', textAlign: 'right' }}>Net Cost</th>
+                <th style={{ padding: '8px', textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prodOrders.map((po) => (
+                <tr key={po.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px', fontWeight: 700 }}>{po.voucher_no}</td>
+                  <td style={{ padding: '8px' }}>{po.posting_date}</td>
+                  <td style={{ padding: '8px' }}>{po.finished_item_name} ({po.bom_code})</td>
+                  <td style={{ padding: '8px', textAlign: 'right' }}>{po.actual_qty} {po.finished_item_unit}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>₹ {Number(po.net_production_cost).toFixed(2)}</td>
+                  <td style={{ padding: '8px', textAlign: 'right' }}>
+                    <div style={{ display: 'inline-flex', gap: '6px' }}>
+                      <button onClick={() => handleProdAction(po.id, 'approve')} style={{ padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#059669', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                      <button onClick={() => handleProdAction(po.id, 'cancel')} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fee2e2', color: '#dc2626', fontWeight: 600, cursor: 'pointer' }}>Reject</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 };

@@ -6,3 +6,4 @@ __pycache__/
 .env
 staticfiles/
 deploy/backups/
+TallyBIZ_Local_Backup.json

@@ -13,6 +13,7 @@ import { PaymentsTab } from './components/tabs/PaymentsTab';
 import { CustomersTab } from './components/tabs/CustomersTab';
 import { SuppliersTab } from './components/tabs/SuppliersTab';
 import { StockLedgerTab } from './components/tabs/StockLedgerTab';
+import { ProductionTab } from './components/tabs/ProductionTab';
 import { AccountsTab } from './components/tabs/AccountsTab';
 import { GSTTab } from './components/tabs/GSTTab';
 import { ReportsTab } from './components/tabs/ReportsTab';
@@ -37,7 +38,7 @@ import { AppSidebar } from './components/AppSidebar';
 function MainERPApp() {
   const { isAuthenticated, user, logout } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'accounts' | 'ReturnsTab' | 'reports' | 'gst' | 'approvals'| 'users_management'>('selling');
+  const [activeTab, setActiveTab] = useState<'selling' | 'buying' | 'customers' | 'suppliers' | 'payments' | 'stock' | 'stock-ledger' | 'production' | 'accounts' | 'ReturnsTab' | 'reports' | 'gst' | 'approvals'| 'users_management'>('selling');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [activeCompany, setActiveCompany] = useState<any>(() => {
@@ -975,6 +976,14 @@ function MainERPApp() {
               items={items}
               stockItemFilter={stockItemFilter}
               setStockItemFilter={setStockItemFilter}
+            />
+          )}
+
+          {activeTab === 'production' && (
+            <ProductionTab
+              items={items}
+              activeCompany={activeCompany}
+              user={user}
             />
           )}
 

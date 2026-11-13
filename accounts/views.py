@@ -194,7 +194,7 @@ class FinancialStatementsAPIView(APIView):
                 'Debtors', 'Debtors (Customer Receivables)',
                 'Creditors', 'Creditors (Supplier Payables)',
                 'Bank Account', 'Cash Account', 'Output GST', 'Input GST',
-                'Freight & Adjustments', 'Stock in Hand', 'Inventory',
+                'Freight & Adjustments', 'Stock in Hand', 'Inventory', 'Finished Goods Inventory', 'Raw Material Inventory', 'Scrap Inventory', 'Direct Labour Payable', 'Manufacturing Overheads',
                 'Opening Balance Equity', 'Capital Account'
             }
             other_exp_qs = (

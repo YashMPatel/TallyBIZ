@@ -89,8 +89,8 @@ export const ReportsTab: FC<ReportsTabProps> = ({
                     <span onClick={() => onDrillDown('Freight & Adjustments')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
                       Freight & Adjustments (Net)
                     </span>
-                    <strong style={{ color: (finance?.profit?.freight_adjustments ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
-                      {(finance?.profit?.freight_adjustments ?? 0) >= 0 ? '+' : '-'}{symbol} {Math.abs(finance?.profit?.freight_adjustments ?? 0).toFixed(2)}
+                    <strong style={{ color: ((finance?.profit as any)?.freight_adjustments ?? 0) >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {((finance?.profit as any)?.freight_adjustments ?? 0) >= 0 ? '+' : '-'}{symbol} {Math.abs((finance?.profit as any)?.freight_adjustments ?? 0).toFixed(2)}
                     </strong>
                   </div>
                   {((finance?.expense as any)?.other_expenses || []).map((exp: any) => (

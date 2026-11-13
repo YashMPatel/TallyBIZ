@@ -9,6 +9,7 @@ import {
   CreditCard,
   PieChart,
   Layers,
+  Factory,
   CheckCircle,
 } from 'lucide-react';
 
@@ -156,7 +157,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           </button>
         )}
 
-        {/* 10. Accounts / General Ledger (Sales User mate hidden) */}
+        {/* 9B. Production & BOM */}
+      <button
+        onClick={() => setActiveTab('production')}
+        style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'production' ? '#1e293b' : 'transparent', color: activeTab === 'production' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
+      >
+        <Factory size={16} /> Production &amp; BOM
+      </button>
+
+      {/* 10. Accounts / General Ledger (Sales User mate hidden) */}
         {!isSalesUser && (
           <button
             onClick={() => setActiveTab('accounts')}
