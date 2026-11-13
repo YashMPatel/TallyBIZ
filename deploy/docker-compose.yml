@@ -1,0 +1,101 @@
+# TallyBIZ production stack: Postgres + Django API + nginx web.
+# Images are built and pushed by .github/workflows/build-push.yml; the server
+# only pulls (deploy/pull-update.sh on a systemd timer). Config: deploy/.env.
+# Only tallybiz-web joins the outside proxy's network; db and api stay private.
+
+name: tallybiz
+
+services:
+  tallybiz-db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tallybiz
+      POSTGRES_USER: tallybiz
+      POSTGRES_PASSWORD: ${TALLYBIZ_DB_PASSWORD:?set in deploy/.env}
+    volumes:
+      # Postgres 18 images keep PGDATA in a versioned subdir of this path.
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tallybiz", "-d", "tallybiz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  tallybiz-api:
+    image: ghcr.io/${TALLYBIZ_GHCR_OWNER:?set in deploy/.env}/tallybiz-api:${TALLYBIZ_IMAGE_TAG:-main}
+    restart: unless-stopped
+    depends_on:
+      tallybiz-db:
+        condition: service_healthy
+    # Runs `migrate` on start, then gunicorn on :8000.
+    environment:
+      DJANGO_DEBUG: "0"
+      DJANGO_SECRET_KEY: ${TALLYBIZ_SECRET_KEY:?set in deploy/.env}
+      DJANGO_ALLOWED_HOSTS: ${TALLYBIZ_ADDRESS:?set in deploy/.env}
+      POSTGRES_HOST: tallybiz-db
+      POSTGRES_DB: tallybiz
+      POSTGRES_USER: tallybiz
+      POSTGRES_PASSWORD: ${TALLYBIZ_DB_PASSWORD}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Django rejects unknown Host headers, so probe with the public one.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8000/admin/login/', headers={'Host': os.environ['DJANGO_ALLOWED_HOSTS']}), timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging: *logging
+
+  tallybiz-web:
+    image: ghcr.io/${TALLYBIZ_GHCR_OWNER}/tallybiz-web:${TALLYBIZ_IMAGE_TAG:-main}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [default, edge]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+    logging: *logging
+
+networks:
+  # Existing Docker network of the reverse proxy that owns ports 80/443.
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:?set in deploy/.env}
+
+volumes:
+  db:

@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily TallyBIZ database dump
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

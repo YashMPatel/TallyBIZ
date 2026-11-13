@@ -1,0 +1,14 @@
+# Install: see deploy/README.md. Edit User/paths if the clone isn't /opt/tallybiz.
+[Unit]
+Description=Dump the TallyBIZ Postgres database
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=debian
+Group=docker
+WorkingDirectory=/opt/tallybiz/deploy
+EnvironmentFile=-/opt/tallybiz/deploy/.env
+ExecStart=/opt/tallybiz/deploy/backup-db.sh
+NoNewPrivileges=true

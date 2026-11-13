@@ -1,0 +1,13 @@
+# Install: see deploy/README.md. Edit User/paths if the clone isn't /opt/tallybiz.
+[Unit]
+Description=Pull latest TallyBIZ images and recreate changed containers
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=debian
+Group=docker
+WorkingDirectory=/opt/tallybiz/deploy
+ExecStart=/opt/tallybiz/deploy/pull-update.sh
+NoNewPrivileges=true
