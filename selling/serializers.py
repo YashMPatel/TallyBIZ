@@ -18,6 +18,21 @@ class SalesInvoiceItemSerializer(serializers.ModelSerializer):
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
+
+    def _format_user_name(self, user_obj):
+        if not user_obj:
+            return None
+        full = f"{getattr(user_obj, 'first_name', '')} {getattr(user_obj, 'last_name', '')}".strip()
+        return full or getattr(user_obj, 'username', None)
+
+    def get_created_by_name(self, obj):
+        return self._format_user_name(getattr(obj, 'created_by', None))
+
+    def get_approved_by_name(self, obj):
+        return self._format_user_name(getattr(obj, 'approved_by', None))
+
 
     def create(self, validated_data):
         from selling.models import SalesInvoice, SalesInvoiceItem

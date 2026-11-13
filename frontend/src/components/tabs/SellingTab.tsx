@@ -216,6 +216,8 @@ export const SellingTab: FC<SellingTabProps> = ({
           { header: `Net (${symbol})`, accessor: r => `${symbol} ${r.net_total}` },
           { header: `Tax (${symbol})`, accessor: r => `${symbol} ${r.tax_amount}` },
           { header: `Grand Total (${symbol})`, accessor: r => <strong>{symbol} {r.grand_total}</strong> },
+    { header: 'Created By', accessor: (r: any) => r.created_by_name || '-' },
+    { header: 'Approved By', accessor: (r: any) => r.approved_by_name || '-' },
           {
             header: 'Approval Status',
             accessor: (row) => (
