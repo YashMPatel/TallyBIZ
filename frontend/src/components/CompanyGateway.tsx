@@ -309,55 +309,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                 </div>
               )}
 
-              <div style={{
-                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px',
-                paddingTop: '12px', borderTop: '1px solid #e2e8f0'
-              }}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleBackup}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
-                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
-                  }}
-                >
-                  <Download size={14} color="#0284c7" /> Backup Data
-                </button>
 
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
-                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
-                  }}
-                >
-                  <Upload size={14} color="#16a34a" /> Restore Data
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleRestoreFile}
-                  style={{ display: 'none' }}
-                />
-
-                <button
-                  type="button"
-                  onClick={onQuit}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #fecaca',
-                    backgroundColor: '#fef2f2', color: '#b91c1c', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
-                  }}
-                >
-                  <LogOut size={14} /> Quit / Logout
-                </button>
-              </div>
             </>
           ) : (
             <form onSubmit={handleCreateCompany}>
@@ -449,13 +401,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px' }}>
-                <button
-                  type="button"
-                  onClick={onQuit}
-                  style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #fecaca', backgroundColor: '#fef2f2', color: '#b91c1c', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  Quit / Logout
-                </button>
+                
                 <button
                   type="submit"
                   disabled={busy}
@@ -466,6 +412,56 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
               </div>
             </form>
           )}
+
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px',
+                paddingTop: '12px', borderTop: '1px solid #e2e8f0'
+              }}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleBackup}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
+                  }}
+                >
+                  <Download size={14} color="#0284c7" /> Backup Data
+                </button>
+
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
+                  }}
+                >
+                  <Upload size={14} color="#16a34a" /> Restore Data
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleRestoreFile}
+                  style={{ display: 'none' }}
+                />
+
+                <button
+                  type="button"
+                  onClick={onQuit}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #fecaca',
+                    backgroundColor: '#fef2f2', color: '#b91c1c', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
+                  }}
+                >
+                  <LogOut size={14} /> Quit / Logout
+                </button>
+              </div>
         </div>
 
         <div style={{
