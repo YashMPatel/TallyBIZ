@@ -115,7 +115,7 @@ export interface PaymentEntry {
 export interface FinancialStatements {
   income: { sales: number; total_income: number };
   expense: { purchases: number; total_expense: number };
-  profit: { gross_profit: number; net_profit: number };
+  profit: { gross_profit: number; net_profit: number; freight_adjustments?: number };
   gst: { input_itc: number; output_liability: number; net_payable: number };
   balance_sheet: {
     assets: { bank_cash: number; debtors_receivable: number; total_assets: number };
