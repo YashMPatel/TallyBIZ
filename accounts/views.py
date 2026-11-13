@@ -39,12 +39,44 @@ def get_active_company(request):
     return AccountsCompany.objects.first()
 
 
+
+
+def _resolve_gateway_user(request):
+    u = getattr(request, 'user', None)
+    if u and getattr(u, 'is_authenticated', False):
+        return u
+    try:
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        auth_res = JWTAuthentication().authenticate(request)
+        if auth_res:
+            return auth_res[0]
+    except Exception:
+        pass
+    from django.contrib.auth.models import User
+    uid = request.headers.get('X-User-ID') or request.META.get('HTTP_X_USER_ID')
+    uname = request.headers.get('X-Username') or request.META.get('HTTP_X_USERNAME')
+    if uid:
+        u = User.objects.filter(id=uid).first()
+        if u:
+            return u
+    if uname:
+        return User.objects.filter(username=uname).first()
+    return None
+
 class AccountsCompanyListView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
-        companies = AccountsCompany.objects.all().order_by('id')
+        req_user = _resolve_gateway_user(request)
+        if req_user and not req_user.is_superuser:
+            prof = getattr(req_user, 'profile', None)
+            if prof and prof.company_id:
+                companies = AccountsCompany.objects.filter(id=prof.company_id).order_by('id')
+            else:
+                companies = AccountsCompany.objects.none()
+        else:
+            companies = AccountsCompany.objects.all().order_by('id')
         data = [
             {
                 'id': c.id,
@@ -560,15 +592,39 @@ class FrontendCompanyCreateView(APIView):
             tax_id=gstin
         )
 
+        req_user = _resolve_gateway_user(request)
+        user_payload = None
+        if req_user:
+            prof, _ = UserProfile.objects.get_or_create(user=req_user)
+            prof.role = 'ADMIN'
+            prof.company = company
+            prof.is_approved = True
+            prof.save()
+            user_payload = {
+                'id': req_user.id,
+                'username': req_user.username,
+                'email': req_user.email,
+                'first_name': req_user.first_name,
+                'role': 'ADMIN',
+                'company': {
+                    'id': company.id,
+                    'name': company.name,
+                    'currency': company.default_currency,
+                    'symbol': company.currency_symbol,
+                    'country': company.country,
+                }
+            }
+
         return Response({
-            'message': 'Company created successfully.',
+            'message': 'Company created successfully. You are now Admin.',
             'company': {
                 'id': company.id,
                 'name': company.name,
                 'currency': company.default_currency,
                 'symbol': company.currency_symbol,
                 'currency_symbol': company.currency_symbol
-            }
+            },
+            'user': user_payload
         }, status=status.HTTP_201_CREATED)
 
 
@@ -668,3 +724,79 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
             return _ApprovalResponse({'error': msg}, status=400)
         except Exception as exc:
             return _ApprovalResponse({'error': str(exc)}, status=400)
+
+
+class DatabaseBackupAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        import io
+        from django.core.management import call_command
+        from django.http import HttpResponse
+        from django.utils import timezone
+
+        req_user = _resolve_gateway_user(request)
+        if req_user and not req_user.is_superuser:
+            prof = getattr(req_user, 'profile', None)
+            if prof and prof.company_id and prof.role != 'ADMIN':
+                return Response({'error': 'Only Company Admin can backup data.'}, status=status.HTTP_403_FORBIDDEN)
+
+        buf = io.StringIO()
+        call_command(
+            'dumpdata',
+            exclude=['contenttypes', 'auth.Permission', 'sessions.Session', 'admin.LogEntry'],
+            natural_foreign=True,
+            natural_primary=True,
+            indent=2,
+            stdout=buf,
+        )
+        fname = f"TallyBIZ_Backup_{timezone.now().strftime('%Y-%m-%d_%H-%M')}.json"
+        resp = HttpResponse(buf.getvalue(), content_type='application/json; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+        return resp
+
+
+class DatabaseRestoreAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        import json, os, tempfile
+        from django.core.management import call_command
+
+        req_user = _resolve_gateway_user(request)
+        has_companies = AccountsCompany.objects.exists()
+        if has_companies and req_user and not req_user.is_superuser:
+            prof = getattr(req_user, 'profile', None)
+            if prof and prof.company_id and prof.role != 'ADMIN':
+                return Response({'error': 'Only Company Admin can restore data.'}, status=status.HTTP_403_FORBIDDEN)
+
+        uploaded = request.FILES.get('file')
+        if uploaded:
+            raw_text = uploaded.read().decode('utf-8')
+        elif isinstance(request.data, dict) and 'backup_json' in request.data:
+            raw_text = request.data['backup_json']
+        else:
+            return Response({'error': 'Please upload a valid .json backup file.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            parsed = json.loads(raw_text)
+            if not isinstance(parsed, list):
+                return Response({'error': 'Invalid backup format.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': f'Invalid JSON file: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
+                tmp.write(raw_text)
+                tmp_path = tmp.name
+            with transaction.atomic():
+                call_command('loaddata', tmp_path, verbosity=0)
+            return Response({'message': 'Database restored successfully!'}, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return Response({'error': f'Restore failed: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)

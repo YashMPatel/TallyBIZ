@@ -17,6 +17,8 @@ urlpatterns = [
     path('manage/company/list/', views.AccountsCompanyListView.as_view(), name='manage-company-list'),
     path('manage/company/switch/', views.AccountsCompanySwitchView.as_view(), name='manage-company-switch'),
     path('manage/company/create/', views.FrontendCompanyCreateView.as_view(), name='manage-company-create'),
+    path('manage/backup/', views.DatabaseBackupAPIView.as_view(), name='manage-backup'),
+    path('manage/restore/', views.DatabaseRestoreAPIView.as_view(), name='manage-restore'),
 
     # Fallback routes
     path('companies/', views.AccountsCompanyListView.as_view(), name='company-list'),

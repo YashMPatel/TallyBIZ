@@ -766,6 +766,17 @@ function MainERPApp() {
           onSelectCompany={handleCompanyChange}
           onQuit={() => setShowQuitModal(true)}
           userName={user?.first_name || user?.username}
+          onRefreshCompanies={async () => {
+            try {
+              const token = localStorage.getItem('access_token');
+              const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+              const r = await fetch('/api/accounts/manage/company/list/', { headers });
+              if (r.ok) {
+                const list = await r.json();
+                setCompanies(Array.isArray(list) ? list : []);
+              }
+            } catch {}
+          }}
         />
         <QuitConfirmModal
           isOpen={showQuitModal}

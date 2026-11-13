@@ -50,7 +50,13 @@ export const useTallyNavigation = ({
     }
 
     // 5. Root Level (Company Select screen) par pachhi Esc maro tyare quit confirm popup aavshe
-    setShowQuitModal(true);
+    if (activeCompany && setActiveCompany) {
+          localStorage.removeItem('active_company');
+          localStorage.removeItem('active_company_id');
+          setActiveCompany(null);
+        } else {
+          setShowQuitModal(true);
+        }
   }, [
     isModalOpen,
     closeActiveModal,
