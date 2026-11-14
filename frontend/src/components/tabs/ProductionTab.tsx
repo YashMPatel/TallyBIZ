@@ -395,6 +395,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const hasMassBalanceError = sameUnitRawTotal > 0 && (Number(actualQty || 0) + sameUnitScrapQty) > sameUnitRawTotal;
   const hasSelfItemError = Boolean(selectedBomObj && orderConsumptions.some((c) => Number(c.raw_item) === Number(selectedBomObj.finished_item)));
   const isOrderInvalid = hasShortage || hasMassBalanceError || hasSelfItemError;
+  const unaccountedLoss = sameUnitRawTotal > 0 ? Math.max(0, Number((sameUnitRawTotal - (Number(actualQty || 0) + sameUnitScrapQty)).toFixed(3))) : 0;
+  const bomStdUnitCost = Number(selectedBomObj?.unit_cost || 0);
+  const hasAbnormalCostSpike = bomStdUnitCost > 0 && estUnitCost > bomStdUnitCost * 1.5;
 
   return (
     <div style={{ padding: '4px 0' }}>
@@ -1158,7 +1161,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Scrap Item (Optional)</label>
-                  <select value={scrapItemId} onChange={(e) => setScrapItemId(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}>
+                  <select value={scrapItemId} onChange={(e) => { setScrapItemId(e.target.value); const sc = items.find((it) => String(it.id) === e.target.value); if (sc && Number(sc.standard_rate) > 0) setScrapValue((Number(scrapQty || 0) * Number(sc.standard_rate)).toFixed(2)); }} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}>
                     <option value="">-- None --</option>
                     {items.map((it) => (
                       <option key={it.id} value={it.id}>{it.item_name} ({it.unit})</option>
@@ -1169,7 +1172,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   <>
                     <div>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Scrap Recovered Qty</label>
-                      <input type="number" step="0.01" min="0" value={scrapQty} onChange={(e) => setScrapQty(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
+                      <input type="number" step="0.01" min="0" value={scrapQty} onChange={(e) => { setScrapQty(e.target.value); if (scrapItemObj && Number(scrapItemObj.standard_rate) > 0) setScrapValue((Number(e.target.value || 0) * Number(scrapItemObj.standard_rate)).toFixed(2)); }} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Scrap Recovery Value ({symbol})</label>
@@ -1185,6 +1188,17 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 <span style={{ color: '#0369a1' }}>Finished Unit Cost: <strong>{symbol} {estUnitCost.toFixed(2)}</strong></span>
               </div>
 
+              {sameUnitRawTotal > 0 && (
+                <div style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', background: unaccountedLoss > 0 ? '#fffbeb' : '#f0fdf4', border: `1px solid ${unaccountedLoss > 0 ? '#fde68a' : '#bbf7d0'}`, color: unaccountedLoss > 0 ? '#92400e' : '#166534' }}>
+                  <strong>Material Yield Check:</strong> Input <strong>{sameUnitRawTotal}</strong> = Produced <strong>{actualQty}</strong> + Scrap <strong>{sameUnitScrapQty}</strong>
+                  {unaccountedLoss > 0 && <span> • <strong>Unaccounted Loss: {unaccountedLoss}</strong> (Verify Produced Qty!)</span>}
+                </div>
+              )}
+              {hasAbnormalCostSpike && (
+                <div style={{ marginTop: '8px', color: '#b45309', fontSize: '12px', fontWeight: 600 }}>
+                  Cost Alert: Unit Cost ({symbol}{estUnitCost.toFixed(2)}) is much higher than BOM Standard ({symbol}{bomStdUnitCost.toFixed(2)}). Check Actual Produced Qty vs Consumed Qty!
+                </div>
+              )}
               {hasShortage && (
                 <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
                   Warning: One or more raw materials have insufficient stock!
