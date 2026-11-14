@@ -69,9 +69,7 @@ function MainERPApp() {
       setBusinessUnits([]);
       return;
     }
-    fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`, {
-      headers: { 'X-Company-Id': String(activeCompany.id), 'X-Company-ID': String(activeCompany.id) }
-    })
+    fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((rows) => {
         if (Array.isArray(rows)) setBusinessUnits(rows);

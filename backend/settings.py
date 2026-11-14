@@ -191,6 +191,10 @@ try:
     ]
 except ImportError:
     CORS_ALLOW_HEADERS = [
+    'x-unit-id',
+    'x-company-id',
+    'x-user-id',
+    'x-username',
         'accept',
         'accept-encoding',
         'authorization',
