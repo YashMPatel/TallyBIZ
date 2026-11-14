@@ -236,7 +236,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         raw_item: c.raw_item,
         raw_item_name: c.raw_item_name,
         unit: c.unit || 'Nos',
-        available_stock: liveItem ? Number(liveItem.current_stock || 0) : Number(c.available_stock || 0),
+        available_stock: c.available_stock !== undefined ? Number(c.available_stock) : (liveItem ? Number(liveItem.current_stock || 0) : 0),
         rate: Number(c.rate || 0),
         planned_qty: Number(c.planned_qty || c.actual_qty || 0),
         actual_qty: String(c.actual_qty || 0),
@@ -1062,7 +1062,27 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             <form onSubmit={(e) => { e.preventDefault(); submitProductionOrder(false); }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>BOM Recipe *</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>BOM Recipe *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const b = boms.find((x) => String(x.id) === String(selectedBomId));
+                        if (b) {
+                          const lr = Number(b.labor_cost || 0);
+                          const orate = Number(b.overhead_cost || 0);
+                          const q = Number(actualQty || 0);
+                          setOrderLaborRate(String(lr));
+                          setOrderOverheadRate(String(orate));
+                          setOrderLaborCost((lr * q).toFixed(2));
+                          setOrderOverheadCost((orate * q).toFixed(2));
+                        }
+                      }}
+                      style={{ fontSize: '11px', color: '#0284c7', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 }}
+                    >
+                      Sync Rates
+                    </button>
+                  </div>
                   <select
                     required
                     value={selectedBomId}

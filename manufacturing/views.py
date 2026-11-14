@@ -403,6 +403,14 @@ class BOMDetailView(APIView):
                             qty_required=qty_req,
                             wastage_percent=_to_dec(c.get('wastage_percent') or 0, '0.01'),
                         )
+            for po in ProductionOrder.objects.filter(bom=bom, status='PENDING'):
+                qty = Decimal(po.actual_qty)
+                po.labor_cost = (Decimal(bom.labor_cost) * qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                po.overhead_cost = (Decimal(bom.overhead_cost) * qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                net_c = max(Decimal('0.00'), Decimal(po.total_raw_cost) + po.labor_cost + po.overhead_cost - Decimal(po.scrap_value))
+                po.net_production_cost = net_c
+                po.unit_cost = (net_c / qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if qty > 0 else Decimal('0.00')
+                po.save(update_fields=['labor_cost', 'overhead_cost', 'net_production_cost', 'unit_cost'])
         return Response(_serialize_bom(bom))
 
     def delete(self, request, pk):
