@@ -169,12 +169,16 @@ def _post_production(order, approver):
     if order.status == 'APPROVED':
         return
     lines = list(order.consumptions.select_related('raw_item').all())
+    req_by_item = {}
     for line in lines:
-        avail = Decimal(line.raw_item.current_stock or 0)
-        if avail < Decimal(line.actual_qty):
-            raise ValueError(f'Insufficient stock for {line.raw_item.item_name}: Available {avail} {line.raw_item.unit}, Required {line.actual_qty} {line.raw_item.unit}')
+        req_by_item[line.raw_item_id] = req_by_item.get(line.raw_item_id, Decimal('0.000')) + Decimal(line.actual_qty)
+    for item_id, total_req in req_by_item.items():
+        fresh_it = Item.objects.get(pk=item_id)
+        avail = Decimal(fresh_it.current_stock or 0)
+        if avail < total_req:
+            raise ValueError(f'Insufficient stock for {fresh_it.item_name}: Available {avail} {fresh_it.unit}, Required {total_req} {fresh_it.unit}')
     for line in lines:
-        it = line.raw_item
+        it = Item.objects.get(pk=line.raw_item_id)
         it.current_stock = Decimal(it.current_stock or 0) - Decimal(line.actual_qty)
         it.save(update_fields=['current_stock'])
         StockLedgerEntry.objects.create(
@@ -187,8 +191,8 @@ def _post_production(order, approver):
             qty_after_transaction=it.current_stock,
             valuation_rate=line.rate,
         )
-    if order.scrap_item and Decimal(order.scrap_qty) > 0:
-        sc = order.scrap_item
+    if order.scrap_item_id and Decimal(order.scrap_qty) > 0:
+        sc = Item.objects.get(pk=order.scrap_item_id)
         sc_rate = (Decimal(order.scrap_value) / Decimal(order.scrap_qty)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         sc.current_stock = Decimal(sc.current_stock or 0) + Decimal(order.scrap_qty)
         sc.save(update_fields=['current_stock'])
@@ -202,7 +206,7 @@ def _post_production(order, approver):
             qty_after_transaction=sc.current_stock,
             valuation_rate=sc_rate,
         )
-    fg = order.finished_item
+    fg = Item.objects.get(pk=order.finished_item_id)
     old_stock = Decimal(fg.current_stock or 0)
     old_rate = Decimal(fg.standard_rate or 0)
     new_qty = old_stock + Decimal(order.actual_qty)
@@ -241,15 +245,15 @@ def _post_production(order, approver):
 def _reverse_production(order):
     if order.status != 'APPROVED':
         return
-    for line in order.consumptions.select_related('raw_item').all():
-        it = line.raw_item
+    for line in order.consumptions.all():
+        it = Item.objects.get(pk=line.raw_item_id)
         it.current_stock = Decimal(it.current_stock or 0) + Decimal(line.actual_qty)
         it.save(update_fields=['current_stock'])
-    if order.scrap_item and Decimal(order.scrap_qty) > 0:
-        sc = order.scrap_item
+    if order.scrap_item_id and Decimal(order.scrap_qty) > 0:
+        sc = Item.objects.get(pk=order.scrap_item_id)
         sc.current_stock = max(Decimal('0.00'), Decimal(sc.current_stock or 0) - Decimal(order.scrap_qty))
         sc.save(update_fields=['current_stock'])
-    fg = order.finished_item
+    fg = Item.objects.get(pk=order.finished_item_id)
     fg.current_stock = max(Decimal('0.00'), Decimal(fg.current_stock or 0) - Decimal(order.actual_qty))
     fg.save(update_fields=['current_stock'])
     StockLedgerEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type__startswith='Manufacturing').delete()
