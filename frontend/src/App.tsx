@@ -49,8 +49,10 @@ function MainERPApp() {
     return null;
   });
 
-  // --- Company Gateway States ---
+  // --- Company Gateway & Division/Unit States ---
   const [companies, setCompanies] = useState<any[]>([]);
+  const [businessUnits, setBusinessUnits] = useState<any[]>([]);
+  const [activeUnitId, setActiveUnitId] = useState<string>(() => localStorage.getItem('active_unit_id') || 'all');
 
   // Sync logged-in user to localStorage for RBAC API headers
   useEffect(() => {
@@ -61,6 +63,22 @@ function MainERPApp() {
     }
   }, [user]);
 
+
+  useEffect(() => {
+    if (!activeCompany?.id) {
+      setBusinessUnits([]);
+      return;
+    }
+    fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`, {
+      headers: { 'X-Company-Id': String(activeCompany.id), 'X-Company-ID': String(activeCompany.id) }
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        if (Array.isArray(rows)) setBusinessUnits(rows);
+      })
+      .catch(() => {});
+  }, [activeCompany?.id]);
+
   const handleCleanLogout = useCallback(() => {
     setActiveCompany(null);
     setCompanies([]);
@@ -68,6 +86,8 @@ function MainERPApp() {
     localStorage.removeItem('active_company');
     localStorage.removeItem('active_company_id');
     localStorage.removeItem('active_company_symbol');
+    localStorage.removeItem('active_unit_id');
+    setActiveUnitId('all');
     localStorage.removeItem('rbac_user');
     setActiveTab('selling');
     logout();
@@ -824,7 +844,30 @@ function MainERPApp() {
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+            {businessUnits.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '4px 10px', borderRadius: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8' }}>DIVISION:</span>
+                <select
+                  value={activeUnitId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setActiveUnitId(val);
+                    localStorage.setItem('active_unit_id', val);
+                    window.dispatchEvent(new Event('unit-changed'));
+                    window.location.reload();
+                  }}
+                  style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer' }}
+                >
+                  <option value="all">All Units (Consolidated)</option>
+                  {businessUnits.map((u: any) => (
+                    <option key={u.id} value={String(u.id)}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {companies.length > 1 ? (
               <CompanySwitcher onCompanyChange={handleCompanyChange} />
             ) : (
