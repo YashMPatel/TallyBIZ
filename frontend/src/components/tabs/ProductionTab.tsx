@@ -1188,7 +1188,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 <span style={{ color: '#0369a1' }}>Finished Unit Cost: <strong>{symbol} {estUnitCost.toFixed(2)}</strong></span>
               </div>
 
-              {sameUnitRawTotal > 0 && (
+              {sameUnitRawTotal > 0 && !hasMassBalanceError && (
                 <div style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', background: unaccountedLoss > 0 ? '#fffbeb' : '#f0fdf4', border: `1px solid ${unaccountedLoss > 0 ? '#fde68a' : '#bbf7d0'}`, color: unaccountedLoss > 0 ? '#92400e' : '#166534' }}>
                   <strong>Material Yield Check:</strong> Input <strong>{sameUnitRawTotal}</strong> = Produced <strong>{actualQty}</strong> + Scrap <strong>{sameUnitScrapQty}</strong>
                   {unaccountedLoss > 0 && <span> • <strong>Unaccounted Loss: {unaccountedLoss}</strong> (Verify Produced Qty!)</span>}
@@ -1214,11 +1214,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   Validation Error: Finished Product and Raw Material cannot be the same item!
                 </div>
               )}
-              {hasMassBalanceError && (
-                <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
-                  Validation Error: Produced Qty ({actualQty}) + Scrap Qty ({sameUnitScrapQty}) cannot be greater than Raw Material Consumed ({sameUnitRawTotal})!
-                </div>
-              )}
+
               {hasSelfItemError && (
                 <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
                   Validation Error: Finished Product and Raw Material cannot be the same item!
