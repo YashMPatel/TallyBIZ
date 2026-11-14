@@ -1,3 +1,4 @@
+import { API_BASE } from '../utils/erpHelpers';
 import React, { useState, useEffect, useRef } from 'react';
 import { Building2, PlusCircle, Download, Upload, LogOut, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
 
@@ -104,7 +105,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
     setBusy(true);
     setStatusMsg(null);
     try {
-      const res = await fetch('/api/accounts/manage/company/create/', {
+      const res = await fetch(`${API_BASE}/accounts/manage/company/create/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
@@ -141,7 +142,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
     setBusy(true);
     setStatusMsg(null);
     try {
-      const res = await fetch('/api/accounts/manage/backup/', {
+      const res = await fetch(`${API_BASE}/accounts/manage/backup/`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) {
@@ -180,7 +181,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/api/accounts/manage/restore/', {
+      const res = await fetch(`${API_BASE}/accounts/manage/restore/`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData,
