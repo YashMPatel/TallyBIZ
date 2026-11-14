@@ -1009,6 +1009,11 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 ))}
               </div>
 
+              {finishedItemId && bomComponents.some((c) => c.raw_item === finishedItemId) && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#b45309', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', marginTop: '8px' }}>
+                  Note: Finished Product and Raw Material are the same item. For accurate costing, use separate items for Raw Material and Finished Goods.
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
                 <button type="button" onClick={() => setShowBomModal(false)} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>
                   Cancel
