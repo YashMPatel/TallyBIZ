@@ -30,6 +30,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   const isSalesUser = roleUpper === 'SALES_USER';
   const isAdmin = roleUpper === 'ADMIN';
   const isManager = roleUpper === 'MANAGER';
+  let compBizType = 'HYBRID';
+  try {
+    const savedC = JSON.parse(localStorage.getItem('active_company') || '{}');
+    if (savedC?.business_type) compBizType = String(savedC.business_type).toUpperCase();
+  } catch (e) {}
+  const showManufacturing = compBizType !== 'TRADING';
 
   return (
     <aside
@@ -158,12 +164,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         )}
 
         {/* 9B. Production & BOM */}
-      <button
+      {showManufacturing && (
+          <button
         onClick={() => setActiveTab('production')}
         style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'production' ? '#1e293b' : 'transparent', color: activeTab === 'production' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
       >
         <Factory size={16} /> Production &amp; BOM
       </button>
+        )}
 
       {/* 10. Accounts / General Ledger (Sales User mate hidden) */}
         {!isSalesUser && (
