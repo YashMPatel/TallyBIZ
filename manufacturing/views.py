@@ -262,6 +262,24 @@ def _reverse_production(order):
     order.approved_by = ''
     order.save(update_fields=['status', 'approved_by'])
 
+def _validate_mass_balance(finished_item, actual_qty, scrap_item, scrap_qty, cons_pairs):
+    fg_unit = (finished_item.unit or '').strip().lower()
+    same_unit_in = Decimal('0.000')
+    for rit, aq in cons_pairs:
+        if rit.id == finished_item.id:
+            raise ValueError(f'Finished Product "{finished_item.item_name}" cannot be used as its own Raw Material. Create separate items for Raw Material and Finished Goods.')
+        if (rit.unit or '').strip().lower() == fg_unit:
+            same_unit_in += Decimal(aq)
+    sc_same_unit = Decimal('0.000')
+    if scrap_item and Decimal(scrap_qty) > 0:
+        if (scrap_item.unit or '').strip().lower() == fg_unit:
+            sc_same_unit = Decimal(scrap_qty)
+    if same_unit_in > 0 and (Decimal(actual_qty) + sc_same_unit) > same_unit_in:
+        raise ValueError(
+            f'Validation Error: Produced ({actual_qty} {finished_item.unit}) + Scrap ({sc_same_unit} {finished_item.unit}) '
+            f'cannot exceed Raw Material Consumed ({same_unit_in} {finished_item.unit}).'
+        )
+
 def _apply_order_lines(order, bom, data):
     actual_qty = Decimal(order.actual_qty)
     out_qty = Decimal(bom.output_qty) if Decimal(bom.output_qty) > 0 else Decimal('1.00')
@@ -287,6 +305,8 @@ def _apply_order_lines(order, bom, data):
             amt = (aq * rt).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             raw_total += amt
             ProductionConsumption.objects.create(production_order=order, raw_item=c.raw_item, planned_qty=aq, actual_qty=aq, rate=rt, amount=amt)
+    cons_pairs = [(c.raw_item, c.actual_qty) for c in order.consumptions.select_related('raw_item').all()]
+    _validate_mass_balance(order.finished_item, actual_qty, order.scrap_item, order.scrap_qty, cons_pairs)
     net_cost = max(Decimal('0.00'), raw_total + Decimal(order.labor_cost) + Decimal(order.overhead_cost) - Decimal(order.scrap_value))
     u_cost = (net_cost / actual_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     order.total_raw_cost = raw_total
@@ -316,6 +336,8 @@ class BOMListCreateView(APIView):
         fg = Item.objects.filter(id=finished_id).first()
         if not fg:
             return Response({'error': 'Invalid finished item.'}, status=400)
+        if any(str(c.get('raw_item')) == str(fg.id) for c in comps):
+            return Response({'error': 'Finished Product and Raw Material cannot be the same item.'}, status=400)
         code = (data.get('bom_code') or '').strip()
         if not code:
             cnt = BillOfMaterial.objects.filter(company=company).count() + 1

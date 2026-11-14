@@ -387,6 +387,14 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const estNetTotal = Math.max(0, estRawTotal + Number(orderLaborCost || 0) + Number(orderOverheadCost || 0) - Number(scrapValue || 0));
   const estUnitCost = Number(actualQty) > 0 ? estNetTotal / Number(actualQty) : 0;
   const hasShortage = orderConsumptions.some((c) => Number(c.actual_qty || 0) > Number(c.available_stock || 0));
+  const selectedBomObj = boms.find((b) => String(b.id) === String(selectedBomId));
+  const fgUnitLower = String(selectedBomObj?.finished_item_unit || '').trim().toLowerCase();
+  const sameUnitRawTotal = orderConsumptions.reduce((acc, c) => (String(c.unit || '').trim().toLowerCase() === fgUnitLower ? acc + Number(c.actual_qty || 0) : acc), 0);
+  const scrapItemObj = items.find((it) => String(it.id) === String(scrapItemId));
+  const sameUnitScrapQty = scrapItemObj && String(scrapItemObj.unit || '').trim().toLowerCase() === fgUnitLower ? Number(scrapQty || 0) : 0;
+  const hasMassBalanceError = sameUnitRawTotal > 0 && (Number(actualQty || 0) + sameUnitScrapQty) > sameUnitRawTotal;
+  const hasSelfItemError = Boolean(selectedBomObj && orderConsumptions.some((c) => Number(c.raw_item) === Number(selectedBomObj.finished_item)));
+  const isOrderInvalid = hasShortage || hasMassBalanceError || hasSelfItemError;
 
   return (
     <div style={{ padding: '4px 0' }}>
@@ -963,7 +971,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       style={{ padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
                     >
                       <option value="">-- Raw Material --</option>
-                      {items.map((it) => (
+                      {items.filter((it) => String(it.id) !== String(finishedItemId)).map((it) => (
                         <option key={it.id} value={it.id}>
                           {it.item_name} ({it.unit}) — Rate: {symbol}{it.standard_rate}
                         </option>
@@ -1182,6 +1190,16 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   Warning: One or more raw materials have insufficient stock!
                 </div>
               )}
+              {hasMassBalanceError && (
+                <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
+                  Validation Error: Produced Qty ({actualQty}) + Scrap Qty ({sameUnitScrapQty}) cannot be greater than Raw Material Consumed ({sameUnitRawTotal})!
+                </div>
+              )}
+              {hasSelfItemError && (
+                <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
+                  Validation Error: Finished Product and Raw Material cannot be the same item!
+                </div>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => setShowOrderModal(false)} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>
@@ -1189,16 +1207,17 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d97706', background: '#fffbeb', color: '#b45309', fontWeight: 600, cursor: 'pointer' }}
+                  disabled={hasMassBalanceError || hasSelfItemError}
+                  style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d97706', background: (hasMassBalanceError || hasSelfItemError) ? '#f1f5f9' : '#fffbeb', color: (hasMassBalanceError || hasSelfItemError) ? '#94a3b8' : '#b45309', fontWeight: 600, cursor: (hasMassBalanceError || hasSelfItemError) ? 'not-allowed' : 'pointer' }}
                 >
                   Save as Pending
                 </button>
                 {canApprove && (
                   <button
                     type="button"
-                    disabled={hasShortage}
+                    disabled={isOrderInvalid}
                     onClick={() => submitProductionOrder(true)}
-                    style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: hasShortage ? '#94a3b8' : '#0f172a', color: '#fff', fontWeight: 600, cursor: hasShortage ? 'not-allowed' : 'pointer' }}
+                    style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: isOrderInvalid ? '#94a3b8' : '#0f172a', color: '#fff', fontWeight: 600, cursor: isOrderInvalid ? 'not-allowed' : 'pointer' }}
                   >
                     Post &amp; Approve Production
                   </button>
