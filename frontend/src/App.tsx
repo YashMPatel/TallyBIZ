@@ -868,6 +868,28 @@ function MainERPApp() {
                 </select>
               </div>
             )}
+            {activeCompany && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #93c5fd', padding: '5px 10px', borderRadius: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8' }}>DIVISION:</span>
+                <select
+                  value={activeUnitId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setActiveUnitId(val);
+                    localStorage.setItem('active_unit_id', val);
+                    window.location.reload();
+                  }}
+                  style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer' }}
+                >
+                  <option value="all">All Units (Consolidated)</option>
+                  {businessUnits.map((u: any) => (
+                    <option key={u.id} value={String(u.id)}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {companies.length > 1 ? (
               <CompanySwitcher onCompanyChange={handleCompanyChange} />
             ) : (
