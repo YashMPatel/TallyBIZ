@@ -1200,6 +1200,16 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   Validation Error: Finished Product and Raw Material cannot be the same item!
                 </div>
               )}
+              {hasMassBalanceError && (
+                <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
+                  Validation Error: Produced Qty ({actualQty}) + Scrap Qty ({sameUnitScrapQty}) cannot be greater than Raw Material Consumed ({sameUnitRawTotal})!
+                </div>
+              )}
+              {hasSelfItemError && (
+                <div style={{ marginTop: '10px', color: '#dc2626', fontSize: '12px', fontWeight: 600 }}>
+                  Validation Error: Finished Product and Raw Material cannot be the same item!
+                </div>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => setShowOrderModal(false)} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>
