@@ -50,6 +50,8 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [voucherNo, setVoucherNo] = useState('');
   const [plannedQty, setPlannedQty] = useState<string>('1');
   const [actualQty, setActualQty] = useState<string>('1');
+  const [orderLaborRate, setOrderLaborRate] = useState<string>('0');
+  const [orderOverheadRate, setOrderOverheadRate] = useState<string>('0');
   const [orderLaborCost, setOrderLaborCost] = useState<string>('0');
   const [orderOverheadCost, setOrderOverheadCost] = useState<string>('0');
   const [scrapItemId, setScrapItemId] = useState<string>('');
@@ -93,7 +95,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     fetchManufacturing();
   }, [fetchManufacturing]);
 
-  const syncOrderFromBom = (bomIdStr: string, targetQtyStr: string) => {
+  const syncOrderFromBom = (bomIdStr: string, targetQtyStr: string, customLaborRate?: string, customOhRate?: string) => {
     const bom = boms.find((b) => String(b.id) === String(bomIdStr));
     if (!bom) {
       setOrderConsumptions([]);
@@ -102,8 +104,12 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     const baseOut = Number(bom.output_qty) > 0 ? Number(bom.output_qty) : 1;
     const tQty = Number(targetQtyStr) > 0 ? Number(targetQtyStr) : baseOut;
     const mult = tQty / baseOut;
-    setOrderLaborCost((Number(bom.labor_cost || 0) * mult).toFixed(2));
-    setOrderOverheadCost((Number(bom.overhead_cost || 0) * mult).toFixed(2));
+    const lRate = customLaborRate !== undefined ? Number(customLaborRate) : Number(bom.labor_cost || 0);
+    const oRate = customOhRate !== undefined ? Number(customOhRate) : Number(bom.overhead_cost || 0);
+    if (customLaborRate === undefined) setOrderLaborRate(String(lRate));
+    if (customOhRate === undefined) setOrderOverheadRate(String(oRate));
+    setOrderLaborCost((lRate * tQty).toFixed(2));
+    setOrderOverheadCost((oRate * tQty).toFixed(2));
     const lines = (bom.components || []).map((c: any) => {
       const req = Number((Number(c.effective_qty || c.qty_required || 0) * mult).toFixed(3));
       return {
@@ -215,6 +221,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     setVoucherNo(targetOrder.voucher_no || '');
     setPlannedQty(String(targetOrder.planned_qty || targetOrder.actual_qty || 1));
     setActualQty(String(targetOrder.actual_qty || 1));
+    const editQty = Number(targetOrder.actual_qty || 1) || 1;
+    setOrderLaborRate((Number(targetOrder.labor_cost || 0) / editQty).toFixed(2));
+    setOrderOverheadRate((Number(targetOrder.overhead_cost || 0) / editQty).toFixed(2));
     setOrderLaborCost(String(targetOrder.labor_cost || 0));
     setOrderOverheadCost(String(targetOrder.overhead_cost || 0));
     setScrapItemId(targetOrder.scrap_item ? String(targetOrder.scrap_item) : '');
@@ -927,7 +936,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Direct Labour Cost / Batch ({symbol})</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Direct Labour Cost / Unit ({symbol} per Nos)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -938,7 +947,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Factory Overhead / Batch ({symbol})</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Factory Overhead / Unit ({symbol} per Nos)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1095,7 +1104,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     onChange={(e) => {
                       setActualQty(e.target.value);
                       setPlannedQty(e.target.value);
-                      syncOrderFromBom(selectedBomId, e.target.value);
+                      syncOrderFromBom(selectedBomId, e.target.value, orderLaborRate, orderOverheadRate);
                     }}
                     style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box', fontWeight: 700 }}
                   />
@@ -1152,12 +1161,34 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Direct Labour ({symbol})</label>
-                  <input type="number" step="0.01" min="0" value={orderLaborCost} onChange={(e) => setOrderLaborCost(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Direct Labour / Unit ({symbol})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={orderLaborRate}
+                    onChange={(e) => {
+                      setOrderLaborRate(e.target.value);
+                      setOrderLaborCost((Number(e.target.value || 0) * Number(actualQty || 0)).toFixed(2));
+                    }}
+                    style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Total Labour: {symbol} {Number(orderLaborCost).toFixed(2)}</div>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Factory Overheads ({symbol})</label>
-                  <input type="number" step="0.01" min="0" value={orderOverheadCost} onChange={(e) => setOrderOverheadCost(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }} />
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Factory Overhead / Unit ({symbol})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={orderOverheadRate}
+                    onChange={(e) => {
+                      setOrderOverheadRate(e.target.value);
+                      setOrderOverheadCost((Number(e.target.value || 0) * Number(actualQty || 0)).toFixed(2));
+                    }}
+                    style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Total Overhead: {symbol} {Number(orderOverheadCost).toFixed(2)}</div>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Scrap Item (Optional)</label>

@@ -70,8 +70,8 @@ def _serialize_bom(bom):
             'effective_qty': float(eff_qty),
             'line_cost': float(line_cost),
         })
-    total_batch_cost = raw_cost + Decimal(bom.labor_cost) + Decimal(bom.overhead_cost)
     out_qty = Decimal(bom.output_qty) if Decimal(bom.output_qty) > 0 else Decimal('1.00')
+    total_batch_cost = raw_cost + ((Decimal(bom.labor_cost) + Decimal(bom.overhead_cost)) * out_qty)
     unit_cost = (total_batch_cost / out_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     max_qty = float(Decimal(max_batches or 0) * out_qty)
     return {
@@ -450,8 +450,8 @@ class MRPCheckView(APIView):
                 'rate': float(rate),
                 'estimated_cost': float(cost),
             })
-        est_labor = (Decimal(bom.labor_cost) * mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        est_oh = (Decimal(bom.overhead_cost) * mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        est_labor = (Decimal(bom.labor_cost) * qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        est_oh = (Decimal(bom.overhead_cost) * qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         total_est = raw_total + est_labor + est_oh
         unit_est = (total_est / qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if qty > 0 else Decimal('0.00')
         return Response({
@@ -508,8 +508,8 @@ class ProductionOrderListCreateView(APIView):
         scrap_val = _to_dec(data.get('scrap_value') or 0, '0.01') if scrap_it else Decimal('0.00')
         out_qty = Decimal(bom.output_qty) if Decimal(bom.output_qty) > 0 else Decimal('1.00')
         mult = actual_qty / out_qty
-        labor_cost = _to_dec(data.get('labor_cost'), '0.01') if 'labor_cost' in data else (Decimal(bom.labor_cost) * mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        overhead_cost = _to_dec(data.get('overhead_cost'), '0.01') if 'overhead_cost' in data else (Decimal(bom.overhead_cost) * mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        labor_cost = _to_dec(data.get('labor_cost'), '0.01') if 'labor_cost' in data else (Decimal(bom.labor_cost) * actual_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        overhead_cost = _to_dec(data.get('overhead_cost'), '0.01') if 'overhead_cost' in data else (Decimal(bom.overhead_cost) * actual_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         try:
             with transaction.atomic():
                 order = ProductionOrder.objects.create(
