@@ -318,13 +318,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                   Create New Company (Auto-assigns you as Admin)
                 </h3>
                 {companies.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => { setShowCreateForm(false); setStatusMsg(null); }}
-                    style={{ fontSize: '12px', color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}
-                  >
-                    ← Back to List
-                  </button>
+                  <button type="button" onClick={() => { setShowCreateForm(false); setStatusMsg(null); }} style={{ padding: '10px 18px', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>← Back to List</button>
                 )}
               </div>
 
