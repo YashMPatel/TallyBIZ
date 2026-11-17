@@ -576,54 +576,323 @@ class DashboardSummaryAPIView(APIView):
 
 class GSTReturnSummaryAPIView(APIView):
     def get(self, request):
+        import re as _re
+        from buying.models import DebitNote
+        from selling.models import CreditNote
+
         company = get_active_company(request)
+        symbol = getattr(company, 'currency_symbol', '₹') if company else '₹'
+
+        def extract_state_code(gstin_val, state_val=''):
+            g = str(gstin_val or '').strip()
+            if len(g) >= 2 and g[:2].isdigit():
+                return g[:2]
+            m = _re.search(r'\((\d{2})\)', str(state_val or ''))
+            if m:
+                return m.group(1)
+            return ''
+
+        comp_state_code = extract_state_code(
+            getattr(company, 'gstin', '') or getattr(company, 'tax_id', ''),
+            getattr(company, 'state', '')
+        )
+
+        def split_tax(tax_amt, party_gstin):
+            p_code = extract_state_code(party_gstin)
+            is_inter = bool(comp_state_code and p_code and comp_state_code != p_code)
+            if is_inter:
+                return Decimal('0.00'), Decimal('0.00'), tax_amt, 'Inter-State (IGST)'
+            half = (tax_amt / Decimal('2.00')).quantize(Decimal('0.01'))
+            other_half = tax_amt - half
+            return half, other_half, Decimal('0.00'), 'Intra-State (CGST+SGST)'
+
+        def ensure_month(mmap, m_str):
+            if m_str not in mmap:
+                mmap[m_str] = {
+                    'month': m_str,
+                    'gross_sales': Decimal('0.00'),
+                    'credit_notes_taxable': Decimal('0.00'),
+                    'sales': Decimal('0.00'),
+                    'output_cgst': Decimal('0.00'),
+                    'output_sgst': Decimal('0.00'),
+                    'output_igst': Decimal('0.00'),
+                    'output_gst': Decimal('0.00'),
+                    'gross_purchases': Decimal('0.00'),
+                    'debit_notes_taxable': Decimal('0.00'),
+                    'purchases': Decimal('0.00'),
+                    'input_cgst': Decimal('0.00'),
+                    'input_sgst': Decimal('0.00'),
+                    'input_igst': Decimal('0.00'),
+                    'input_gst': Decimal('0.00'),
+                    'b2b_invoices': [],
+                    'b2c_invoices': [],
+                    'purchase_bills': [],
+                    'credit_notes': [],
+                    'debit_notes': [],
+                    'hsn_map': {},
+                }
+            return mmap[m_str]
+
         summary_map = {}
-        is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
 
-        try:
-            s_qs = SalesInvoice.objects.filter(company=company)
-            for inv in s_qs:
-                p_date = getattr(inv, 'posting_date', None)
-                if not p_date:
-                    continue
-                m_str = str(p_date)[:7]
-                if m_str not in summary_map:
-                    summary_map[m_str] = {'month': m_str, 'sales': Decimal('0.00'), 'purchases': Decimal('0.00'), 'output_gst': Decimal('0.00'), 'input_gst': Decimal('0.00')}
-                summary_map[m_str]['sales'] += Decimal(str(inv.net_total or 0))
-                summary_map[m_str]['output_gst'] += Decimal(str(inv.tax_amount or 0))
-        except Exception:
-            pass
+        # 1. Sales Invoices (GSTR-1 Outward Supplies)
+        s_qs = (
+            SalesInvoice.objects.filter(company=company)
+            .exclude(status__iexact='Rejected')
+            .select_related('customer')
+            .prefetch_related('items__item')
+            .order_by('-posting_date', '-id')
+        )
+        for inv in s_qs:
+            p_date = getattr(inv, 'posting_date', None)
+            if not p_date:
+                continue
+            m_str = str(p_date)[:7]
+            bucket = ensure_month(summary_map, m_str)
 
-        try:
-            p_qs = PurchaseInvoice.objects.filter(company=company)
-            for pur in p_qs:
-                p_date = getattr(pur, 'posting_date', None)
-                if not p_date:
-                    continue
-                m_str = str(p_date)[:7]
-                if m_str not in summary_map:
-                    summary_map[m_str] = {'month': m_str, 'sales': Decimal('0.00'), 'purchases': Decimal('0.00'), 'output_gst': Decimal('0.00'), 'input_gst': Decimal('0.00')}
-                summary_map[m_str]['purchases'] += Decimal(str(pur.net_total or 0))
-                summary_map[m_str]['input_gst'] += Decimal(str(pur.tax_amount or 0))
-        except Exception:
-            pass
+            taxable = Decimal(str(inv.net_total or 0))
+            tax_amt = Decimal(str(inv.tax_amount or 0))
+            grand = Decimal(str(inv.grand_total or (taxable + tax_amt)))
+            cust_gstin = (getattr(inv.customer, 'gstin', '') or '').strip() if inv.customer else ''
+            cgst, sgst, igst, pos_type = split_tax(tax_amt, cust_gstin)
+
+            bucket['gross_sales'] += taxable
+            bucket['sales'] += taxable
+            bucket['output_cgst'] += cgst
+            bucket['output_sgst'] += sgst
+            bucket['output_igst'] += igst
+            bucket['output_gst'] += tax_amt
+
+            inv_row = {
+                'id': inv.id,
+                'invoice_number': inv.invoice_number,
+                'posting_date': str(p_date),
+                'customer_name': inv.customer_name,
+                'gstin': cust_gstin or 'Unregistered',
+                'supply_type': 'B2B' if len(cust_gstin) >= 15 else 'B2C',
+                'place_of_supply': pos_type,
+                'tax_rate': float(inv.tax_rate or 0),
+                'taxable_value': float(taxable),
+                'cgst': float(cgst),
+                'sgst': float(sgst),
+                'igst': float(igst),
+                'total_tax': float(tax_amt),
+                'grand_total': float(grand),
+                'status': inv.status,
+            }
+            if len(cust_gstin) >= 15:
+                bucket['b2b_invoices'].append(inv_row)
+            else:
+                bucket['b2c_invoices'].append(inv_row)
+
+            # GSTR-1 Table 12 HSN Summary from line items
+            is_inter = igst > Decimal('0.00')
+            for line in inv.items.all():
+                itm = line.item
+                hsn = (getattr(itm, 'hsn_code', '') or '').strip()
+                if not hsn and line.description:
+                    hm = _re.search(r'HSN[:\s-]*([A-Za-z0-9]+)', line.description, _re.I)
+                    if hm:
+                        hsn = hm.group(1)
+                if not hsn:
+                    hsn = getattr(itm, 'item_code', 'N/A') or 'N/A'
+                rate_pct = Decimal(str(getattr(itm, 'gst_rate', None) or inv.tax_rate or 0))
+                line_val = Decimal(str(line.amount or 0))
+                line_qty = Decimal(str(line.quantity or 0))
+                line_tax = (line_val * rate_pct / Decimal('100.00')).quantize(Decimal('0.01'))
+                l_igst = line_tax if is_inter else Decimal('0.00')
+                l_cgst = Decimal('0.00') if is_inter else (line_tax / Decimal('2.00')).quantize(Decimal('0.01'))
+                l_sgst = Decimal('0.00') if is_inter else (line_tax - l_cgst)
+
+                h_key = f"{hsn}::{float(rate_pct)}"
+                if h_key not in bucket['hsn_map']:
+                    bucket['hsn_map'][h_key] = {
+                        'hsn_code': hsn,
+                        'description': getattr(itm, 'item_name', '') or line.description or hsn,
+                        'uqc': getattr(itm, 'unit', 'NOS') or 'NOS',
+                        'gst_rate': float(rate_pct),
+                        'total_qty': Decimal('0.00'),
+                        'taxable_value': Decimal('0.00'),
+                        'cgst': Decimal('0.00'),
+                        'sgst': Decimal('0.00'),
+                        'igst': Decimal('0.00'),
+                        'total_tax': Decimal('0.00'),
+                        'total_value': Decimal('0.00'),
+                    }
+                hrec = bucket['hsn_map'][h_key]
+                hrec['total_qty'] += line_qty
+                hrec['taxable_value'] += line_val
+                hrec['cgst'] += l_cgst
+                hrec['sgst'] += l_sgst
+                hrec['igst'] += l_igst
+                hrec['total_tax'] += line_tax
+                hrec['total_value'] += (line_val + line_tax)
+
+        # 2. Credit Notes (Reduces Outward Sales & Output GST)
+        for cn in CreditNote.objects.filter(company=company).exclude(status__iexact='Rejected').select_related('customer'):
+            p_date = getattr(cn, 'posting_date', None)
+            if not p_date:
+                continue
+            m_str = str(p_date)[:7]
+            bucket = ensure_month(summary_map, m_str)
+            taxable = Decimal(str(cn.net_total or 0))
+            tax_amt = Decimal(str(cn.tax_amount or 0))
+            cust_gstin = (getattr(cn.customer, 'gstin', '') or '').strip() if cn.customer else ''
+            cgst, sgst, igst, _ = split_tax(tax_amt, cust_gstin)
+
+            bucket['credit_notes_taxable'] += taxable
+            bucket['sales'] -= taxable
+            bucket['output_cgst'] -= cgst
+            bucket['output_sgst'] -= sgst
+            bucket['output_igst'] -= igst
+            bucket['output_gst'] -= tax_amt
+            bucket['credit_notes'].append({
+                'id': cn.id,
+                'credit_note_number': cn.credit_note_number,
+                'posting_date': str(p_date),
+                'customer_name': cn.customer_name,
+                'gstin': cust_gstin or 'Unregistered',
+                'taxable_value': float(taxable),
+                'total_tax': float(tax_amt),
+                'grand_total': float(cn.grand_total or (taxable + tax_amt)),
+                'status': cn.status,
+            })
+
+        # 3. Purchase Invoices (GSTR-2B / 3B Eligible ITC)
+        p_qs = (
+            PurchaseInvoice.objects.filter(company=company)
+            .exclude(status__iexact='Rejected')
+            .select_related('supplier')
+            .order_by('-posting_date', '-id')
+        )
+        for pur in p_qs:
+            p_date = getattr(pur, 'posting_date', None)
+            if not p_date:
+                continue
+            m_str = str(p_date)[:7]
+            bucket = ensure_month(summary_map, m_str)
+
+            taxable = Decimal(str(pur.net_total or 0))
+            tax_amt = Decimal(str(pur.tax_amount or 0))
+            grand = Decimal(str(pur.grand_total or (taxable + tax_amt)))
+            supp_gstin = (getattr(pur.supplier, 'gstin', '') or '').strip() if pur.supplier else ''
+            cgst, sgst, igst, pos_type = split_tax(tax_amt, supp_gstin)
+
+            bucket['gross_purchases'] += taxable
+            bucket['purchases'] += taxable
+            bucket['input_cgst'] += cgst
+            bucket['input_sgst'] += sgst
+            bucket['input_igst'] += igst
+            bucket['input_gst'] += tax_amt
+
+            bucket['purchase_bills'].append({
+                'id': pur.id,
+                'bill_number': pur.bill_number,
+                'posting_date': str(p_date),
+                'supplier_name': pur.supplier_name,
+                'gstin': supp_gstin or 'Unregistered',
+                'place_of_supply': pos_type,
+                'tax_rate': float(pur.tax_rate or 0),
+                'taxable_value': float(taxable),
+                'cgst': float(cgst),
+                'sgst': float(sgst),
+                'igst': float(igst),
+                'total_tax': float(tax_amt),
+                'grand_total': float(grand),
+                'status': pur.status,
+            })
+
+        # 4. Debit Notes (Reduces Inward Purchases & ITC)
+        for dn in DebitNote.objects.filter(company=company).exclude(status__iexact='Rejected').select_related('supplier'):
+            p_date = getattr(dn, 'posting_date', None)
+            if not p_date:
+                continue
+            m_str = str(p_date)[:7]
+            bucket = ensure_month(summary_map, m_str)
+            taxable = Decimal(str(dn.net_total or 0))
+            tax_amt = Decimal(str(dn.tax_amount or 0))
+            supp_gstin = (getattr(dn.supplier, 'gstin', '') or '').strip() if dn.supplier else ''
+            cgst, sgst, igst, _ = split_tax(tax_amt, supp_gstin)
+
+            bucket['debit_notes_taxable'] += taxable
+            bucket['purchases'] -= taxable
+            bucket['input_cgst'] -= cgst
+            bucket['input_sgst'] -= sgst
+            bucket['input_igst'] -= igst
+            bucket['input_gst'] -= tax_amt
+            bucket['debit_notes'].append({
+                'id': dn.id,
+                'debit_note_number': dn.debit_note_number,
+                'posting_date': str(p_date),
+                'supplier_name': dn.supplier_name,
+                'gstin': supp_gstin or 'Unregistered',
+                'taxable_value': float(taxable),
+                'total_tax': float(tax_amt),
+                'grand_total': float(dn.grand_total or (taxable + tax_amt)),
+                'status': dn.status,
+            })
 
         result = []
         for m_str in sorted(summary_map.keys(), reverse=True):
             row = summary_map[m_str]
             out_tax = row['output_gst']
             in_tax = row['input_gst']
+            net_diff = out_tax - in_tax
+            net_payable = max(Decimal('0.00'), net_diff)
+            itc_cf = max(Decimal('0.00'), in_tax - out_tax)
+
+            hsn_list = [
+                {
+                    'hsn_code': h['hsn_code'],
+                    'description': h['description'],
+                    'uqc': h['uqc'],
+                    'gst_rate': h['gst_rate'],
+                    'total_qty': float(h['total_qty']),
+                    'taxable_value': float(h['taxable_value']),
+                    'cgst': float(h['cgst']),
+                    'sgst': float(h['sgst']),
+                    'igst': float(h['igst']),
+                    'total_tax': float(h['total_tax']),
+                    'total_value': float(h['total_value']),
+                }
+                for h in sorted(row['hsn_map'].values(), key=lambda x: x['hsn_code'])
+            ]
+
             result.append({
                 'id': m_str,
                 'month': m_str,
+                'currency_symbol': symbol,
+                'company_gstin': getattr(company, 'gstin', '') or getattr(company, 'tax_id', '') or '',
+                'company_state': getattr(company, 'state', '') or '',
+                'gross_sales': float(row['gross_sales']),
+                'credit_notes_taxable': float(row['credit_notes_taxable']),
                 'sales': float(row['sales']),
-                'purchases': float(row['purchases']),
+                'taxable_sales': float(row['sales']),
+                'output_cgst': float(row['output_cgst']),
+                'output_sgst': float(row['output_sgst']),
+                'output_igst': float(row['output_igst']),
                 'output_gst': float(out_tax),
+                'gross_purchases': float(row['gross_purchases']),
+                'debit_notes_taxable': float(row['debit_notes_taxable']),
+                'purchases': float(row['purchases']),
+                'taxable_purchases': float(row['purchases']),
+                'input_cgst': float(row['input_cgst']),
+                'input_sgst': float(row['input_sgst']),
+                'input_igst': float(row['input_igst']),
                 'input_gst': float(in_tax),
-                'net_gst': float(out_tax - in_tax),
+                'net_gst': float(net_diff),
+                'net_payable': float(net_payable),
+                'itc_carry_forward': float(itc_cf),
+                'b2b_count': len(row['b2b_invoices']),
+                'b2c_count': len(row['b2c_invoices']),
+                'b2b_invoices': row['b2b_invoices'],
+                'b2c_invoices': row['b2c_invoices'],
+                'purchase_bills': row['purchase_bills'],
+                'credit_notes': row['credit_notes'],
+                'debit_notes': row['debit_notes'],
+                'hsn_summary': hsn_list,
             })
         return Response(result, status=status.HTTP_200_OK)
-
 
 class PartyOutstandingAPIView(APIView):
     def get(self, request):
