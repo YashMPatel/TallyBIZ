@@ -1,4 +1,4 @@
-import type { FC } from 'react';
+import { useState, useEffect, useCallback, type FC } from 'react';
 import { Plus, Download, Search, Printer, Edit2, Trash2 } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { PurchaseInvoice } from '../../types/erp';
@@ -9,6 +9,7 @@ import {
   newLine,
   lineFromItem,
   exportToCSV,
+  API_BASE,
 } from '../../utils/erpHelpers';
 
 interface BuyingTabProps {
@@ -39,6 +40,25 @@ export const BuyingTab: FC<BuyingTabProps> = ({
   handleDeletePurchase,
 }) => {
   const symbol = localStorage.getItem('active_company_symbol') || '₹';
+  const [incomingMatRequests, setIncomingMatRequests] = useState<any[]>([]);
+
+  const loadMatRequests = useCallback(() => {
+    const compId = localStorage.getItem('active_company_id') || '';
+    if (!compId) return;
+    fetch(`${API_BASE}/accounts/requests/?company_id=${compId}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        const list = (Array.isArray(rows) ? rows : []).filter(
+          (x: any) => x.request_type === 'MATERIAL_PURCHASE' && x.status === 'OPEN'
+        );
+        setIncomingMatRequests(list);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadMatRequests();
+  }, [loadMatRequests]);
 
   return (
     <div>
@@ -119,6 +139,70 @@ export const BuyingTab: FC<BuyingTabProps> = ({
           </div>
         );
       })()}
+
+      {incomingMatRequests.length > 0 && (
+        <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '10px', padding: '16px 20px', marginBottom: '20px' }}>
+          <div style={{ fontWeight: 800, color: '#1e3a8a', fontSize: '14px', marginBottom: '10px' }}>
+            🏭 Incoming Material &amp; Outsource Purchase Requests from Manufacturing ({incomingMatRequests.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {incomingMatRequests.map((mr) => (
+              <div key={mr.id} style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bfdbfe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '13px', color: '#0f172a' }}>
+                    <span style={{ color: '#7c3aed' }}>{mr.request_no}</span> • {mr.from_unit_name}: {mr.title}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px' }}>{mr.details}</div>
+                  {Array.isArray(mr.line_items) && mr.line_items.length > 0 && (
+                    <div style={{ fontSize: '11px', color: '#1d4ed8', marginTop: '4px', fontWeight: 600 }}>
+                      Items: {mr.line_items.map((li: any) => `${li.item_name} (${li.qty} ${li.unit})`).join(', ')}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    onClick={() => {
+                      setEditingId(null);
+                      const mappedLines = (mr.line_items || []).map((li: any) => ({
+                        ...newLine(),
+                        item_id: String(li.item_id || ''),
+                        quantity: String(li.qty || '1'),
+                        rate: String(li.rate || '0'),
+                      }));
+                      setPurchaseForm((prev: any) => ({
+                        ...prev,
+                        bill_number: getNextPurchaseNumber(purchases),
+                        supplier_id: '',
+                        tax_rate: '18',
+                        status: 'Submitted',
+                        lines: mappedLines.length > 0 ? mappedLines : [newLine()],
+                      }));
+                      setShowPurchaseModal(true);
+                    }}
+                    style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                  >
+                    + Create Purchase Bill
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const compId = localStorage.getItem('active_company_id') || '';
+                      await fetch(`${API_BASE}/accounts/requests/${mr.id}/resolve/?company_id=${compId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'CLOSE', resolved_by: user?.username || 'Purchase Team', resolution_note: 'Purchased & fulfilled' }),
+                      });
+                      loadMatRequests();
+                    }}
+                    style={{ background: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                  >
+                    ✓ Mark Closed
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Live Search Input Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>

@@ -1,6 +1,9 @@
 import React from 'react';
 
 interface MonthlyAnalyticsChartProps {
+  title?: string;
+  subtitle?: string;
+  currencySymbol?: string;
   data: any[];
 }
 

@@ -1,3 +1,4 @@
+import { COMMON_HSN_LIST, suggestHsnFromNameOrCategory } from './utils/hsnLookup';
 import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
 import { InvoicePrintModal } from './components/InvoicePrintModal';
 import { PurchaseBillPrintModal } from './components/PurchaseBillPrintModal';
@@ -27,13 +28,15 @@ import ReturnsTab from './components/tabs/ReturnsTab';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ApprovalsTab } from './components/tabs/ApprovalsTab';
-import { CompanySwitcher } from './company_users/CompanySwitcher';
 import { UserProfileModal } from './company_users/UserProfileModal';
 import { UserManagementTab } from './company_users/UserManagementTab';
 import { useTallyNavigation } from './hooks/useTallyNavigation';
 import { QuitConfirmModal } from './components/QuitConfirmModal';
 import { CompanyGateway } from './components/CompanyGateway';
 import { AppSidebar } from './components/AppSidebar';
+import { UnitOperationsTab } from './components/tabs/UnitOperationsTab';
+import { CapitalLoansTab } from './components/tabs/CapitalLoansTab';
+import { BankAccountsTab } from './components/tabs/BankAccountsTab';
 
 function MainERPApp() {
   const { isAuthenticated, user, logout } = useAuth();
@@ -52,7 +55,12 @@ function MainERPApp() {
   // --- Company Gateway & Division/Unit States ---
   const [companies, setCompanies] = useState<any[]>([]);
   const [businessUnits, setBusinessUnits] = useState<any[]>([]);
+  const [bankAccountsList, setBankAccountsList] = useState<any[]>([]);
+  const [showAddUnitModal, setShowAddUnitModal] = useState(false);
+  const [newUnitName, setNewUnitName] = useState('');
+  const [newUnitType, setNewUnitType] = useState('MANUFACTURING');
   const [activeUnitId, setActiveUnitId] = useState<string>(() => localStorage.getItem('active_unit_id') || 'all');
+
 
   // Sync logged-in user to localStorage for RBAC API headers
   useEffect(() => {
@@ -66,15 +74,16 @@ function MainERPApp() {
 
   useEffect(() => {
     if (!activeCompany?.id) {
-      setBusinessUnits([]);
       return;
     }
+    fetch(`${API_BASE}/accounts/bank-accounts/?company_id=${activeCompany.id}`).then((r) => (r.ok ? r.json() : [])).then((b) => setBankAccountsList(Array.isArray(b) ? b : [])).catch(() => {});
     fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((rows) => {
-        if (Array.isArray(rows)) setBusinessUnits(rows);
+        const list = Array.isArray(rows) ? rows : (rows?.units || rows?.results || []);
+        setBusinessUnits(list);
       })
-      .catch(() => {});
+      .catch(() => setBusinessUnits([]));
   }, [activeCompany?.id]);
 
   const handleCleanLogout = useCallback(() => {
@@ -85,7 +94,6 @@ function MainERPApp() {
     localStorage.removeItem('active_company_id');
     localStorage.removeItem('active_company_symbol');
     localStorage.removeItem('active_unit_id');
-    setActiveUnitId('all');
     localStorage.removeItem('rbac_user');
     setActiveTab('selling');
     logout();
@@ -226,6 +234,8 @@ function MainERPApp() {
     item_name: '',
     category: 'General',
     unit: 'Nos',
+    hsn_code: '',
+    gst_rate: '18',
     standard_rate: '0',
     selling_rate: '0',
     current_stock: '0'
@@ -240,6 +250,46 @@ function MainERPApp() {
     status: 'Draft', 
     lines: [newLine()]
   }));
+
+  const [modalAllInvoices, setModalAllInvoices] = useState<any[]>([]);
+  const [modalAllPurchases, setModalAllPurchases] = useState<any[]>([]);
+  const [modalAllPayments, setModalAllPayments] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!showPaymentModal) return;
+    const compId = localStorage.getItem('active_company_id') || localStorage.getItem('company_id') || '';
+    let token = '';
+    for (const store of [localStorage, sessionStorage]) {
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i) || '';
+        const v = store.getItem(k) || '';
+        if ((k.includes('token') || k.includes('jwt') || k.includes('access')) && v.length > 20 && !v.startsWith('{')) {
+          token = v.replace(/^"|"$/g, '');
+          break;
+        }
+      }
+      if (token) break;
+    }
+    const hdrs: Record<string, string> = { 'X-Unit-Id': 'all' };
+    if (compId) hdrs['X-Company-Id'] = compId;
+    if (token) hdrs['Authorization'] = `Bearer ${token}`;
+    const qComp = compId ? `company_id=${compId}&` : '';
+
+    fetch(`${API_BASE}/selling/invoices/?${qComp}unit_id=all`, { headers: hdrs })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setModalAllInvoices(Array.isArray(d) ? d : (d.results || [])))
+      .catch(() => {});
+
+    fetch(`${API_BASE}/buying/invoices/?${qComp}unit_id=all`, { headers: hdrs })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setModalAllPurchases(Array.isArray(d) ? d : (d.results || [])))
+      .catch(() => {});
+
+    fetch(`${API_BASE}/accounts/payments/?${qComp}unit_id=all`, { headers: hdrs })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setModalAllPayments(Array.isArray(d) ? d : (d.results || [])))
+      .catch(() => {});
+  }, [showPaymentModal, payments.length]);
 
   const [paymentForm, setPaymentForm] = useState({
     voucher_no: 'PAY-0001',
@@ -297,7 +347,15 @@ function MainERPApp() {
     activeView: activeTab,
     setActiveView: (view: any) => setActiveTab(view),
     activeCompany,
-    setActiveCompany,
+    setActiveCompany: (val: any) => {
+      if (!val) {
+        const curId = localStorage.getItem('active_company_id');
+        if (curId) localStorage.setItem('last_active_company_id', curId);
+        localStorage.removeItem('active_company');
+        localStorage.removeItem('active_company_id');
+      }
+      setActiveCompany(val);
+    },
     onLogout: handleCleanLogout,
     defaultView: 'selling',
   });
@@ -755,6 +813,14 @@ function MainERPApp() {
   const purchaseTax = (purchaseNet * (parseFloat(purchaseForm.tax_rate) || 0)) / 100;
   const salesStatusMap = getSalesPaymentStatusMap(invoices, payments);
   const purchaseStatusMap = getPurchasePaymentStatusMap(purchases, payments);
+  const modalSalesStatusMap = getSalesPaymentStatusMap(
+    modalAllInvoices.length > 0 ? modalAllInvoices : invoices,
+    modalAllPayments.length > 0 ? modalAllPayments : payments
+  );
+  const modalPurchaseStatusMap = getPurchasePaymentStatusMap(
+    modalAllPurchases.length > 0 ? modalAllPurchases : purchases,
+    modalAllPayments.length > 0 ? modalAllPayments : payments
+  );
 
   const filteredInvoices = invoices.filter(inv =>
     String(inv?.invoice_number || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -816,6 +882,11 @@ function MainERPApp() {
         setActiveTab={setActiveTab}
         user={user}
         pendingApprovalsCount={pendingApprovalsCount}
+        activeUnitType={
+          activeUnitId === 'all'
+            ? 'ALL'
+            : (businessUnits.find((u: any) => String(u.id) === String(activeUnitId))?.unit_type || 'ALL')
+        }
       />
 
       <main style={{ flex: 1, minWidth: 0, padding: 0, overflowY: 'auto' }}>
@@ -843,64 +914,74 @@ function MainERPApp() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-            {businessUnits.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '4px 10px', borderRadius: '6px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8' }}>DIVISION:</span>
-                <select
-                  value={activeUnitId}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setActiveUnitId(val);
-                    localStorage.setItem('active_unit_id', val);
-                    window.dispatchEvent(new Event('unit-changed'));
-                    window.location.reload();
-                  }}
-                  style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer' }}
-                >
-                  <option value="all">All Units (Consolidated)</option>
-                  {businessUnits.map((u: any) => (
-                    <option key={u.id} value={String(u.id)}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {activeCompany && (
+
+            {activeCompany && businessUnits.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #93c5fd', padding: '5px 10px', borderRadius: '6px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8' }}>DIVISION:</span>
                 <select
                   value={activeUnitId}
                   onChange={(e) => {
                     const val = e.target.value;
-                    setActiveUnitId(val);
                     localStorage.setItem('active_unit_id', val);
-                    window.location.reload();
+                    setActiveUnitId(val);
+                    const picked = businessUnits.find((u: any) => String(u.id) === String(val));
+                    if (picked?.unit_type === 'MANUFACTURING') {
+                      setActiveTab('production');
+                    } else if (picked?.unit_type === 'TRADING') {
+                      setActiveTab('selling');
+                    } else if (picked?.unit_type === 'HO') {
+                      setActiveTab('payments');
+                    }
+                    if (activeCompany?.id) {
+                      void loadData(activeCompany.id);
+                    }
                   }}
                   style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', background: 'transparent', border: 'none', outline: 'none', cursor: 'pointer' }}
                 >
-                  <option value="all">All Units (Consolidated)</option>
+                  <option value="all">All Divisions (Consolidated)</option>
                   {businessUnits.map((u: any) => (
                     <option key={u.id} value={String(u.id)}>
                       {u.name}
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => { setNewUnitName(''); setNewUnitType('MANUFACTURING'); setShowAddUnitModal(true); }}
+                  title="Add New Manufacturing Unit or Branch"
+                  style={{ background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 7px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  + Unit
+                </button>
               </div>
             )}
-            {companies.length > 1 ? (
-              <CompanySwitcher onCompanyChange={handleCompanyChange} />
-            ) : (
-              <div style={{
-                fontSize: '12px',
-                fontWeight: '700',
-                color: '#0f172a',
-                backgroundColor: '#f1f5f9',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                border: '1px solid #cbd5e1'
-              }}>
-                {activeCompany?.name}
+
+            {activeCompany && (
+              <div
+                onClick={() => {
+                  if (activeCompany?.id) localStorage.setItem('last_active_company_id', String(activeCompany.id));
+                  localStorage.removeItem('active_company');
+                  localStorage.removeItem('active_company_id');
+                  setActiveCompany(null);
+                }}
+                title="Press Esc to switch company or division"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>
+                  {activeCompany.name} ({activeCompany.symbol || activeCompany.currency_symbol || '₹'})
+                </span>
+                <span style={{ fontSize: '10px', fontWeight: 700, color: '#475569', background: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>
+                  Esc
+                </span>
               </div>
             )}
 
@@ -937,7 +1018,7 @@ function MainERPApp() {
           </div>
         </header>
 
-        <div style={{ padding: '28px 36px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div key={`${activeCompany?.id}-${activeUnitId}`} style={{ padding: '28px 36px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {loadError && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '13px' }}>
               <X size={16} />
@@ -1092,6 +1173,34 @@ function MainERPApp() {
           )}
 
           {activeTab === 'users_management' && <UserManagementTab />}
+
+          {(activeTab as string) === 'petty_cash' && (
+            <UnitOperationsTab
+              activeCompany={activeCompany}
+              businessUnits={businessUnits}
+              activeUnitId={activeUnitId}
+              user={user}
+              onRefreshGlobal={() => { if (activeCompany?.id) void loadData(activeCompany.id); }}
+            />
+          )}
+
+          {(activeTab as string) === 'capital_loans' && (
+            <CapitalLoansTab
+              activeCompany={activeCompany}
+              onRefreshGlobal={() => { if (activeCompany?.id) void loadData(activeCompany.id); }}
+            />
+          )}
+
+          {(activeTab as string) === 'bank_accounts' && (
+            <BankAccountsTab
+              activeCompany={activeCompany}
+              businessUnits={businessUnits}
+              onDrillDownLedger={(accName: string) => {
+                setGlAccountFilter(accName);
+                setActiveTab('accounts');
+              }}
+            />
+          )}
         </div>
       </main>
 
@@ -1517,6 +1626,24 @@ function MainERPApp() {
                 </div>
               </div>
 
+              {(paymentForm.mode_of_payment === 'Bank' || paymentForm.mode_of_payment === 'Cheque') && bankAccountsList.length > 0 && (
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#1d4ed8' }}>Bank Account (Separate Statement Ledger)</label>
+                  <select
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #93c5fd', background: '#eff6ff', marginTop: '4px' }}
+                    value={(paymentForm as any).bank_account || ''}
+                    onChange={e => setPaymentForm({ ...paymentForm, bank_account: e.target.value } as any)}
+                  >
+                    <option value="">-- Default Central Bank Account --</option>
+                    {bankAccountsList.map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {b.account_name} ({b.purpose_label})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label style={{ fontSize: '12px', fontWeight: '600' }}>Party Name *</label>
                 <select
@@ -1556,16 +1683,16 @@ function MainERPApp() {
                     let dueAmount = '0';
 
                     if (paymentForm.payment_type === 'Receive') {
-                      const inv = invoices.find(i => i.invoice_number === selRef);
+                      const inv = ((modalAllInvoices.length > 0 ? modalAllInvoices : invoices)).find(i => i.invoice_number === selRef);
                       if (inv) {
-                        const statusInfo = salesStatusMap[inv.id || 0];
-                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(inv.grand_total))).toFixed(2);
+                        const statusInfo = modalSalesStatusMap[inv.id || 0];
+                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(inv.outstanding_amount ?? inv.grand_total))).toFixed(2);
                       }
                     } else {
-                      const bill = purchases.find(p => p.bill_number === selRef);
+                      const bill = ((modalAllPurchases.length > 0 ? modalAllPurchases : purchases)).find(p => p.bill_number === selRef);
                       if (bill) {
-                        const statusInfo = purchaseStatusMap[bill.id || 0];
-                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(bill.grand_total))).toFixed(2);
+                        const statusInfo = modalPurchaseStatusMap[bill.id || 0];
+                        dueAmount = (statusInfo ? statusInfo.balance : parseFloat(String(bill.outstanding_amount ?? bill.grand_total))).toFixed(2);
                       }
                     }
 
@@ -1579,10 +1706,10 @@ function MainERPApp() {
                 >
                   <option value="">-- Direct / Advance Payment (No Reference) --</option>
                   {paymentForm.payment_type === 'Receive'
-                    ? invoices
+                    ? ((modalAllInvoices.length > 0 ? modalAllInvoices : invoices))
                         .filter(inv => inv.customer_name === paymentForm.party_name && inv.status === 'Approved')
                         .map(inv => {
-                          const info = salesStatusMap[inv.id || 0];
+                          const info = modalSalesStatusMap[inv.id || 0];
                           if (info && info.status === 'Paid') return null;
                           const bal = info ? info.balance : parseFloat(String(inv.grand_total));
                           return (
@@ -1591,10 +1718,10 @@ function MainERPApp() {
                             </option>
                           );
                         })
-                    : purchases
+                    : ((modalAllPurchases.length > 0 ? modalAllPurchases : purchases))
                         .filter(pur => pur.supplier_name === paymentForm.party_name && pur.status === 'Approved')
                         .map(pur => {
-                          const info = purchaseStatusMap[pur.id || 0];
+                          const info = modalPurchaseStatusMap[pur.id || 0];
                           if (info && info.status === 'Paid') return null;
                           const bal = info ? info.balance : parseFloat(String(pur.grand_total));
                           return (
@@ -1646,11 +1773,133 @@ function MainERPApp() {
               <button onClick={() => setShowItemModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <form onSubmit={handleSaveItem} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} /></div>
-              <div><label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name</label><input required style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_name} onChange={e => setItemForm({ ...itemForm, item_name: e.target.value })} /></div>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Purchase / Cost Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div><div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Selling Rate ({currencySymbol})</label><input type="number" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={(itemForm as any).selling_rate ?? ''} onChange={e => setItemForm({ ...itemForm, selling_rate: e.target.value } as any)} /></div>
-                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>Item Code *</label>
+                  <input required placeholder="e.g. CHM-001" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.item_code} onChange={e => setItemForm({ ...itemForm, item_code: e.target.value })} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>Category</label>
+                  <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#fff' }} value={itemForm.category} onChange={e => {
+                    const cat = e.target.value;
+                    const sug = suggestHsnFromNameOrCategory(itemForm.item_name, cat);
+                    setItemForm({
+                      ...itemForm,
+                      category: cat,
+                      hsn_code: (!(itemForm as any).hsn_code && sug) ? sug.hsn : ((itemForm as any).hsn_code || ''),
+                      gst_rate: sug ? sug.gst : ((itemForm as any).gst_rate || '18'),
+                    } as any);
+                  }}>
+                    <option value="General">General</option>
+                    <option value="Raw Material">Raw Material</option>
+                    <option value="Finished Goods">Finished Goods</option>
+                    <option value="Chemicals">Chemicals</option>
+                    <option value="Textiles">Textiles</option>
+                    <option value="Hardware">Hardware</option>
+                    <option value="Packaging">Packaging</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600' }}>Item Name *</label>
+                <input
+                  required
+                  placeholder="e.g. Industrial Base Resin"
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  value={itemForm.item_name}
+                  onChange={e => {
+                    const nm = e.target.value;
+                    const sug = suggestHsnFromNameOrCategory(nm, itemForm.category);
+                    setItemForm({
+                      ...itemForm,
+                      item_name: nm,
+                      hsn_code: (!editingId && sug) ? sug.hsn : ((itemForm as any).hsn_code || ''),
+                      gst_rate: (!editingId && sug) ? sug.gst : ((itemForm as any).gst_rate || '18'),
+                    } as any);
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>Unit (UOM) *</label>
+                  <select
+                    required
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#fff', cursor: 'pointer' }}
+                    value={itemForm.unit || 'Nos'}
+                    onChange={e => setItemForm({ ...itemForm, unit: e.target.value })}
+                  >
+                    <option value="Nos">Nos (Numbers)</option>
+                    <option value="Ltr">Ltr (Litre)</option>
+                    <option value="Mtr">Mtr (Meter)</option>
+                    <option value="Kg">Kg (Kilogram)</option>
+                    <option value="Box">Box</option>
+                    <option value="Pcs">Pcs (Pieces)</option>
+                    <option value="Ton">Ton</option>
+                    <option value="Roll">Roll</option>
+                    <option value="Sqft">Sqft</option>
+                    <option value="Bottle">Bottle</option>
+                    <option value="Gram">Gram</option>
+                    <option value="ML">ML (Millilitre)</option>
+                    <option value="Set">Set</option>
+                    <option value="Pair">Pair</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600' }}>HSN / SAC Code</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sug = suggestHsnFromNameOrCategory(itemForm.item_name, itemForm.category);
+                        if (sug) {
+                          setItemForm({ ...itemForm, hsn_code: sug.hsn, gst_rate: sug.gst } as any);
+                        }
+                      }}
+                      style={{ border: 'none', background: '#e0f2fe', color: '#0369a1', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      Auto Get
+                    </button>
+                  </div>
+                  <input
+                    list="hsn-suggestions"
+                    placeholder="Auto-fills from item name"
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    value={(itemForm as any).hsn_code ?? ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      const found = COMMON_HSN_LIST.find(x => x.hsn === val.trim());
+                      setItemForm({
+                        ...itemForm,
+                        hsn_code: val,
+                        gst_rate: found ? found.gst : ((itemForm as any).gst_rate || '18'),
+                      } as any);
+                    }}
+                  />
+                  <datalist id="hsn-suggestions">
+                    {COMMON_HSN_LIST.map((x) => (
+                      <option key={x.hsn} value={x.hsn}>{x.label} ({x.gst}% GST)</option>
+                    ))}
+                  </datalist>
+                </div>
+                <div style={{ width: '95px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: '600' }}>GST %</label>
+                  <select
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#fff' }}
+                    value={(itemForm as any).gst_rate ?? '18'}
+                    onChange={e => setItemForm({ ...itemForm, gst_rate: e.target.value } as any)}
+                  >
+                    <option value="0">0%</option>
+                    <option value="5">5%</option>
+                    <option value="12">12%</option>
+                    <option value="18">18%</option>
+                    <option value="28">28%</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Purchase / Cost Rate ({currencySymbol})</label><input type="number" step="0.01" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={itemForm.standard_rate} onChange={e => setItemForm({ ...itemForm, standard_rate: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Selling Rate ({currencySymbol})</label><input type="number" step="0.01" style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} value={(itemForm as any).selling_rate ?? ''} onChange={e => setItemForm({ ...itemForm, selling_rate: e.target.value } as any)} /></div>
+                <div style={{ width: '95px' }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Stock</label><input type="number" readOnly disabled style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#f1f5f9', color: '#64748b' }} value={itemForm.current_stock} /></div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button type="button" onClick={() => setShowItemModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
@@ -1854,6 +2103,61 @@ function MainERPApp() {
         }}
         onCancel={() => setShowQuitModal(false)}
       />
+
+      {showAddUnitModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: '400px', maxWidth: '94vw', padding: '22px' }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '17px' }}>Add New Factory / Business Unit</h3>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!activeCompany?.id || !newUnitName.trim()) return;
+                const res = await fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: newUnitName.trim(), unit_type: newUnitType }),
+                });
+                if (res.ok) {
+                  const created = await res.json();
+                  const uRes = await fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`);
+                  if (uRes.ok) setBusinessUnits(await uRes.json());
+                  setShowAddUnitModal(false);
+                  if (created?.id) {
+                    localStorage.setItem('active_unit_id', String(created.id));
+                    setActiveUnitId(String(created.id));
+                    if (newUnitType === 'MANUFACTURING') setActiveTab('production');
+                  }
+                }
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+            >
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600 }}>Unit Type *</label>
+                <select value={newUnitType} onChange={(e) => setNewUnitType(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}>
+                  <option value="MANUFACTURING">Manufacturing Unit (Factory Plant)</option>
+                  <option value="TRADING">Trading / Sales Branch</option>
+                  <option value="CUSTOM">Custom Warehouse / Branch</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600 }}>Unit Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Manufacturing Unit 2 (Naroda Plant)"
+                  value={newUnitName}
+                  onChange={(e) => setNewUnitName(e.target.value)}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button type="button" onClick={() => setShowAddUnitModal(false)} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff' }}>Cancel</button>
+                <button type="submit" style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#0284c7', color: '#fff', fontWeight: 600 }}>Create Unit</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

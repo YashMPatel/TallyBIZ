@@ -5,6 +5,16 @@ class ItemSerializer(serializers.ModelSerializer):
     # Frontend compatibility aliases (so Code & Item Name never show blank)
     code = serializers.CharField(source='item_code', read_only=True)
     name = serializers.CharField(source='item_name', read_only=True)
+    unit_stock = serializers.SerializerMethodField()
+
+    def get_unit_stock(self, obj):
+        req = self.context.get('request')
+        uid = (req.headers.get('X-Unit-Id') or req.GET.get('unit_id')) if req else None
+        if uid and str(uid) not in ('all', 'ALL', 'undefined', 'null', ''):
+            from django.db.models import Sum
+            val = StockLedgerEntry.objects.filter(item=obj, unit_id=int(uid)).aggregate(q=Sum('actual_qty'))['q']
+            return float(val or 0)
+        return float(obj.current_stock or 0)
 
     class Meta:
         model = Item
@@ -13,6 +23,7 @@ class ItemSerializer(serializers.ModelSerializer):
 class StockLedgerEntrySerializer(serializers.ModelSerializer):
     item_name = serializers.CharField(source='item.item_name', read_only=True)
     item_code = serializers.CharField(source='item.item_code', read_only=True)
+    unit_name = serializers.CharField(source='unit.name', read_only=True, default='Unassigned')
 
     class Meta:
         model = StockLedgerEntry

@@ -73,6 +73,7 @@ export const StockLedgerTab: FC<StockLedgerTabProps> = ({
       <DataTable<StockLedgerItem>
         columns={[
           { header: 'Date', accessor: (r) => r.posting_date || '-' },
+          { header: 'Division / Unit', accessor: (r) => r.unit_name || 'Unassigned' },
           {
             header: 'Item Name',
             accessor: (r) => {

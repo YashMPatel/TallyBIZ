@@ -5,7 +5,8 @@ from .models import GLEntry
 @transaction.atomic
 def make_gl_entries(gl_map: list):
     """
-    # ગાર્ડ: જો કોઈ એન્ટ્રીમાં status મોકલેલું હોય અને તે 'Approved' ન હોય તો GL એન્ટ્રી અટકાવો
+    # status     'Approved'    GL  
+
     if any(row.get('status') and row.get('status') != 'Approved' for row in gl_map):
         return []
     gl_map list of dicts:
@@ -33,7 +34,8 @@ def make_gl_entries(gl_map: list):
         debit = Decimal(str(row.get('debit', 0)))
         credit = Decimal(str(row.get('credit', 0)))
 
-        # 0 વાળી એન્ટ્રી ઇગ્નોર કરવી
+        # 0    
+
         if debit == Decimal('0.00') and credit == Decimal('0.00'):
             continue
 
@@ -55,7 +57,8 @@ def make_gl_entries(gl_map: list):
             )
         )
 
-    # ડબલ એન્ટ્રી બુકકીપિંગ નિયમ: Debit અને Credit સરખા હોવા જ જોઈએ
+    # Debit  Credit    
+
     if round(total_debit, 2) != round(total_credit, 2):
         raise ValueError(f"Debit ({total_debit}) and Credit ({total_credit}) must be equal!")
 

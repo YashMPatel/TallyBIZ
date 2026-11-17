@@ -34,6 +34,7 @@ class SalesInvoice(models.Model):
         ('Rejected', 'Rejected'),
     )
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='sales_invoices')
+    unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_invoices')
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True, related_name='invoices')
     invoice_number = models.CharField(max_length=50)
     customer_name = models.CharField(max_length=150)

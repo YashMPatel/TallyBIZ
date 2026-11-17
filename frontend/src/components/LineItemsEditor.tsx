@@ -52,6 +52,8 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
         <thead style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
           <tr>
             <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item *</th>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '80px' }}>HSN</th>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Unit</th>
             {showStock && <th style={{ padding: '8px 10px', textAlign: 'center', width: '70px' }}>Stock</th>}
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '70px' }}>Qty *</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '110px' }}>Rate ({currencySymbol}) *</th>
@@ -88,10 +90,16 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                         key={it.id !== undefined ? it.id : itIdx}
                         value={it.id !== undefined ? String(it.id) : ''}
                       >
-                        {it.item_name} ({it.item_code}){showStock ? ` — Stock: ${it.current_stock ?? 0}` : ''}
+                        {it.item_name} ({it.item_code}) • {it.unit || 'Nos'}{it.hsn_code ? ` • HSN: ${it.hsn_code}` : ''}{showStock ? ` — Stock: ${it.current_stock ?? 0}` : ''}
                       </option>
                     ))}
                   </select>
+                </td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}>
+                  {(selectedItem as any)?.hsn_code || '-'}
+                </td>
+                <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: '12px', color: '#475569' }}>
+                  {selectedItem?.unit || '-'}
                 </td>
                 {showStock && (
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: '#64748b' }}>

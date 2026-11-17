@@ -11,6 +11,9 @@ import {
   Layers,
   Factory,
   CheckCircle,
+  Wallet,
+  Landmark,
+  Building2,
 } from 'lucide-react';
 
 interface AppSidebarProps {
@@ -18,6 +21,7 @@ interface AppSidebarProps {
   setActiveTab: (tab: any) => void;
   user: any;
   pendingApprovalsCount: number;
+  activeUnitType?: string;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -25,17 +29,35 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   setActiveTab,
   user,
   pendingApprovalsCount,
+  activeUnitType = 'ALL',
 }) => {
   const roleUpper = String(user?.role || '').trim().toUpperCase().replace(/\s+/g, '_');
   const isSalesUser = roleUpper === 'SALES_USER';
-  const isAdmin = roleUpper === 'ADMIN';
+  const isAdmin = roleUpper === 'ADMIN' || Boolean(user?.is_superuser || user?.is_staff);
   const isManager = roleUpper === 'MANAGER';
-  let compBizType = 'HYBRID';
-  try {
-    const savedC = JSON.parse(localStorage.getItem('active_company') || '{}');
-    if (savedC?.business_type) compBizType = String(savedC.business_type).toUpperCase();
-  } catch (e) {}
-  const showManufacturing = compBizType !== 'TRADING';
+
+  const unitMode = String(activeUnitType || 'ALL').toUpperCase();
+  const isAll = unitMode === 'ALL';
+  const isHO = unitMode === 'HO';
+  const isTrading = unitMode === 'TRADING';
+  const isMfg = unitMode === 'MANUFACTURING';
+
+  const btnStyle = (tabName: string, accent = '#38bdf8') => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '7px 10px',
+    borderRadius: '6px',
+    border: 'none',
+    background: activeTab === tabName ? '#1e293b' : 'transparent',
+    color: activeTab === tabName ? accent : '#cbd5e1',
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    fontSize: '12px',
+    fontWeight: activeTab === tabName ? 700 : 500,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  });
 
   return (
     <aside
@@ -56,159 +78,110 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#38bdf8', margin: '0 0 4px 8px' }}>
           TallyBIZ ERP
         </h2>
-        <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>MODULAR ENGINE</span>
+        <span style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          {isMfg ? 'FACTORY / PRODUCTION DESK' : isTrading ? 'SALES & PURCHASE DESK' : isHO ? 'HEAD OFFICE FINANCE' : 'CONSOLIDATED OWNER VIEW'}
+        </span>
       </div>
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
-        {/* 1. Approvals Hub (Admin & Manager Only) */}
-        {(isAdmin || isManager) && (
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: '3px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
+        {/* HEAD OFFICE & OWNER: Approvals Hub */}
+        {(isHO || isAll) && (isAdmin || isManager) && (
           <button
             onClick={() => setActiveTab('approvals')}
             style={{
-              display: 'flex',
-              alignItems: 'center',
+              ...btnStyle('approvals', '#f59e0b'),
               justifyContent: 'space-between',
-              padding: '6px 10px',
-              borderRadius: '6px',
-              border: 'none',
-              background: activeTab === 'approvals' ? '#1e293b' : 'transparent',
               color: activeTab === 'approvals' ? '#f59e0b' : '#fbbf24',
-              cursor: 'pointer',
-              fontWeight: '600',
-              fontSize: '12px',
-              width: '100%',
-              boxSizing: 'border-box',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <CheckCircle size={16} /> <span>Approvals Hub</span>
             </div>
             {pendingApprovalsCount > 0 && (
-              <span style={{ background: '#ef4444', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '1px 6px', borderRadius: '10px', minWidth: '16px', textAlign: 'center' }}>
+              <span style={{ background: '#ef4444', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', padding: '1px 6px', borderRadius: '10px' }}>
                 {pendingApprovalsCount}
               </span>
             )}
           </button>
         )}
 
-        {/* 2. Selling (Open for all) */}
-        <button
-          onClick={() => setActiveTab('selling')}
-          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'selling' ? '#1e293b' : 'transparent', color: activeTab === 'selling' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-        >
-          <ShoppingCart size={16} /> Selling (Invoices)
+        {/* TRADING & CONSOLIDATED: Selling, Buying, Customers, Suppliers, Returns */}
+        {(isTrading || isAll) && (
+          <>
+            <button onClick={() => setActiveTab('selling')} style={btnStyle('selling')}>
+              <ShoppingCart size={16} /> Selling (Invoices &amp; Orders)
+            </button>
+            {!isSalesUser && (
+              <button onClick={() => setActiveTab('buying')} style={btnStyle('buying')}>
+                <ShoppingBag size={16} /> Buying (Bills &amp; Requests)
+              </button>
+            )}
+            <button onClick={() => setActiveTab('customers')} style={btnStyle('customers')}>
+              <Users size={16} /> Customers
+            </button>
+            {!isSalesUser && (
+              <button onClick={() => setActiveTab('suppliers')} style={btnStyle('suppliers')}>
+                <Truck size={16} /> Suppliers
+              </button>
+            )}
+            <button onClick={() => setActiveTab('ReturnsTab')} style={btnStyle('ReturnsTab')}>
+              <CreditCard size={16} /> Credit &amp; Debit Notes
+            </button>
+          </>
+        )}
+
+        {/* MANUFACTURING & CONSOLIDATED: Production, BOM & Sales Production Requests */}
+        {(isMfg || isAll) && (
+          <button onClick={() => setActiveTab('production')} style={btnStyle('production', '#34d399')}>
+            <Factory size={16} /> {isMfg ? 'Production, MRP & Requests' : 'Production & BOM'}
+          </button>
+        )}
+
+        {/* TRADING, MANUFACTURING & CONSOLIDATED: Stock & Stock Movement */}
+        {(isTrading || isMfg || isAll) && (
+          <>
+            <button onClick={() => setActiveTab('stock')} style={btnStyle('stock')}>
+              <Package size={16} /> {isMfg ? 'Factory Stock & Dispatch' : 'Stock (Items)'}
+            </button>
+            {!isSalesUser && (
+              <button onClick={() => setActiveTab('stock-ledger')} style={btnStyle('stock-ledger')}>
+                <Layers size={16} /> Stock Movement Ledger
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ALL DIVISIONS: Unit Petty Cash, Counter Receipts, Scrap Cash & Salary/Expense Requests */}
+        <button onClick={() => setActiveTab('petty_cash')} style={btnStyle('petty_cash', '#a78bfa')}>
+          <Wallet size={16} /> {isHO ? 'Unit Petty Cash & Requests' : 'Petty Cash & Requests'}
         </button>
 
-        {/* 3. Buying (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('buying')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'buying' ? '#1e293b' : 'transparent', color: activeTab === 'buying' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <ShoppingBag size={16} /> Buying (Bills)
-          </button>
+        {/* HEAD OFFICE & CONSOLIDATED ONLY: Central Payments, Bank Accounts, Partners/Loans, GL, P&L, GST, Users */}
+        {(isHO || isAll) && !isSalesUser && (
+          <>
+            <button onClick={() => setActiveTab('payments')} style={btnStyle('payments')}>
+              <CreditCard size={16} /> Payments (HO Central)
+            </button>
+            <button onClick={() => setActiveTab('bank_accounts')} style={btnStyle('bank_accounts')}>
+              <Building2 size={16} /> Bank Accounts (Statements)
+            </button>
+            <button onClick={() => setActiveTab('capital_loans')} style={btnStyle('capital_loans')}>
+              <Landmark size={16} /> Partners, Capital &amp; Loans
+            </button>
+            <button onClick={() => setActiveTab('accounts')} style={btnStyle('accounts')}>
+              <BookOpen size={16} /> General Ledger
+            </button>
+            <button onClick={() => setActiveTab('reports')} style={btnStyle('reports')}>
+              <PieChart size={16} /> Profit &amp; Loss / Balance Sheet
+            </button>
+            <button onClick={() => setActiveTab('gst')} style={btnStyle('gst')}>
+              <PieChart size={16} /> GST Returns (GSTR-1/3B)
+            </button>
+          </>
         )}
 
-        {/* 4. Customers (Open for all) */}
-        <button
-          onClick={() => setActiveTab('customers')}
-          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'customers' ? '#1e293b' : 'transparent', color: activeTab === 'customers' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-        >
-          <Users size={16} /> Customers
-        </button>
-
-        {/* 5. Suppliers (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('suppliers')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'suppliers' ? '#1e293b' : 'transparent', color: activeTab === 'suppliers' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <Truck size={16} /> Suppliers
-          </button>
-        )}
-
-        {/* 6. Payments (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('payments')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'payments' ? '#1e293b' : 'transparent', color: activeTab === 'payments' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <CreditCard size={16} /> Payments
-          </button>
-        )}
-
-        {/* 7. Returns & Credit/Debit Notes */}
-        <button
-          onClick={() => setActiveTab('ReturnsTab')}
-          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'ReturnsTab' ? '#1e293b' : 'transparent', color: activeTab === 'ReturnsTab' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-        >
-          <CreditCard size={16} /> Credit &amp; Debit Notes
-        </button>
-
-        {/* 8. Stock Items */}
-        <button
-          onClick={() => setActiveTab('stock')}
-          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'stock' ? '#1e293b' : 'transparent', color: activeTab === 'stock' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-        >
-          <Package size={16} /> Stock (Items)
-        </button>
-
-        {/* 9. Stock Movement Ledger (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('stock-ledger')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'stock-ledger' ? '#1e293b' : 'transparent', color: activeTab === 'stock-ledger' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <Layers size={16} /> Stock Movement Ledger
-          </button>
-        )}
-
-        {/* 9B. Production & BOM */}
-      {showManufacturing && (
-          <button
-        onClick={() => setActiveTab('production')}
-        style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'production' ? '#1e293b' : 'transparent', color: activeTab === 'production' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-      >
-        <Factory size={16} /> Production &amp; BOM
-      </button>
-        )}
-
-      {/* 10. Accounts / General Ledger (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('accounts')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'accounts' ? '#1e293b' : 'transparent', color: activeTab === 'accounts' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <BookOpen size={16} /> General Ledger
-          </button>
-        )}
-
-        {/* 11. Reports (P&L / Balance Sheet) (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('reports')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'reports' ? '#1e293b' : 'transparent', color: activeTab === 'reports' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <PieChart size={16} /> Profit &amp; Loss / Balance Sheet
-          </button>
-        )}
-
-        {/* 12. GST Returns (Sales User mate hidden) */}
-        {!isSalesUser && (
-          <button
-            onClick={() => setActiveTab('gst')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'gst' ? '#1e293b' : 'transparent', color: activeTab === 'gst' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
-            <PieChart size={16} /> GST Returns (GSTR-1/3B)
-          </button>
-        )}
-
-        {/* 13. Users & Permissions (Fakt Super Admin mate) */}
-        {isAdmin && (
-          <button
-            onClick={() => setActiveTab('users_management')}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: activeTab === 'users_management' ? '#1e293b' : 'transparent', color: activeTab === 'users_management' ? '#38bdf8' : '#cbd5e1', cursor: 'pointer', textAlign: 'left', fontSize: '12px' }}
-          >
+        {(isHO || isAll) && isAdmin && (
+          <button onClick={() => setActiveTab('users_management')} style={btnStyle('users_management')}>
             <Users size={16} /> Users &amp; Permissions
           </button>
         )}

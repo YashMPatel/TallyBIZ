@@ -3,30 +3,47 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 
-
-// Global Fetch Interceptor to attach RBAC User Headers on every API request
-const originalFetch = window.fetch;
+const originalfetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  if (url.includes('/api/')) {
-    const headers = new Headers(init?.headers || {});
-    try {
-      const savedUser = localStorage.getItem('rbac_user');
-      if (savedUser) {
-        const parsed = JSON.parse(savedUser);
-        if (parsed?.id) headers.set('X-User-ID', String(parsed.id));
-        if (parsed?.username) headers.set('X-Username', String(parsed.username));
+  let rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  try {
+    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+    
+    // Grab token from anywhere it might be stored
+    let token = localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('jwt_access');
+    if (!token) {
+      const rbac = localStorage.getItem('rbac_user');
+      if (rbac) {
+        try {
+          const parsed = JSON.parse(rbac);
+          token = parsed?.access || parsed?.token || parsed?.access_token;
+        } catch {}
       }
-    } catch {
-      // ignore storage errors
     }
-    return originalFetch(input, { ...init, headers });
+    
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    const unitId = localStorage.getItem('active_unit_id');
+    if (unitId && unitId !== 'all' && unitId !== 'undefined' && unitId !== 'null') {
+      if (!headers.has('X-Unit-Id')) headers.set('X-Unit-Id', unitId);
+      if (rawUrl.includes('/api/') && !rawUrl.includes('unit_id=')) {
+        rawUrl += (rawUrl.includes('?') ? '&' : '?') + `unit_id=${encodeURIComponent(unitId)}`;
+      }
+    }
+
+    if (typeof input === 'string' || input instanceof URL) {
+      return originalfetch(rawUrl, { ...init, headers });
+    }
+    return originalfetch(new Request(rawUrl, input), init);
+  } catch {
+    return originalfetch(input, init);
   }
-  return originalFetch(input, init);
 };
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
   </StrictMode>,
-)
+);

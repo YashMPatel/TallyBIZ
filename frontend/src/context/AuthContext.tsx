@@ -24,14 +24,44 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const getStoredAccessToken = (): string | null => {
+  const tokenKeys = ['access_token', 'token', 'jwt_access'];
+  const tokens = tokenKeys
+    .map((key) => localStorage.getItem(key))
+    .filter((token): token is string => Boolean(token));
+  const validToken = tokens.find((token) => token.split('.').length === 3);
+
+  if (validToken) {
+    localStorage.setItem('access_token', validToken);
+    return validToken;
+  }
+
+  if (tokens.length > 0) {
+    tokenKeys.forEach((key) => localStorage.removeItem(key));
+    localStorage.removeItem('user_data');
+    localStorage.removeItem('rbac_user');
+  }
+
+  return null;
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
+  const [token, setToken] = useState<string | null>(getStoredAccessToken);
   const [user, setUser] = useState<UserData | null>(() => {
     const savedUser = localStorage.getItem('user_data');
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
   const login = (newToken: string, newUserData: UserData) => {
+    try {
+      localStorage.setItem('access_token', newToken);
+      localStorage.setItem('token', newToken);
+      localStorage.setItem('jwt_access', newToken);
+      if (newUserData) {
+        const enhancedUser = { ...newUserData, access: newToken };
+        localStorage.setItem('rbac_user', JSON.stringify(enhancedUser));
+      }
+    } catch {}
     setToken(newToken);
     setUser(newUserData);
     localStorage.setItem('access_token', newToken);
@@ -42,7 +72,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     setUser(null);
     localStorage.removeItem('access_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('jwt_access');
     localStorage.removeItem('user_data');
+    localStorage.removeItem('rbac_user');
   };
 
   return (

@@ -14,6 +14,8 @@ class Item(models.Model):
     item_name = models.CharField(max_length=150)
     category = models.CharField(max_length=100, default='General')
     unit = models.CharField(max_length=50, default='Nos')
+    hsn_code = models.CharField(max_length=20, blank=True, default='')
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00)
     standard_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     selling_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     current_stock = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
@@ -30,6 +32,7 @@ class StockLedgerEntry(models.Model):
         blank=True,
         related_name='stock_ledger_entries'
     )
+    unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='stock_ledger_entries')
     posting_date = models.DateField()
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='ledger_entries')
     voucher_type = models.CharField(max_length=50)

@@ -162,6 +162,74 @@ export const ReportsTab: FC<ReportsTabProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    
+      {/* Division / Unit-Wise Profit & Loss Bifurcation */}
+      {Array.isArray((finance as any)?.unit_bifurcation) && (finance as any).unit_bifurcation.length > 0 && (
+        <div style={{ marginTop: '24px', background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #0f172a', paddingBottom: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0f172a' }}>
+                Division / Unit-Wise P&amp;L Bifurcation (Profit / Loss Analysis)
+              </h2>
+              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                Separate profitability breakdown across Head Office, Trading Division, and Manufacturing Unit
+              </p>
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', textAlign: 'left', color: '#334155' }}>
+                  <th style={{ padding: '10px 12px' }}>Division / Unit</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Sales / Revenue</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Purchases</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Closing Stock</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>COGS</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Gross Profit</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Unit Expenses</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Net Profit / Loss</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(finance as any).unit_bifurcation.map((u: any) => {
+                  const isProfit = Number(u.net_profit || 0) >= 0;
+                  return (
+                    <tr key={u.unit_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '11px 12px', fontWeight: 700, color: '#0f172a' }}>
+                        {u.name} <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>({u.code})</span>
+                      </td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.sales || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.purchases || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.closing_stock || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.cogs || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right', fontWeight: 600 }}>{symbol} {Number(u.gross_profit || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.other_expenses_total || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right', fontWeight: 800, color: isProfit ? '#15803d' : '#b91c1c' }}>
+                        {symbol} {Number(u.net_profit || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '11px 12px', textAlign: 'center' }}>
+                        <span style={{
+                          padding: '3px 10px',
+                          borderRadius: '999px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          background: isProfit ? '#dcfce7' : '#fee2e2',
+                          color: isProfit ? '#166534' : '#991b1b'
+                        }}>
+                          {isProfit ? 'PROFIT' : 'LOSS'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+</div>
   );
 };

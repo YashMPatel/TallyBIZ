@@ -9,8 +9,20 @@ from .views import (
     ProductionOrderReopenView,
     ProductionOrderCancelView,
 )
+from .sales_request_views import (
+    ProductionSalesRequestListCreateAPIView,
+    ProductionSalesRequestAcceptPlanAPIView,
+    ProductionSalesRequestScheduleAPIView,
+    ProductionSalesRequestDispatchAPIView,
+    ProductionSalesRequestCreateInvoiceAPIView,
+)
 
 urlpatterns = [
+    path('sales-requests/', ProductionSalesRequestListCreateAPIView.as_view()),
+    path('sales-requests/<int:pk>/accept-plan/', ProductionSalesRequestAcceptPlanAPIView.as_view()),
+    path('sales-requests/<int:pk>/schedule/', ProductionSalesRequestScheduleAPIView.as_view()),
+    path('sales-requests/<int:pk>/dispatch/', ProductionSalesRequestDispatchAPIView.as_view()),
+    path('sales-requests/<int:pk>/create-invoice/', ProductionSalesRequestCreateInvoiceAPIView.as_view()),
     path('boms/', BOMListCreateView.as_view()),
     path('boms/<int:pk>/', BOMDetailView.as_view()),
     path('mrp-check/', MRPCheckView.as_view()),

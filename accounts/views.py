@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import Company as AccountsCompany, UserProfile
-from .models import GLEntry, PaymentEntry, JournalEntry, JournalEntryLine, PaymentInvoiceAllocation
+from .models import GLEntry, PaymentEntry, JournalEntry, JournalEntryLine, PaymentInvoiceAllocation, BusinessUnit
 from .serializers import PaymentEntrySerializer, JournalEntrySerializer
 
 from selling.models import SalesInvoice, CreditNote
@@ -63,6 +63,102 @@ def _resolve_gateway_user(request):
         return User.objects.filter(username=uname).first()
     return None
 
+
+
+def _get_user_unit_access(request, company):
+    from django.contrib.auth import get_user_model
+    from .models import UserProfile, ensure_default_units
+    if not company:
+        return None, True, None
+    ensure_default_units(company)
+    UserModel = get_user_model()
+    target_user = None
+    if getattr(request, 'user', None) and request.user.is_authenticated:
+        target_user = request.user
+    if not target_user:
+        uid = request.headers.get('X-User-ID') or request.GET.get('user_id')
+        uname = request.headers.get('X-Username') or request.GET.get('username')
+        if uid and str(uid).isdigit():
+            target_user = UserModel.objects.filter(id=int(uid)).first()
+        elif uname:
+            target_user = UserModel.objects.filter(username__iexact=str(uname)).first()
+    if not target_user or target_user.is_superuser:
+        return target_user, True, None
+    profile = UserProfile.objects.filter(user=target_user).select_related('assigned_unit').first()
+    if profile and profile.assigned_unit and profile.assigned_unit.company_id == company.id and profile.assigned_unit.is_active:
+        return target_user, False, profile.assigned_unit
+    return target_user, True, None
+
+
+def resolve_active_unit(request, company, default_unit_type=None):
+    from .models import BusinessUnit, ensure_default_units
+    if not company:
+        return None
+    units_map = ensure_default_units(company)
+    _, can_view_all, locked_unit = _get_user_unit_access(request, company)
+    if not can_view_all and locked_unit:
+        return locked_unit
+
+    uid = (
+        (isinstance(getattr(request, 'data', None), dict) and (request.data.get('unit_id') or request.data.get('unit')))
+        or request.headers.get('X-Unit-Id')
+        or request.GET.get('unit_id')
+    )
+    if uid and str(uid) not in ('all', 'ALL', 'undefined', 'null', ''):
+        try:
+            u = BusinessUnit.objects.filter(company=company, id=int(uid)).first()
+            if u:
+                return u
+        except (ValueError, TypeError):
+            pass
+    if default_unit_type and default_unit_type in units_map:
+        return units_map[default_unit_type]
+    return None
+
+
+class BusinessUnitListCreateAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import BusinessUnit, ensure_default_units
+        company = get_active_company(request)
+        if not company:
+            return Response([], status=status.HTTP_200_OK)
+        ensure_default_units(company)
+        units = BusinessUnit.objects.filter(company=company, is_active=True).order_by('id')
+        data = [
+            {
+                'id': u.id,
+                'code': u.code,
+                'name': u.name,
+                'unit_type': u.unit_type,
+            }
+            for u in units
+        ]
+        return Response(data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from .models import BusinessUnit, ensure_default_units
+        company = get_active_company(request)
+        if not company:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+        ensure_default_units(company)
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            return Response({'error': 'Division name is required'}, status=status.HTTP_400_BAD_REQUEST)
+        code = (request.data.get('code') or '').strip().upper() or f"UNIT-{BusinessUnit.objects.filter(company=company).count() + 1:02d}"
+        if BusinessUnit.objects.filter(company=company, code=code).exists():
+            code = f"{code}-{BusinessUnit.objects.filter(company=company).count() + 1}"
+        u = BusinessUnit.objects.create(
+            company=company,
+            code=code,
+            name=name,
+            unit_type=request.data.get('unit_type') or 'CUSTOM',
+            is_active=True,
+        )
+        return Response({'id': u.id, 'code': u.code, 'name': u.name, 'unit_type': u.unit_type}, status=status.HTTP_201_CREATED)
+
 class AccountsCompanyListView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -85,6 +181,8 @@ class AccountsCompanyListView(APIView):
                 'symbol': getattr(c, 'currency_symbol', '$' if 'CAD' in c.name or 'USD' in c.name else '₹'),
                 'currency_symbol': getattr(c, 'currency_symbol', '$' if 'CAD' in c.name or 'USD' in c.name else '₹'),
                 'country': getattr(c, 'country', 'India'),
+                'business_type': getattr(c, 'business_type', 'HYBRID'),
+                'parent_company_id': getattr(c, 'parent_company_id', None),
             }
             for c in companies
         ]
@@ -116,119 +214,192 @@ class AccountsCompanySwitchView(APIView):
 
 class FinancialStatementsAPIView(APIView):
     def get(self, request):
+        from .models import BusinessUnit, ensure_default_units
+        from stock.models import StockLedgerEntry
+
         company = get_active_company(request)
-        try:
-            # 1. Company Filtered Data
-            is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
-            sales_qs = SalesInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else SalesInvoice.objects.filter(company=company)
-            pur_qs = PurchaseInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else PurchaseInvoice.objects.filter(company=company)
-            items_qs = Item.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else Item.objects.filter(company=company)
+        unit_id = request.headers.get('X-Unit-Id') or request.GET.get('unit_id')
+        has_unit_filter = bool(unit_id and str(unit_id) not in ('all', 'ALL', 'undefined', 'null', ''))
 
-            gl_entries = GLEntry.objects.filter(is_cancelled=False)
-            if company:
-                gl_entries = gl_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else gl_entries.filter(company=company)
+        is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
+        base_sales_qs = SalesInvoice.objects.filter(company=company)
+        base_pur_qs = PurchaseInvoice.objects.filter(company=company)
+        items_qs = Item.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else Item.objects.filter(company=company)
 
-            net_sales = sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
-            total_purchases = pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        base_gl_entries = GLEntry.objects.filter(is_cancelled=False)
+        if company:
+            base_gl_entries = base_gl_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else base_gl_entries.filter(company=company)
 
-            output_gst = sales_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
-            input_gst = pur_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
-            net_gst = output_gst - input_gst
+        if has_unit_filter:
+            u_int = int(unit_id)
+            sales_qs = base_sales_qs.filter(unit_id=u_int)
+            pur_qs = base_pur_qs.filter(unit_id=u_int)
+            gl_entries = base_gl_entries.filter(unit_id=u_int)
+        else:
+            sales_qs = base_sales_qs
+            pur_qs = base_pur_qs
+            gl_entries = base_gl_entries
 
-            gst_payable = max(net_gst, Decimal('0.00'))
-            gst_credit = abs(net_gst) if net_gst < Decimal('0.00') else Decimal('0.00')
+        ext_sales = sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        ext_purchases = pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
 
-            # 2. Dynamic Real-time Closing Stock Valuation
-            closing_stock_val = Decimal('0.00')
-            for itm in items_qs:
+        # Inter-Division Supply Income & Cost (Shown in individual division, eliminated in Consolidated!)
+        inter_inc = (gl_entries.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) if has_unit_filter else Decimal('0.00')
+        inter_cost = (gl_entries.filter(account='Inter-Division Stock Cost').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) if has_unit_filter else Decimal('0.00')
+
+        net_sales = ext_sales + inter_inc
+        total_purchases = ext_purchases + inter_cost
+
+        output_gst = sales_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
+        input_gst = pur_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
+        net_gst = output_gst - input_gst
+
+        gst_payable = max(net_gst, Decimal('0.00'))
+        gst_credit = abs(net_gst) if net_gst < Decimal('0.00') else Decimal('0.00')
+
+        # Closing Stock Valuation
+        closing_stock_val = Decimal('0.00')
+        for itm in items_qs:
+            if has_unit_filter:
+                u_qty = StockLedgerEntry.objects.filter(company=company, unit_id=int(unit_id), item=itm).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
+                q = max(Decimal('0.00'), Decimal(str(u_qty)))
+            else:
                 q = max(Decimal('0.00'), Decimal(str(itm.current_stock or 0)))
-                r = Decimal(str(itm.standard_rate or 0))
-                closing_stock_val += (q * r)
+            r = Decimal(str(itm.standard_rate or 0))
+            closing_stock_val += (q * r)
 
-            # 3. Dynamic Cost of Goods Sold (Purchases minus Closing Stock)
-            # If everything purchased is in stock, COGS reflects actual cost of units sold
-            cogs = max(Decimal('0.00'), total_purchases - closing_stock_val)
-            if cogs <= Decimal('0.00') and net_sales > Decimal('0.00'):
-                # Fallback to estimated cost based on sold units
-                cogs = net_sales * Decimal('0.80')
+        cogs = max(Decimal('0.00'), total_purchases - closing_stock_val)
+        if cogs <= Decimal('0.00') and net_sales > Decimal('0.00'):
+            cogs = net_sales * Decimal('0.80')
 
-            gross_profit = net_sales - cogs
+        gross_profit = net_sales - cogs
 
-            # 4. Debtors, Creditors & Bank
-            debtors = Decimal('0.00')
-            for inv in sales_qs:
-                alloc = PaymentInvoiceAllocation.objects.filter(invoice_type='Sales Invoice', invoice_id=inv.id).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
-                debtors += max(Decimal('0.00'), Decimal(str(inv.grand_total or 0)) - alloc)
+        # Debtors, Creditors, Inter-Division Balances & Bank from Division-Scoped GL
+        debtors_dr = gl_entries.filter(account__icontains='Debtor').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        debtors_cr = gl_entries.filter(account__icontains='Debtor').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        debtors = max(Decimal('0.00'), debtors_dr - debtors_cr)
 
-            creditors = Decimal('0.00')
-            for bill in pur_qs:
-                alloc = PaymentInvoiceAllocation.objects.filter(invoice_type='Purchase Invoice', invoice_id=bill.id).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
-                creditors += max(Decimal('0.00'), Decimal(str(bill.grand_total or 0)) - alloc)
+        if has_unit_filter:
+            id_rec = (gl_entries.filter(account='Inter-Division Receivable').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) -                      (gl_entries.filter(account='Inter-Division Receivable').aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+            debtors += max(Decimal('0.00'), id_rec)
 
-            bank_balance = (gl_entries.filter(account__regex=r'(?i)bank|cash').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
-                           (gl_entries.filter(account__regex=r'(?i)bank|cash').aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        creditors_cr = gl_entries.filter(account__icontains='Creditor').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        creditors_dr = gl_entries.filter(account__icontains='Creditor').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        creditors = max(Decimal('0.00'), creditors_cr - creditors_dr)
 
-            # Deduct received cash from customer receivables to prevent double counting
-            if bank_balance > Decimal('0.00') and debtors >= bank_balance:
-                debtors -= bank_balance
+        if has_unit_filter:
+            id_pay = (gl_entries.filter(account='Inter-Division Payable').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) -                      (gl_entries.filter(account='Inter-Division Payable').aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
+            creditors += max(Decimal('0.00'), id_pay)
 
-            # 5. Mathematically Perfect Balance Sheet (Assets = Liabilities & Equity)
-            total_assets = bank_balance + debtors + gst_credit + closing_stock_val
-            total_liabilities = total_assets
+        bank_balance = (gl_entries.filter(account__regex=r'(?i)bank|cash').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) - \
+                       (gl_entries.filter(account__regex=r'(?i)bank|cash').aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
 
-        except Exception as e:
-            net_sales = total_purchases = cogs = gross_profit = input_gst = output_gst = Decimal('0.00')
-            bank_balance = debtors = gst_credit = creditors = gst_payable = closing_stock_val = Decimal('0.00')
-            total_assets = total_liabilities = Decimal('0.00')
+        fixed_assets = max(Decimal('0.00'), (
+            (gl_entries.filter(account__icontains='Fixed Asset').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')) -
+            (gl_entries.filter(account__icontains='Fixed Asset').aggregate(s=Sum('credit'))['s'] or Decimal('0.00'))
+        ))
+        total_assets = bank_balance + fixed_assets + debtors + gst_credit + closing_stock_val
+        total_liabilities = total_assets
 
         symbol = getattr(company, 'currency_symbol', '$' if company and ('CAD' in company.name or 'USD' in company.name) else '₹') if company else '₹'
 
-        try:
-            adj_qs = gl_entries.filter(account='Freight & Adjustments')
-            adj_cr = adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
-            adj_dr = adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
-            freight_adj = adj_cr - adj_dr
+        adj_qs = gl_entries.filter(account='Freight & Adjustments')
+        adj_cr = adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        adj_dr = adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        freight_adj = adj_cr - adj_dr
 
-            excluded_accs = {
-                'Sales Income', 'Cost of Goods Sold', 'Purchases',
-                'Debtors', 'Debtors (Customer Receivables)',
-                'Creditors', 'Creditors (Supplier Payables)',
-                'Bank Account', 'Cash Account', 'Output GST', 'Input GST',
-                'Freight & Adjustments', 'Stock in Hand', 'Inventory', 'Finished Goods Inventory', 'Raw Material Inventory', 'Scrap Inventory', 'Direct Labour Payable', 'Manufacturing Overheads',
-                'Opening Balance Equity', 'Capital Account'
-            }
-            other_exp_qs = (
-                gl_entries.exclude(account__in=excluded_accs)
-                .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods)')
-                .values('account')
-                .annotate(dr=Sum('debit'), cr=Sum('credit'))
-            )
-            other_expenses = []
-            other_exp_total = Decimal('0.00')
-            for row in other_exp_qs:
-                net_exp = (row['dr'] or Decimal('0.00')) - (row['cr'] or Decimal('0.00'))
-                if net_exp != Decimal('0.00'):
-                    other_expenses.append({'account': row['account'], 'amount': float(net_exp)})
-                    other_exp_total += net_exp
-            net_profit_val = gross_profit + freight_adj - other_exp_total
-        except Exception:
-            freight_adj = Decimal('0.00')
-            other_expenses = []
-            other_exp_total = Decimal('0.00')
-            net_profit_val = gross_profit
+        excluded_accs = {
+            'Sales Income', 'Cost of Goods Sold', 'Purchases',
+            'Debtors', 'Debtors (Customer Receivables)',
+            'Creditors', 'Creditors (Supplier Payables)',
+            'Bank Account', 'Cash Account', 'Output GST', 'Input GST',
+            'Freight & Adjustments', 'Stock in Hand', 'Inventory', 'Finished Goods Inventory',
+            'Raw Material Inventory', 'Scrap Inventory', 'Direct Labour Payable', 'Manufacturing Overheads',
+            'Opening Balance Equity', 'Capital Account', 'Fixed Assets (Partner Brought)', 'Unit Petty Cash',
+            'Inter-Division Supply Income', 'Inter-Division Stock Cost',
+            'Inter-Division Receivable', 'Inter-Division Payable'
+        }
+        other_exp_qs = (
+            gl_entries.exclude(account__in=excluded_accs)
+            .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
+            .values('account')
+            .annotate(dr=Sum('debit'), cr=Sum('credit'))
+        )
+        other_expenses = []
+        other_exp_total = Decimal('0.00')
+        for row in other_exp_qs:
+            net_exp = (row['dr'] or Decimal('0.00')) - (row['cr'] or Decimal('0.00'))
+            if net_exp != Decimal('0.00'):
+                other_expenses.append({'account': row['account'], 'amount': float(net_exp)})
+                other_exp_total += net_exp
+        net_profit_val = gross_profit + freight_adj - other_exp_total
+
+        unit_bifurcation = []
+        if company:
+            ensure_default_units(company)
+            for u in BusinessUnit.objects.filter(company=company, is_active=True).order_by('id'):
+                u_gl = base_gl_entries.filter(unit=u)
+                u_ext_sales = base_sales_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_inter_inc = u_gl.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+                u_sales = u_ext_sales + u_inter_inc
+
+                u_ext_pur = base_pur_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_inter_cost = u_gl.filter(account='Inter-Division Stock Cost').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+                u_pur = u_ext_pur + u_inter_cost
+
+                u_stock_val = Decimal('0.00')
+                for itm in items_qs:
+                    uq = StockLedgerEntry.objects.filter(company=company, unit=u, item=itm).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
+                    if uq > 0:
+                        u_stock_val += uq * Decimal(str(itm.standard_rate or 0))
+                u_cogs = max(Decimal('0.00'), u_pur - u_stock_val)
+                if u_cogs <= Decimal('0.00') and u_sales > Decimal('0.00'):
+                    u_cogs = u_sales * Decimal('0.80')
+                u_gp = u_sales - u_cogs
+                u_adj_qs = u_gl.filter(account='Freight & Adjustments')
+                u_adj = (u_adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (u_adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
+                u_exp_qs = (
+                    u_gl.exclude(account__in=excluded_accs)
+                    .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division)')
+                    .values('account')
+                    .annotate(dr=Sum('debit'), cr=Sum('credit'))
+                )
+                u_exp_list = []
+                u_exp_tot = Decimal('0.00')
+                for row in u_exp_qs:
+                    ne = (row['dr'] or Decimal('0.00')) - (row['cr'] or Decimal('0.00'))
+                    if ne != Decimal('0.00'):
+                        u_exp_list.append({'account': row['account'], 'amount': float(ne)})
+                        u_exp_tot += ne
+                u_np = u_gp + u_adj - u_exp_tot
+                unit_bifurcation.append({
+                    'unit_id': u.id,
+                    'code': u.code,
+                    'name': u.name,
+                    'unit_type': u.unit_type,
+                    'sales': float(u_sales),
+                    'purchases': float(u_pur),
+                    'closing_stock': float(u_stock_val),
+                    'cogs': float(u_cogs),
+                    'gross_profit': float(u_gp),
+                    'other_expenses': u_exp_list,
+                    'other_expenses_total': float(u_exp_tot),
+                    'net_profit': float(u_np),
+                })
 
         return Response({
             "currency_symbol": symbol,
+            "business_type": getattr(company, 'business_type', 'HYBRID') if company else 'HYBRID',
             "income": {
                 "sales": float(net_sales),
                 "freight_adjustments": float(freight_adj),
-                "total_income": float(net_sales + (freight_adj if freight_adj > 0 else Decimal('0.00'))),
+                "total_income": float(net_sales + freight_adj),
             },
             "expense": {
                 "purchases": float(cogs),
                 "other_expenses": other_expenses,
                 "other_expenses_total": float(other_exp_total),
-                "total_expense": float(cogs + other_exp_total + (abs(freight_adj) if freight_adj < 0 else Decimal('0.00'))),
+                "total_expense": float(cogs + other_exp_total),
             },
             "profit": {
                 "gross_profit": float(gross_profit),
@@ -236,29 +407,35 @@ class FinancialStatementsAPIView(APIView):
                 "other_expenses_total": float(other_exp_total),
                 "net_profit": float(net_profit_val),
             },
-            "gst": { "input_itc": float(input_gst), "output_liability": float(output_gst), "net_payable": float(net_gst) },
+            "gst": {
+                "input_itc": float(input_gst),
+                "output_liability": float(output_gst),
+                "net_payable": float(net_gst),
+            },
             "balance_sheet": {
                 "assets": {
                     "bank_cash": float(bank_balance),
+                    "fixed_assets": float(fixed_assets),
                     "debtors_receivable": float(debtors),
                     "gst_credit": float(gst_credit),
                     "closing_stock": float(closing_stock_val),
-                    "total_assets": float(total_assets)
+                    "total_assets": float(total_assets),
                 },
                 "liabilities": {
                     "creditors_payable": float(creditors),
                     "gst_payable": float(gst_payable),
-                    "total_liabilities": float(total_liabilities)
-                }
-            }
+                    "total_liabilities": float(total_liabilities),
+                },
+            },
+            "unit_bifurcation": unit_bifurcation,
         })
-
 
 class GeneralLedgerAPIView(APIView):
     def get(self, request):
         company = get_active_company(request)
         party = request.GET.get('party')
         account = request.GET.get('account')
+        unit_id = request.GET.get('unit_id')
         from_date = request.GET.get('from_date')
         to_date = request.GET.get('to_date')
 
@@ -269,12 +446,24 @@ class GeneralLedgerAPIView(APIView):
             filters['posting_date__gte'] = from_date
         if to_date:
             filters['posting_date__lte'] = to_date
+        ho_unit_filter = None
+        if unit_id and str(unit_id) not in ('all', 'ALL', 'undefined', 'null', ''):
+            u_obj = BusinessUnit.objects.filter(id=int(unit_id)).first()
+            if u_obj and u_obj.unit_type == 'HO':
+                ho_unit_filter = int(unit_id)
+            else:
+                filters['unit_id'] = int(unit_id)
 
         try:
             entries = GLEntry.objects.filter(**filters)
+            if ho_unit_filter is not None:
+                entries = entries.filter(
+                    Q(unit_id=ho_unit_filter) |
+                    Q(voucher_type__in=['Counter Receipt', 'Cash Received Voucher'])
+                )
             is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
             if company:
-                entries = entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else entries.filter(company=company)
+                entries = entries.filter(company=company)
 
             # Universal Smart Drill-down
             if account and account != 'all':
@@ -329,6 +518,8 @@ class GeneralLedgerAPIView(APIView):
                 'voucher_no': row.voucher_no,
                 'against': row.against,
                 'remarks': row.remarks,
+                'unit_id': row.unit_id,
+                'unit_name': row.unit.name if getattr(row, 'unit', None) else 'Unassigned',
                 'debit': float(row.debit),
                 'credit': float(row.credit),
                 'balance': float(row_bal)
@@ -342,8 +533,12 @@ class DashboardSummaryAPIView(APIView):
         company = get_active_company(request)
         try:
             is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
-            sales_qs = SalesInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else SalesInvoice.objects.filter(company=company)
-            pur_qs = PurchaseInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else PurchaseInvoice.objects.filter(company=company)
+            sales_qs = SalesInvoice.objects.filter(company=company)
+            pur_qs = PurchaseInvoice.objects.filter(company=company)
+            active_u = resolve_active_unit(request, company)
+            if active_u:
+                sales_qs = sales_qs.filter(unit=active_u)
+                pur_qs = pur_qs.filter(unit=active_u)
 
             total_sales = sales_qs.aggregate(total=Sum('grand_total'))['total'] or Decimal('0.00')
             total_purchases = pur_qs.aggregate(total=Sum('grand_total'))['total'] or Decimal('0.00')
@@ -355,6 +550,9 @@ class DashboardSummaryAPIView(APIView):
             bank_entries = GLEntry.objects.filter(account__in=['Bank Account', 'Cash Account'], is_cancelled=False)
             if company:
                 bank_entries = bank_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else bank_entries.filter(company=company)
+            active_u = resolve_active_unit(request, company)
+            if active_u:
+                bank_entries = bank_entries.filter(unit=active_u)
             bank_debit = bank_entries.aggregate(total=Sum('debit'))['total'] or 0
             bank_credit = bank_entries.aggregate(total=Sum('credit'))['total'] or 0
             bank_balance = float(bank_debit) - float(bank_credit)
@@ -381,7 +579,7 @@ class GSTReturnSummaryAPIView(APIView):
         is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
 
         try:
-            s_qs = SalesInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else SalesInvoice.objects.filter(company=company)
+            s_qs = SalesInvoice.objects.filter(company=company)
             for inv in s_qs:
                 p_date = getattr(inv, 'posting_date', None)
                 if not p_date:
@@ -395,7 +593,7 @@ class GSTReturnSummaryAPIView(APIView):
             pass
 
         try:
-            p_qs = PurchaseInvoice.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else PurchaseInvoice.objects.filter(company=company)
+            p_qs = PurchaseInvoice.objects.filter(company=company)
             for pur in p_qs:
                 p_date = getattr(pur, 'posting_date', None)
                 if not p_date:
@@ -433,8 +631,8 @@ class PartyOutstandingAPIView(APIView):
             debtor_entries = GLEntry.objects.filter(account="Debtors", is_cancelled=False)
             creditor_entries = GLEntry.objects.filter(account="Creditors", is_cancelled=False)
             if company:
-                debtor_entries = debtor_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else debtor_entries.filter(company=company)
-                creditor_entries = creditor_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else creditor_entries.filter(company=company)
+                debtor_entries = debtor_entries.filter(company=company)
+                creditor_entries = creditor_entries.filter(company=company)
 
             cust_summary = debtor_entries.values('party').annotate(total_debit=Sum('debit'), total_credit=Sum('credit')).order_by('-total_debit')
             customers_data = {}
@@ -477,11 +675,22 @@ class PaymentEntryListCreateAPIView(generics.ListCreateAPIView):
                 qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
             else:
                 qs = qs.filter(company=comp)
+        u = resolve_active_unit(self.request, comp)
+        if u and u.unit_type != 'HO':
+            qs = qs.filter(unit=u)
         return qs
 
     def perform_create(self, serializer):
         comp = get_active_company(self.request)
-        serializer.save(company=comp)
+        u = resolve_active_unit(self.request, comp, default_unit_type='HO')
+        vno = (self.request.data.get('voucher_no') or '').strip()
+        if not vno or PaymentEntry.objects.filter(company=comp, unit=u, voucher_no=vno).exists():
+            cnt = PaymentEntry.objects.filter(company=comp, unit=u).count() + 1
+            vno = f"PAY-{cnt:04d}"
+            while PaymentEntry.objects.filter(company=comp, unit=u, voucher_no=vno).exists():
+                cnt += 1
+                vno = f"PAY-{cnt:04d}"
+        serializer.save(company=comp, unit=u, voucher_no=vno)
 
 
 class PaymentEntryRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
@@ -490,7 +699,7 @@ class PaymentEntryRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        GLEntry.objects.filter(voucher_type='Payment Entry', voucher_no=instance.voucher_no).delete()
+        GLEntry.objects.filter(company=instance.company, unit=instance.unit, voucher_type='Payment Entry', voucher_no=instance.voucher_no).delete()
         instance.delete()
 
 
@@ -579,6 +788,9 @@ class FrontendCompanyCreateView(APIView):
         country = request.data.get('country', 'India')
         address = request.data.get('address', '')
         gstin = request.data.get('gstin', '')
+        business_type = str(request.data.get('business_type', 'HYBRID')).strip().upper()
+        if business_type not in ('HYBRID', 'TRADING', 'MANUFACTURING'):
+            business_type = 'HYBRID'
 
         if not name:
             return Response({'error': 'Company name is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -589,7 +801,8 @@ class FrontendCompanyCreateView(APIView):
             currency_symbol=symbol,
             country=country,
             address=address,
-            tax_id=gstin
+            tax_id=gstin,
+            business_type=business_type
         )
 
         req_user = _resolve_gateway_user(request)
@@ -612,6 +825,7 @@ class FrontendCompanyCreateView(APIView):
                     'currency': company.default_currency,
                     'symbol': company.currency_symbol,
                     'country': company.country,
+                    'business_type': company.business_type,
                 }
             }
 
@@ -622,7 +836,8 @@ class FrontendCompanyCreateView(APIView):
                 'name': company.name,
                 'currency': company.default_currency,
                 'symbol': company.currency_symbol,
-                'currency_symbol': company.currency_symbol
+                'currency_symbol': company.currency_symbol,
+                'business_type': company.business_type
             },
             'user': user_payload
         }, status=status.HTTP_201_CREATED)
@@ -813,3 +1028,99 @@ class DatabaseRestoreAPIView(APIView):
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+
+class CompanyBrandingAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def _serialize_company(self, c):
+        b_name = getattr(c, 'bank_name', '') or ''
+        b_acc = getattr(c, 'bank_account_no', '') or ''
+        b_ifsc = getattr(c, 'bank_ifsc', '') or ''
+        b_branch = getattr(c, 'bank_branch', '') or ''
+        b_acc_name = getattr(c, 'bank_account_name', '') or c.name
+
+        # Fallback parse from legacy bank_details text if dedicated fields are empty
+        legacy = getattr(c, 'bank_details', '') or ''
+        if legacy and not (b_name or b_acc or b_ifsc):
+            for part in legacy.split('|'):
+                p = part.strip()
+                if p.lower().startswith('bank:'):
+                    b_name = p.split(':', 1)[1].strip()
+                elif 'a/c' in p.lower() or 'acc' in p.lower():
+                    b_acc = p.split(':', 1)[1].strip() if ':' in p else p
+                elif p.lower().startswith('ifsc:'):
+                    b_ifsc = p.split(':', 1)[1].strip()
+
+        default_terms = (
+            "1. Subject to local Jurisdiction.\n"
+            "2. Our Responsibility Ceases as soon as goods leaves our Premises.\n"
+            "3. Goods once sold will not be taken back.\n"
+            "4. Interest @18% p.a. will be charged if payment is delayed."
+        )
+        return {
+            'id': c.id,
+            'name': c.name,
+            'tagline': getattr(c, 'tagline', '') or '',
+            'contact_person': getattr(c, 'contact_person', '') or '',
+            'phone': getattr(c, 'phone', '') or '',
+            'email': getattr(c, 'email', '') or '',
+            'address': c.address or '',
+            'gstin': c.gstin or c.tax_id or '',
+            'pan': getattr(c, 'pan', '') or ((c.gstin or '')[2:12] if len(c.gstin or '') >= 12 else ''),
+            'state': c.state or 'Gujarat (24)',
+            'country': c.country or 'India',
+            'currency_symbol': c.currency_symbol or '₹',
+            'upi_id': getattr(c, 'upi_id', '') or '',
+            'bank_name': b_name,
+            'bank_branch': b_branch,
+            'bank_account_name': b_acc_name,
+            'bank_account_no': b_acc,
+            'bank_ifsc': b_ifsc,
+            'bank_details': legacy,
+            'logo_data_url': getattr(c, 'logo_data_url', '') or '',
+            'invoice_terms': (getattr(c, 'invoice_terms', '') or '').strip() or default_terms,
+        }
+
+    def get(self, request):
+        comp = get_active_company(request)
+        if not comp:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self._serialize_company(comp), status=status.HTTP_200_OK)
+
+    def put(self, request):
+        comp = get_active_company(request)
+        if not comp:
+            return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
+        d = request.data or {}
+        str_fields = [
+            'name', 'tagline', 'contact_person', 'phone', 'email',
+            'address', 'gstin', 'pan', 'state', 'upi_id',
+            'bank_name', 'bank_branch', 'bank_account_name',
+            'bank_account_no', 'bank_ifsc', 'logo_data_url', 'invoice_terms'
+        ]
+        for f in str_fields:
+            if f in d and d[f] is not None:
+                val = str(d[f]) if f in ('logo_data_url', 'invoice_terms', 'address') else str(d[f]).strip()
+                if f == 'name' and not val:
+                    continue
+                setattr(comp, f, val)
+        if 'gstin' in d and d['gstin']:
+            comp.tax_id = str(d['gstin']).strip()
+
+        parts = []
+        if comp.bank_name:
+            parts.append(f"Bank: {comp.bank_name}")
+        if comp.bank_account_no:
+            parts.append(f"A/c No: {comp.bank_account_no}")
+        if comp.bank_ifsc:
+            parts.append(f"IFSC: {comp.bank_ifsc}")
+        if parts:
+            comp.bank_details = " | ".join(parts)
+
+        comp.save()
+        return Response(self._serialize_company(comp), status=status.HTTP_200_OK)
+
+    def post(self, request):
+        return self.put(request)

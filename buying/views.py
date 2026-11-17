@@ -10,6 +10,7 @@ from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem, DebitNote, D
 from .serializers import SupplierSerializer, PurchaseInvoiceSerializer, DebitNoteSerializer
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry, PaymentInvoiceAllocation, Company
+from accounts.views import resolve_active_unit
 
 
 def parse_date_safe(val):
@@ -45,8 +46,8 @@ def get_request_company(request):
 
 def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
     # Company scoped cleanup of previous entries for this bill
-    GLEntry.objects.filter(company=comp, voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
-    StockLedgerEntry.objects.filter(company=comp, voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
+    GLEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
+    StockLedgerEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
     invoice.items.all().delete()
 
     affected_items = set()
@@ -103,6 +104,7 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
         # 4. Stock Ledger inward entry
         StockLedgerEntry.objects.create(
             company=comp,
+            unit=getattr(invoice, 'unit', None),
             posting_date=invoice.posting_date,
             item=item_obj,
             voucher_type='Purchase Invoice',
@@ -222,15 +224,23 @@ class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):
                 qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
             else:
                 qs = qs.filter(company=comp)
+        u = resolve_active_unit(self.request, comp)
+        if u:
+            qs = qs.filter(unit=u)
         return qs
 
     def create(self, request, *args, **kwargs):
         comp = get_request_company(request)
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
-        bill_no = data.get('bill_number') or f"PUR-{PurchaseInvoice.objects.filter(company=comp).count() + 1:04d}"
-        if PurchaseInvoice.objects.filter(company=comp, bill_number=bill_no).exists():
-            bill_no = f"PUR-{PurchaseInvoice.objects.filter(company=comp).count() + 1:04d}"
+        u_obj = resolve_active_unit(request, comp, default_unit_type='TRADING')
+        bill_no = (data.get('bill_number') or '').strip()
+        if not bill_no or PurchaseInvoice.objects.filter(company=comp, unit=u_obj, bill_number=bill_no).exists():
+            cnt = PurchaseInvoice.objects.filter(company=comp, unit=u_obj).count() + 1
+            bill_no = f"PUR-{cnt:04d}"
+            while PurchaseInvoice.objects.filter(company=comp, unit=u_obj, bill_number=bill_no).exists():
+                cnt += 1
+                bill_no = f"PUR-{cnt:04d}"
 
         supplier_val = data.get('supplier') or data.get('supplier_id')
         supplier_obj = None
@@ -257,6 +267,7 @@ class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):
         with transaction.atomic():
             invoice = PurchaseInvoice.objects.create(
                 company=comp,
+                unit=u_obj,
                 supplier=supplier_obj,
                 supplier_name=supplier_name,
                 bill_number=bill_no,
@@ -306,6 +317,10 @@ class PurchaseInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroy
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
         with transaction.atomic():
+            if data.get('unit_id') or data.get('unit'):
+                new_u = resolve_active_unit(request, comp)
+                if new_u:
+                    instance.unit = new_u
             instance.posting_date = parse_date_safe(data.get('posting_date', instance.posting_date))
             instance.due_date = parse_date_safe(data.get('due_date', instance.due_date))
             if 'net_total' in data:

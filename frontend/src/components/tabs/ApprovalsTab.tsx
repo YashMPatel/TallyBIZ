@@ -42,13 +42,15 @@ export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases,
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // ડિટેઇલ વ્યુ મોડલ સ્ટેટ
+  // 
+
   const [viewDoc, setViewDoc] = useState<{
     type: 'sales' | 'purchase';
     data: SalesInvoice | PurchaseInvoice;
   } | null>(null);
 
-  // ફક્ત એવા દસ્તાવેજો લિસ્ટ કરો જે હજુ Approved કે Rejected નથી
+  // Approved  Rejected 
+
   const pendingSales = invoices.filter(inv => inv.status !== 'Approved' && inv.status !== 'Rejected');
   const pendingPurchases = purchases.filter(pur => pur.status !== 'Approved' && pur.status !== 'Rejected');
 
@@ -83,9 +85,9 @@ export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases,
   };
 
   const handleReject = async (docType: 'sales' | 'purchase', id: number) => {
-    const reason = window.prompt("કૃપા કરીને Reject કરવાનું કારણ લખો (Rejection Reason):");
+    const reason = window.prompt("Please enter a reason for rejection (Rejection Reason):");
     if (!reason || !reason.trim()) {
-      alert("Rejection reason લખવું ફરજિયાત છે.");
+      alert("Rejection reason is required.");
       return;
     }
 

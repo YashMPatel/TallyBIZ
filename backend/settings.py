@@ -178,32 +178,9 @@ SIMPLE_JWT = {
 }
 
 from corsheaders.defaults import default_headers
-
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-company-id',
-]
-
-try:
-    from corsheaders.defaults import default_headers
-    CORS_ALLOW_HEADERS = list(default_headers) + [
-        'x-user-id',
-        'x-username',
-    ]
-except ImportError:
-    CORS_ALLOW_HEADERS = [
     'x-unit-id',
-    'x-company-id',
     'x-user-id',
     'x-username',
-        'accept',
-        'accept-encoding',
-        'authorization',
-        'content-type',
-        'dnt',
-        'origin',
-        'user-agent',
-        'x-csrftoken',
-        'x-requested-with',
-        'x-user-id',
-        'x-username',
-    ]
+]

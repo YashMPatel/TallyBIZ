@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from accounts.models import Company, UserProfile, GLEntry
+from accounts.views import resolve_active_unit
 from stock.models import Item, StockLedgerEntry
 from .models import BillOfMaterial, BOMComponent, ProductionOrder, ProductionConsumption
 
@@ -183,6 +184,7 @@ def _post_production(order, approver):
         it.save(update_fields=['current_stock'])
         StockLedgerEntry.objects.create(
             company=order.company,
+            unit=getattr(order, 'unit', None),
             posting_date=order.posting_date,
             item=it,
             voucher_type='Manufacturing Consumption',
@@ -198,6 +200,7 @@ def _post_production(order, approver):
         sc.save(update_fields=['current_stock'])
         StockLedgerEntry.objects.create(
             company=order.company,
+            unit=getattr(order, 'unit', None),
             posting_date=order.posting_date,
             item=sc,
             voucher_type='Manufacturing Scrap',
@@ -217,6 +220,7 @@ def _post_production(order, approver):
     fg.save(update_fields=['current_stock', 'standard_rate'])
     StockLedgerEntry.objects.create(
         company=order.company,
+        unit=getattr(order, 'unit', None),
         posting_date=order.posting_date,
         item=fg,
         voucher_type='Manufacturing Output',
@@ -227,17 +231,17 @@ def _post_production(order, approver):
     )
     raw_net = Decimal(order.total_raw_cost) - Decimal(order.scrap_value)
     if raw_net > 0:
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=raw_net, credit=Decimal('0.00'), remarks=f'Production {order.voucher_no} - {fg.item_name}')
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=raw_net, remarks=f'Raw Material Consumed - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=raw_net, credit=Decimal('0.00'), remarks=f'Production {order.voucher_no} - {fg.item_name}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=raw_net, remarks=f'Raw Material Consumed - {order.voucher_no}')
     if Decimal(order.scrap_value) > 0:
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Scrap Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=order.scrap_value, credit=Decimal('0.00'), remarks=f'Scrap Recovered - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Scrap Inventory', debit=Decimal('0.00'), credit=order.scrap_value, remarks=f'Scrap Credit - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Scrap Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=order.scrap_value, credit=Decimal('0.00'), remarks=f'Scrap Recovered - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Scrap Inventory', debit=Decimal('0.00'), credit=order.scrap_value, remarks=f'Scrap Credit - {order.voucher_no}')
     if Decimal(order.labor_cost) > 0:
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Direct Labour Payable', debit=order.labor_cost, credit=Decimal('0.00'), remarks=f'Direct Labour - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Direct Labour Payable', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.labor_cost, remarks=f'Direct Labour - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Direct Labour Payable', debit=order.labor_cost, credit=Decimal('0.00'), remarks=f'Direct Labour - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Direct Labour Payable', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.labor_cost, remarks=f'Direct Labour - {order.voucher_no}')
     if Decimal(order.overhead_cost) > 0:
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Manufacturing Overheads', debit=order.overhead_cost, credit=Decimal('0.00'), remarks=f'Factory Overheads - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, posting_date=order.posting_date, account='Manufacturing Overheads', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.overhead_cost, remarks=f'Factory Overheads - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Manufacturing Overheads', debit=order.overhead_cost, credit=Decimal('0.00'), remarks=f'Factory Overheads - {order.voucher_no}')
+        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Manufacturing Overheads', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.overhead_cost, remarks=f'Factory Overheads - {order.voucher_no}')
     order.status = 'APPROVED'
     order.approved_by = approver
     order.save(update_fields=['status', 'approved_by'])
@@ -361,7 +365,7 @@ class BOMListCreateView(APIView):
                         bom=bom,
                         raw_item=raw_it,
                         qty_required=qty_req,
-                        wastage_percent=_to_dec(c.get('wastage_percent') or 0, '0.01'),
+                        wastage_percent=min(Decimal('100.00'), max(Decimal('0.00'), _to_dec(c.get('wastage_percent') or 0, '0.01'))),
                     )
         return Response(_serialize_bom(bom), status=201)
 
@@ -401,7 +405,7 @@ class BOMDetailView(APIView):
                             bom=bom,
                             raw_item=raw_it,
                             qty_required=qty_req,
-                            wastage_percent=_to_dec(c.get('wastage_percent') or 0, '0.01'),
+                            wastage_percent=min(Decimal('100.00'), max(Decimal('0.00'), _to_dec(c.get('wastage_percent') or 0, '0.01'))),
                         )
             for po in ProductionOrder.objects.filter(bom=bom, status='PENDING'):
                 qty = Decimal(po.actual_qty)
@@ -482,6 +486,9 @@ class ProductionOrderListCreateView(APIView):
         if not company:
             return Response({'orders': [], 'summary': {}})
         qs = ProductionOrder.objects.filter(company=company).select_related('bom', 'finished_item', 'scrap_item').prefetch_related('consumptions__raw_item')
+        u_filter = resolve_active_unit(request, company)
+        if u_filter:
+            qs = qs.filter(unit=u_filter)
         orders = [_serialize_order(o, include_vouchers=True) for o in qs]
         approved = [o for o in orders if o['status'] == 'APPROVED']
         summary = {
@@ -520,8 +527,10 @@ class ProductionOrderListCreateView(APIView):
         overhead_cost = _to_dec(data.get('overhead_cost'), '0.01') if 'overhead_cost' in data else (Decimal(bom.overhead_cost) * actual_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         try:
             with transaction.atomic():
+                u_obj = resolve_active_unit(request, company, default_unit_type='MANUFACTURING')
                 order = ProductionOrder.objects.create(
                     company=company,
+                    unit=u_obj,
                     voucher_no=vno,
                     posting_date=pdate,
                     bom=bom,
@@ -538,6 +547,15 @@ class ProductionOrderListCreateView(APIView):
                     created_by=username,
                 )
                 _apply_order_lines(order, bom, data)
+                # Strict Raw Material Stock Check even on PENDING order creation!
+                for cl in order.consumptions.select_related('raw_item').all():
+                    avail_rm = Decimal(cl.raw_item.current_stock or 0)
+                    if avail_rm < Decimal(cl.actual_qty):
+                        raise ValueError(
+                            f'Insufficient Raw Material Stock for {cl.raw_item.item_name}: '
+                            f'Available {avail_rm} {cl.raw_item.unit}, Required {cl.actual_qty} {cl.raw_item.unit}. '
+                            f'Purchase raw material first!'
+                        )
                 if role in ('ADMIN', 'MANAGER') and bool(data.get('auto_approve', False)):
                     _post_production(order, username)
         except ValueError as ve:

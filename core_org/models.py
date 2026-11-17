@@ -1,7 +1,8 @@
 from django.db import models
 from django.conf import settings
 
-# ૧. કંપની માસ્ટર (તમારી ૩-૪ અલગ કંપનીઓ માટે)
+# ( -   )
+
 class Company(models.Model):
     name = models.CharField(max_length=200, unique=True)
     company_code = models.CharField(max_length=20, unique=True)
@@ -39,7 +40,7 @@ class Company(models.Model):
         return f"{self.name} ({self.currency})"
 
 
-# ૨. ઓર્ગેનાઇઝેશન યુઝર પ્રોફાઇલ (નામ બદલ્યું જેથી accounts સાથે ક્લેશ ન થાય)
+# 2. Organization User Profile (Links new users cleanly without affecting accounts)
 class OrgUserProfile(models.Model):
     GENDER_CHOICES = (
         ('MALE', 'Male'),
@@ -52,19 +53,20 @@ class OrgUserProfile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     
-    # નવો યુઝર સાઇનઅપ કરે ત્યારે આ False રહેશે, એડમિન અપ્રૂવ કરે પછી જ True થાય
+    # False ,      True 
+
     is_approved = models.BooleanField(default=False)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='org_approved_users')
     approved_at = models.DateTimeField(null=True, blank=True)
     
-    # યુઝર હાલ કઈ કંપનીમાં સક્રિય છે (Active Company Session)
+    # Active Company Session for the user
     active_company = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name='active_org_users')
 
     def __str__(self):
         return f"{self.user.username} - {'Approved' if self.is_approved else 'Pending'}"
 
 
-# ૩. કંપની અને યુઝર મેપિંગ (રોલ અને મોડ્યુલ પરમિશન)
+# 3. Company User Mapping (Roles and Module Permissions)
 class UserCompanyAccess(models.Model):
     ROLE_CHOICES = (
         ('SUPER_ADMIN', 'Super Admin (All Companies Access)'),
@@ -80,7 +82,8 @@ class UserCompanyAccess(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='org_user_accesses')
     role = models.CharField(max_length=30, choices=ROLE_CHOICES, default='SALES_USER')
     
-    # ડિટેઇલ મોડ્યુલ પરમિશન (Custom Flags)
+    # (Custom Flags)
+
     can_create_invoice = models.BooleanField(default=True)
     can_approve_invoice = models.BooleanField(default=False)
     can_delete_records = models.BooleanField(default=False)

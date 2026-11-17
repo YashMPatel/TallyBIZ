@@ -28,6 +28,7 @@ class BOMComponent(models.Model):
 class ProductionOrder(models.Model):
     STATUS_CHOICES = [('DRAFT', 'Draft'), ('PENDING', 'Pending Approval'), ('APPROVED', 'Approved'), ('CANCELLED', 'Cancelled')]
     company = models.ForeignKey('accounts.Company', on_delete=models.CASCADE, related_name='production_orders')
+    unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_orders')
     voucher_no = models.CharField(max_length=50)
     posting_date = models.DateField()
     bom = models.ForeignKey(BillOfMaterial, on_delete=models.PROTECT, related_name='production_orders')
@@ -59,3 +60,39 @@ class ProductionConsumption(models.Model):
     actual_qty = models.DecimalField(max_digits=12, decimal_places=3)
     rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+
+class ProductionSalesRequest(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING_MFG', 'Pending Manufacturing Acceptance'),
+        ('ACCEPTED_SPLIT', 'Accepted & MRP Planned'),
+        ('IN_PRODUCTION', 'In Production'),
+        ('COMPLETED', 'Completed & Dispatched'),
+        ('REJECTED', 'Rejected'),
+    )
+    company = models.ForeignKey('accounts.Company', on_delete=models.CASCADE, related_name='prod_sales_requests')
+    from_unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_prod_requests')
+    mfg_unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.CASCADE, related_name='received_prod_requests')
+    request_no = models.CharField(max_length=50)
+    posting_date = models.DateField()
+    customer_name = models.CharField(max_length=150, blank=True, default='')
+    sales_ref = models.CharField(max_length=80, blank=True, default='')
+    finished_item = models.ForeignKey('stock.Item', on_delete=models.PROTECT, related_name='sales_prod_requests')
+    bom = models.ForeignKey(BillOfMaterial, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_prod_requests')
+    requested_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    inhouse_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    outsource_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    producible_now_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    shortfall_fg_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    mrp_snapshot = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='PENDING_MFG')
+    notes = models.TextField(blank=True, default='')
+    created_by = models.CharField(max_length=150, blank=True, default='')
+    accepted_by = models.CharField(max_length=150, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-id']
+
+    def __str__(self):
+        return f"{self.request_no} - {self.finished_item.item_name} ({self.requested_qty})"

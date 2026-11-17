@@ -6,14 +6,16 @@ from .models import Company, OrgUserProfile, UserCompanyAccess
 User = get_user_model()
 
 
-# ૧. કંપની સીરીયલાઈઝર
+# 
+
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = '__all__'
 
 
-# ૨. નવું યુઝર સાઇનઅપ સીરીયલાઈઝર
+# 
+
 class UserSignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -30,7 +32,8 @@ class UserSignupSerializer(serializers.ModelSerializer):
         address = validated_data.pop('address', '')
         password = validated_data.pop('password')
 
-        # યુઝર ઓબ્જેક્ટ બનાવવો (નવો યુઝર બાય ડિફોલ્ટ active પણ is_approved=False રહેશે)
+        # (    active  is_approved=False )
+
         user = User.objects.create(
             username=validated_data['username'],
             email=validated_data.get('email', ''),
@@ -40,7 +43,8 @@ class UserSignupSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
 
-        # સંબંધિત OrgUserProfile બનાવવું (is_approved=False)
+        # OrgUserProfile  (is_approved=False)
+
         OrgUserProfile.objects.create(
             user=user,
             phone=phone,
@@ -52,7 +56,8 @@ class UserSignupSerializer(serializers.ModelSerializer):
         return user
 
 
-# ૩. યુઝર પ્રોફાઇલ વિગતો દર્શાવવા માટે
+# 
+
 class OrgUserProfileSerializer(serializers.ModelSerializer):
     active_company_name = serializers.ReadOnlyField(source='active_company.name')
     active_company_code = serializers.ReadOnlyField(source='active_company.company_code')
@@ -70,7 +75,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_superuser', 'profile']
 
 
-# ૪. પાસવર્ડ બદલવા માટેનું સીરીયલાઈઝર
+# 
+
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True, validators=[validate_password])
@@ -78,11 +84,12 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate_old_password(self, value):
         user = self.context['request'].user
         if not user.check_password(value):
-            raise serializers.ValidationError("જૂનો પાસવર્ડ ખોટો છે.")
+            raise serializers.ValidationError("Invalid company authorization rule or user assignment.")
         return value
 
 
-# ૫. કંપની એક્સેસ અને રોલ્સ સીરીયલાઈઝર
+# 
+
 class UserCompanyAccessSerializer(serializers.ModelSerializer):
     company_name = serializers.ReadOnlyField(source='company.name')
     company_code = serializers.ReadOnlyField(source='company.company_code')
@@ -97,7 +104,8 @@ class UserCompanyAccessSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name() or obj.user.username
 
 
-# ૬. એડમિન માટે યુઝર અપ્રૂવલ સીરીયલાઈઝર
+# 
+
 class AdminUserApprovalSerializer(serializers.Serializer):
     user_id = serializers.IntegerField(required=True)
     is_approved = serializers.BooleanField(required=True)

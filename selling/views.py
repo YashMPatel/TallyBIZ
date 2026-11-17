@@ -18,6 +18,7 @@ from .models import Customer, SalesInvoice, SalesInvoiceItem, CreditNote, Credit
 from .serializers import CustomerSerializer, SalesInvoiceSerializer, CreditNoteSerializer
 from stock.models import Item, StockLedgerEntry
 from accounts.models import GLEntry, PaymentInvoiceAllocation, Company
+from accounts.views import resolve_active_unit
 
 
 def parse_date_safe(val):
@@ -74,8 +75,8 @@ def get_request_company(request):
 
 def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     # Strictly scope deletion by company
-    GLEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
-    StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
+    GLEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
+    StockLedgerEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
     invoice.items.all().delete()
 
     affected_items = set()
@@ -250,16 +251,23 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
                 qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
             else:
                 qs = qs.filter(company=comp)
+        u = resolve_active_unit(self.request, comp)
+        if u:
+            qs = qs.filter(unit=u)
         return qs
 
     def create(self, request, *args, **kwargs):
         comp = get_request_company(request)
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
-        inv_no = data.get('invoice_number') or f"INV-{SalesInvoice.objects.filter(company=comp).count() + 1:04d}"
-        if SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
-            count = SalesInvoice.objects.filter(company=comp).count() + 1
+        u_obj = resolve_active_unit(request, comp, default_unit_type='TRADING')
+        inv_no = (data.get('invoice_number') or '').strip()
+        if not inv_no or SalesInvoice.objects.filter(company=comp, unit=u_obj, invoice_number=inv_no).exists():
+            count = SalesInvoice.objects.filter(company=comp, unit=u_obj).count() + 1
             inv_no = f"INV-{count:04d}"
+            while SalesInvoice.objects.filter(company=comp, unit=u_obj, invoice_number=inv_no).exists():
+                count += 1
+                inv_no = f"INV-{count:04d}"
 
         cust_val = data.get('customer') or data.get('customer_id')
         cust_obj = None
@@ -290,6 +298,7 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
         with transaction.atomic():
             invoice = SalesInvoice.objects.create(
                 company=comp,
+                unit=u_obj,
                 customer=cust_obj,
                 customer_name=customer_name,
                 invoice_number=inv_no,

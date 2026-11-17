@@ -25,6 +25,7 @@ export interface Supplier {
 }
 
 export interface Item {
+  hsn_code?: string;
   id?: number;
   item_code: string;
   item_name: string;
@@ -57,6 +58,8 @@ export interface SalesInvoiceItem {
 }
 
 export interface SalesInvoice {
+  due_date?: string;
+  tax_rate?: string | number;
   id?: number;
   invoice_number: string;
   customer?: number;

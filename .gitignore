@@ -7,3 +7,5 @@ __pycache__/
 staticfiles/
 deploy/backups/
 TallyBIZ_Local_Backup.json
+
+*.bak*

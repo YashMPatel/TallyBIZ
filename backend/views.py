@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
@@ -43,14 +44,21 @@ class UniversalLoginView(APIView):
 
         # Determine Role
         role = 'ADMIN' if (auth_user.is_superuser or auth_user.is_staff) else 'STAFF'
+        assigned_unit_id = None
+        assigned_unit_name = 'All Divisions'
         try:
             profile = getattr(auth_user, 'profile', None)
-            if profile and getattr(profile, 'role', None):
-                role = profile.role
+            if profile:
+                if getattr(profile, 'role', None):
+                    role = profile.role
+                if not auth_user.is_superuser and getattr(profile, 'assigned_unit_id', None):
+                    assigned_unit_id = profile.assigned_unit_id
+                    assigned_unit_name = profile.assigned_unit.name if profile.assigned_unit else ''
         except Exception:
             pass
 
-        token_str = f"session_token_{auth_user.id}_{auth_user.username}"
+        refresh = RefreshToken.for_user(auth_user)
+        access_token = str(refresh.access_token)
 
         user_data = {
             'id': auth_user.id,
@@ -61,12 +69,15 @@ class UniversalLoginView(APIView):
             'role': role,
             'is_superuser': auth_user.is_superuser,
             'is_staff': auth_user.is_staff,
+            'assigned_unit_id': assigned_unit_id,
+            'assigned_unit_name': assigned_unit_name,
+            'can_view_all_units': assigned_unit_id is None,
         }
 
         return Response({
-            'token': token_str,
-            'access': token_str,
-            'refresh': token_str,
+            'token': access_token,
+            'access': access_token,
+            'refresh': str(refresh),
             'user': user_data,
             'message': 'Login successful'
         }, status=status.HTTP_200_OK)
@@ -77,12 +88,17 @@ class RBACUserManagementView(APIView):
     authentication_classes = []
 
     def get(self, request, *args, **kwargs):
-        pending = UserProfile.objects.filter(is_approved=False).select_related('user', 'company')
+        include_all = request.query_params.get('include_all') == '1'
+        qs = UserProfile.objects.select_related('user', 'company', 'assigned_unit').order_by('is_approved', 'id')
+        if not include_all:
+            qs = qs.filter(is_approved=False)
         users_list = []
-        for p in pending:
+        for p in qs:
             u = p.user
             comp_id = p.company.id if p.company else None
             comp_name = p.company.name if p.company else 'Unassigned'
+            unit_id = p.assigned_unit.id if p.assigned_unit else None
+            unit_name = p.assigned_unit.name if p.assigned_unit else 'All Divisions'
             user_obj = {
                 'id': u.id,
                 'username': u.username,
@@ -94,8 +110,8 @@ class RBACUserManagementView(APIView):
                 'id': p.id,
                 'profile_id': p.id,
                 'user_id': u.id,
-                'user': user_obj,            # for nested access: item.user.username
-                'username': u.username,       # for flat access: item.username
+                'user': user_obj,
+                'username': u.username,
                 'email': u.email or '',
                 'first_name': u.first_name or u.username,
                 'last_name': u.last_name or '',
@@ -103,14 +119,17 @@ class RBACUserManagementView(APIView):
                 'company': comp_id,
                 'company_id': comp_id,
                 'company_name': comp_name,
+                'assigned_unit_id': unit_id,
+                'assigned_unit_name': unit_name,
+                'can_view_all_units': unit_id is None,
                 'is_approved': p.is_approved,
+                'is_superuser': u.is_superuser,
                 'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else '',
             })
-
-        # Return raw list by default
         return Response(users_list, status=status.HTTP_200_OK)
 
     def post(self, request, pk=None, *args, **kwargs):
+        from accounts.models import BusinessUnit
         data = request.data or {}
         profile_id = pk or data.get('profile_id') or data.get('id') or data.get('user_id')
         profile = UserProfile.objects.filter(id=profile_id).first() or UserProfile.objects.filter(user_id=profile_id).first()
@@ -119,18 +138,27 @@ class RBACUserManagementView(APIView):
             return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
         action = request.path.strip('/').split('/')[-1]
-        if action in ['approve', 'accept'] or data.get('action') == 'approve' or data.get('is_approved') is True:
-            profile.is_approved = True
+        if action in ['approve', 'accept'] or data.get('action') in ['approve', 'update_access'] or data.get('is_approved') is True:
+            if data.get('action') != 'update_access':
+                profile.is_approved = True
             if data.get('role'):
                 profile.role = data.get('role')
             if data.get('company') or data.get('company_id'):
                 cid = data.get('company') or data.get('company_id')
                 c = Company.objects.filter(id=cid).first()
-                if c: profile.company = c
+                if c:
+                    profile.company = c
+            if 'assigned_unit_id' in data:
+                au = data.get('assigned_unit_id')
+                if not au or str(au) in ('all', 'ALL', 'null', 'None', ''):
+                    profile.assigned_unit = None
+                else:
+                    bu = BusinessUnit.objects.filter(id=int(au)).first()
+                    profile.assigned_unit = bu
             profile.save()
             profile.user.is_active = True
             profile.user.save()
-            return Response({'message': f'User {profile.user.username} approved successfully!'}, status=status.HTTP_200_OK)
+            return Response({'message': f'User {profile.user.username} updated successfully!'}, status=status.HTTP_200_OK)
 
         if action in ['reject', 'delete'] or data.get('action') == 'reject':
             u = profile.user

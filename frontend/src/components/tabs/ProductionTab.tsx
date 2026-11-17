@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Factory, Plus, CheckCircle, XCircle, AlertTriangle, Layers, Play, Trash2, RefreshCw, Eye, Edit2, Printer } from 'lucide-react';
+import { Factory, Plus, CheckCircle, XCircle, AlertTriangle, Layers, Trash2, RefreshCw, Eye, Edit2 } from 'lucide-react';
 import { API_BASE, getErrorMessage } from '../../utils/erpHelpers';
 
 interface ProductionTabProps {
@@ -19,7 +19,75 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const roleUpper = String(user?.role || '').trim().toUpperCase().replace(/\s+/g, '_');
   const canApprove = roleUpper === 'ADMIN' || roleUpper === 'MANAGER' || Boolean(user?.is_superuser || user?.is_staff);
 
-  const [subTab, setSubTab] = useState<'orders' | 'boms'>('orders');
+  const [subTab, setSubTab] = useState<'orders' | 'boms' | 'requests'>('orders');
+  const [salesRequests, setSalesRequests] = useState<any[]>([]);
+  const [planReqTarget, setPlanReqTarget] = useState<any | null>(null);
+  const [inhouseQtyInput, setInhouseQtyInput] = useState<string>('0');
+  const [outsourceQtyInput, setOutsourceQtyInput] = useState<string>('0');
+  const [planBusy, setPlanBusy] = useState(false);
+  const [schedModalReq, setSchedModalReq] = useState<any | null>(null);
+  const [schedRows, setSchedRows] = useState<Array<{ id?: string; date: string; qty: string; status?: string; dispatch_no?: string; invoiced?: boolean; invoice_no?: string }>>([]);
+  const [reqRmPurchase, setReqRmPurchase] = useState<boolean>(true);
+  const [schedBusy, setSchedBusy] = useState<boolean>(false);
+  const [dispatchingBatchId, setDispatchingBatchId] = useState<string | null>(null);
+
+  const openScheduleModal = (req: any) => {
+    setSchedModalReq(req);
+    const existing = req.delivery_schedule || [];
+    if (existing.length > 0) {
+      setSchedRows(existing.map((x: any) => ({ ...x, qty: String(x.qty) })));
+    } else {
+      const today = new Date().toISOString().split('T')[0];
+      setSchedRows([{ date: today, qty: String(req.requested_qty) }]);
+    }
+    setReqRmPurchase(true);
+  };
+
+  const handleSaveSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!schedModalReq) return;
+    setSchedBusy(true);
+    setErrorMsg('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${schedModalReq.id}/schedule/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Username': user?.username || 'Manufacturing Manager' },
+        body: JSON.stringify({ schedule: schedRows, request_rm_purchase: reqRmPurchase }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save schedule');
+      setSchedModalReq(null);
+      setSuccessMsg(`Date-wise delivery schedule submitted for ${schedModalReq.sales_ref || schedModalReq.request_no}! Sales can now see it live.`);
+      if (onRefreshData) onRefreshData();
+      window.location.reload();
+    } catch (err) {
+      setErrorMsg(getErrorMessage(err));
+    } finally {
+      setSchedBusy(false);
+    }
+  };
+
+  const handleDispatchBatch = async (reqId: number, batchId: string) => {
+    setDispatchingBatchId(batchId);
+    setErrorMsg('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${reqId}/dispatch/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: batchId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to dispatch batch');
+      setSuccessMsg(`Dispatched ${data.dispatched_qty} units (Challan ${data.dispatch_no}) to Sales! Sales can now generate 1-Click Invoice.`);
+      window.location.reload();
+    } catch (err) {
+      setErrorMsg(getErrorMessage(err));
+    } finally {
+      setDispatchingBatchId(null);
+    }
+  };
   const [boms, setBoms] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
@@ -71,9 +139,10 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     if (!activeCompany?.id) return;
     setLoading(true);
     try {
-      const [bomRes, ordRes] = await Promise.all([
+      const [bomRes, ordRes, reqRes] = await Promise.all([
         fetch(`${API_BASE}/manufacturing/boms/?company_id=${activeCompany.id}`),
         fetch(`${API_BASE}/manufacturing/orders/?company_id=${activeCompany.id}`),
+        fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${activeCompany.id}`),
       ]);
       if (bomRes.ok) {
         const bData = await bomRes.json();
@@ -83,6 +152,10 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         const oData = await ordRes.json();
         setOrders(oData.orders || []);
         setSummary(oData.summary || {});
+      }
+      if (reqRes.ok) {
+        const rData = await reqRes.json();
+        setSalesRequests(Array.isArray(rData) ? rData : []);
       }
     } catch (err) {
       setErrorMsg(getErrorMessage(err));
@@ -408,6 +481,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const bomStdUnitCost = Number(selectedBomObj?.unit_cost || 0);
   const hasAbnormalCostSpike = bomStdUnitCost > 0 && estUnitCost > bomStdUnitCost * 1.5;
 
+  void viewOrder; void openEditBomModal; void handleDeleteBom;
   return (
     <div style={{ padding: '4px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
@@ -503,6 +577,21 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
           }}
         >
           Bill of Materials / Recipes ({boms.length})
+        </button>
+        <button
+          onClick={() => setSubTab('requests')}
+          style={{
+            padding: '7px 14px',
+            borderRadius: '8px',
+            border: 'none',
+            background: subTab === 'requests' ? '#7c3aed' : '#f3e8ff',
+            color: subTab === 'requests' ? '#fff' : '#6b21a8',
+            fontWeight: 700,
+            fontSize: '13px',
+            cursor: 'pointer',
+          }}
+        >
+          Incoming Sales Requests ({salesRequests.length}) {salesRequests.filter((r) => r.status === 'PENDING_MFG').length > 0 ? `• ${salesRequests.filter((r) => r.status === 'PENDING_MFG').length} New` : ''}
         </button>
       </div>
 
@@ -608,264 +697,171 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             </tbody>
           </table>
         </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-          {boms.length === 0 ? (
-            <div style={{ background: '#fff', padding: '32px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center', color: '#94a3b8', gridColumn: '1 / -1' }}>
-              No BOM recipes configured yet. Click "+ New BOM Recipe" to define raw materials for your products.
+      ) : subTab === 'requests' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {salesRequests.length === 0 ? (
+            <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '28px', textAlign: 'center', color: '#64748b' }}>
+              No incoming sales orders yet. Orders submitted from Sales appear here automatically.
             </div>
           ) : (
-            boms.map((b) => (
-              <div key={b.id} style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+            salesRequests.map((r: any) => {
+              const schedule: any[] = r.delivery_schedule || [];
+              const raw = r.raw_material || {};
+              return (
+                <div key={r.id} style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#0284c7', background: '#e0f2fe', padding: '2px 8px', borderRadius: '6px' }}>
-                        {b.bom_code}
-                      </span>
-                      <h3 style={{ margin: '6px 0 2px', fontSize: '16px', color: '#0f172a' }}>{b.name}</h3>
-                      <div style={{ fontSize: '12px', color: '#64748b' }}>
-                        Produces: <strong>{b.output_qty} {b.finished_item_unit}</strong> of {b.finished_item_name}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 800, color: '#7c3aed', fontSize: '15px' }}>{r.sales_ref || r.request_no}</span>
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>({r.request_no})</span>
+                        <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '14px' }}>• Party: {r.customer_name || 'Customer'}</span>
+                        <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: r.status === 'COMPLETED' ? '#dcfce7' : r.status === 'PENDING_MFG' ? '#fef3c7' : '#e0f2fe', color: r.status === 'COMPLETED' ? '#166534' : r.status === 'PENDING_MFG' ? '#92400e' : '#0369a1' }}>
+                          {r.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', marginTop: '6px' }}>
+                        {r.finished_item_name} ({r.finished_item_code}) — Ordered: {r.requested_qty} {r.finished_unit || 'Nos'}
+                        {r.finished_hsn ? <span style={{ marginLeft: '8px', fontSize: '12px', color: '#0369a1' }}>HSN: {r.finished_hsn}</span> : null}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
+                        Order Date: {r.posting_date}
+                        {r.selling_rate > 0 ? ` • Sell Rate: ${symbol}${r.selling_rate}` : ''}
+                        {raw.raw_item_name ? ` • Raw Material: ${raw.raw_qty} ${raw.raw_unit} ${raw.raw_item_name} (@ ${symbol}${raw.raw_purchase_rate})` : ''}
+                        {r.notes ? ` • Notes: ${r.notes}` : ''}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '4px' }}>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button
-                        onClick={() => openEditBomModal(b)}
-                        title="Edit BOM"
-                        style={{ background: 'transparent', border: 'none', color: '#0284c7', cursor: 'pointer', padding: '4px' }}
+                        type="button"
+                        onClick={() => openScheduleModal(r)}
+                        style={{ background: '#7c3aed', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
                       >
-                        <Edit2 size={15} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteBom(b.id)}
-                        title="Delete BOM"
-                        style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                      >
-                        <Trash2 size={15} />
+                        {schedule.length > 0 ? 'Edit Date-Wise Schedule' : '+ Submit Date-Wise Delivery Schedule'}
                       </button>
                     </div>
                   </div>
 
-                  <div style={{ marginTop: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>RAW MATERIALS:</div>
-                    {(b.components || []).map((c: any) => (
-                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '3px 0', color: '#334155' }}>
-                        <span>
-                          {c.raw_item_name} ({c.qty_required} {c.unit}{Number(c.wastage_percent) > 0 ? ` + ${c.wastage_percent}% loss` : ''})
-                        </span>
-                        <span style={{ color: Number(c.available_stock) >= Number(c.effective_qty) ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
-                          Stock: {c.available_stock} {c.unit}
-                        </span>
+                  {schedule.length > 0 && (
+                    <div style={{ marginTop: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '12px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '8px', textTransform: 'uppercase' }}>
+                        Date-Wise Production &amp; Dispatch Plan (Visible to Sales)
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: '12px' }}>
-                    <div style={{ color: '#64748b' }}>
-                      Est. Unit Cost: <strong style={{ color: '#0f172a' }}>{symbol} {Number(b.unit_cost).toFixed(2)}</strong>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {schedule.map((b: any) => (
+                          <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', background: '#fff', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              <strong>Delivery Date: {b.date}</strong> — Batch Qty: <strong>{b.qty} {r.finished_unit || 'Nos'}</strong>
+                              {b.dispatch_no ? <span style={{ marginLeft: '10px', fontSize: '12px', fontWeight: 700, color: '#15803d' }}>Dispatched ({b.dispatch_no})</span> : null}
+                            </div>
+                            <div>
+                              {b.status === 'DISPATCHED' ? (
+                                <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: '#dcfce7', color: '#166534' }}>
+                                  Dispatched to Sales {b.invoiced ? `• Invoiced (${b.invoice_no})` : '• Ready for Sales Invoice'}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={dispatchingBatchId === b.id}
+                                  onClick={() => handleDispatchBatch(r.id, b.id)}
+                                  style={{ background: '#059669', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                                >
+                                  {dispatchingBatchId === b.id ? 'Dispatching...' : `Dispatch ${b.qty} ${r.finished_unit || 'Nos'} to Sales`}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ color: Number(b.max_producible_qty) > 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
-                      Max Producible: {b.max_producible_qty} {b.finished_item_unit}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => openOrderForBom(b)}
-                    style={{ padding: '7px 12px', borderRadius: '8px', border: 'none', background: '#0284c7', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
-                  >
-                    <Play size={13} /> Produce
-                  </button>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
-      )}
+      ) : null}
 
-      {/* VIEW VOUCHER MODAL (STOCK + GENERAL LEDGER PROOF) */}
-      {viewOrder && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '820px', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #e2e8f0', paddingBottom: '14px', marginBottom: '16px' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <h2 style={{ margin: 0, fontSize: '20px', color: '#0f172a' }}>Manufacturing Voucher: {viewOrder.voucher_no}</h2>
-                  <span
-                    style={{
-                      padding: '3px 10px',
-                      borderRadius: '999px',
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      background: viewOrder.status === 'APPROVED' ? '#dcfce7' : viewOrder.status === 'PENDING' ? '#fef3c7' : '#fee2e2',
-                      color: viewOrder.status === 'APPROVED' ? '#15803d' : viewOrder.status === 'PENDING' ? '#b45309' : '#b91c1c',
-                    }}
-                  >
-                    {viewOrder.status}
-                  </span>
+      {schedModalReq && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: '520px', maxWidth: '94vw', padding: '22px' }}>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '17px' }}>
+              Date-Wise Delivery Schedule — {schedModalReq.sales_ref || schedModalReq.request_no}
+            </h3>
+            <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#64748b' }}>
+              Party: <strong>{schedModalReq.customer_name || 'Customer'}</strong> | Ordered: <strong>{schedModalReq.requested_qty} {schedModalReq.finished_unit} {schedModalReq.finished_item_name}</strong>
+            </p>
+            <form onSubmit={handleSaveSchedule} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {schedRows.map((row, idx) => (
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr auto', gap: '8px', alignItems: 'center' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Dispatch Date #{idx + 1}</label>
+                    <input
+                      type="date"
+                      required
+                      disabled={row.status === 'DISPATCHED'}
+                      value={row.date}
+                      onChange={(e) => {
+                        const copy = [...schedRows];
+                        copy[idx] = { ...copy[idx], date: e.target.value };
+                        setSchedRows(copy);
+                      }}
+                      style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Qty ({schedModalReq.finished_unit})</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      disabled={row.status === 'DISPATCHED'}
+                      value={row.qty}
+                      onChange={(e) => {
+                        const copy = [...schedRows];
+                        copy[idx] = { ...copy[idx], qty: e.target.value };
+                        setSchedRows(copy);
+                      }}
+                      style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div style={{ paddingTop: '16px' }}>
+                    {schedRows.length > 1 && row.status !== 'DISPATCHED' && (
+                      <button
+                        type="button"
+                        onClick={() => setSchedRows(schedRows.filter((_, i) => i !== idx))}
+                        style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-                  Date: <strong>{viewOrder.posting_date}</strong> • BOM: <strong>{viewOrder.bom_code} ({viewOrder.bom_name})</strong> • Created by: {viewOrder.created_by || 'Admin'}
-                  {viewOrder.approved_by ? ` • Approved by: ${viewOrder.approved_by}` : ''}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => window.print()}
-                  style={{ padding: '6px 12px', borderRadius: '7px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#0f172a', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
-                >
-                  <Printer size={14} /> Print
-                </button>
-                <button onClick={() => setViewOrder(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}>
-                  <XCircle size={22} />
-                </button>
-              </div>
-            </div>
+              ))}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '12px' }}>
-              <div>
-                <div style={{ color: '#64748b' }}>Finished Product</div>
-                <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '14px' }}>{viewOrder.finished_item_name}</div>
-                <div style={{ color: '#0284c7', fontWeight: 600 }}>Qty: {viewOrder.actual_qty} {viewOrder.finished_item_unit}</div>
-              </div>
-              <div>
-                <div style={{ color: '#64748b' }}>Raw Material Cost</div>
-                <div style={{ fontWeight: 700, fontSize: '14px' }}>{symbol} {Number(viewOrder.total_raw_cost).toFixed(2)}</div>
-              </div>
-              <div>
-                <div style={{ color: '#64748b' }}>Labour + Overheads</div>
-                <div style={{ fontWeight: 700, fontSize: '14px' }}>
-                  {symbol} {(Number(viewOrder.labor_cost) + Number(viewOrder.overhead_cost)).toFixed(2)}
-                </div>
-              </div>
-              <div>
-                <div style={{ color: '#64748b' }}>Scrap Recovery</div>
-                <div style={{ fontWeight: 700, fontSize: '14px', color: '#16a34a' }}>
-                  - {symbol} {Number(viewOrder.scrap_value).toFixed(2)}
-                </div>
-                {viewOrder.scrap_item_name && <div style={{ fontSize: '11px', color: '#64748b' }}>{viewOrder.scrap_item_name} ({viewOrder.scrap_qty})</div>}
-              </div>
-              <div>
-                <div style={{ color: '#64748b' }}>Net Cost / Unit Rate</div>
-                <div style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a' }}>{symbol} {Number(viewOrder.net_production_cost).toFixed(2)}</div>
-                <div style={{ color: '#0284c7', fontWeight: 700 }}>@ {symbol} {Number(viewOrder.unit_cost).toFixed(2)} / {viewOrder.finished_item_unit}</div>
-              </div>
-            </div>
-
-            <h4 style={{ margin: '0 0 8px', fontSize: '13px', color: '#0f172a' }}>1. Raw Materials Consumed</h4>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '16px', border: '1px solid #e2e8f0' }}>
-              <thead>
-                <tr style={{ background: '#f1f5f9', textAlign: 'left', color: '#475569' }}>
-                  <th style={{ padding: '8px 10px' }}>Item</th>
-                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Planned Qty</th>
-                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Actual Consumed</th>
-                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Rate ({symbol})</th>
-                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Amount ({symbol})</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(viewOrder.consumptions || []).map((c: any) => (
-                  <tr key={c.id} style={{ borderTop: '1px solid #e2e8f0' }}>
-                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{c.raw_item_name}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{c.planned_qty} {c.unit}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{c.actual_qty} {c.unit}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{Number(c.rate).toFixed(2)}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{Number(c.amount).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <h4 style={{ margin: '0 0 8px', fontSize: '13px', color: '#0f172a' }}>2. Stock Movement Voucher Entries ({(viewOrder.stock_entries || []).length})</h4>
-            {(viewOrder.stock_entries || []).length === 0 ? (
-              <div style={{ padding: '10px 12px', background: '#fefce8', border: '1px solid #fef08a', borderRadius: '8px', fontSize: '12px', color: '#854d0e', marginBottom: '16px' }}>
-                Order is currently <strong>{viewOrder.status}</strong>. Stock movement vouchers will be generated automatically once approved.
-              </div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '16px', border: '1px solid #e2e8f0' }}>
-                <thead>
-                  <tr style={{ background: '#f1f5f9', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Movement Type</th>
-                    <th style={{ padding: '8px 10px' }}>Item</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>In / Out Qty</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Valuation Rate</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Closing Stock</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewOrder.stock_entries.map((s: any) => (
-                    <tr key={s.id} style={{ borderTop: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{s.voucher_type}</td>
-                      <td style={{ padding: '8px 10px' }}>{s.item_name}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: Number(s.actual_qty) >= 0 ? '#16a34a' : '#dc2626' }}>
-                        {Number(s.actual_qty) >= 0 ? `+${s.actual_qty}` : s.actual_qty} {s.unit}
-                      </td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{symbol} {Number(s.valuation_rate).toFixed(2)}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{s.qty_after_transaction} {s.unit}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            <h4 style={{ margin: '0 0 8px', fontSize: '13px', color: '#0f172a' }}>3. General Ledger Accounting Voucher ({(viewOrder.gl_entries || []).length})</h4>
-            {(viewOrder.gl_entries || []).length === 0 ? (
-              <div style={{ padding: '10px 12px', background: '#fefce8', border: '1px solid #fef08a', borderRadius: '8px', fontSize: '12px', color: '#854d0e', marginBottom: '16px' }}>
-                Accounting double-entry will post to General Ledger upon Approval.
-              </div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '16px', border: '1px solid #e2e8f0' }}>
-                <thead>
-                  <tr style={{ background: '#f1f5f9', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Ledger Account</th>
-                    <th style={{ padding: '8px 10px' }}>Against</th>
-                    <th style={{ padding: '8px 10px' }}>Narration</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Debit ({symbol})</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Credit ({symbol})</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewOrder.gl_entries.map((g: any) => (
-                    <tr key={g.id} style={{ borderTop: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 700, color: '#0f172a' }}>{g.account}</td>
-                      <td style={{ padding: '8px 10px', color: '#64748b' }}>{g.against}</td>
-                      <td style={{ padding: '8px 10px', color: '#64748b' }}>{g.remarks}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: Number(g.debit) > 0 ? '#0f172a' : '#94a3b8' }}>
-                        {Number(g.debit) > 0 ? Number(g.debit).toFixed(2) : '-'}
-                      </td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: Number(g.credit) > 0 ? '#0f172a' : '#94a3b8' }}>
-                        {Number(g.credit) > 0 ? Number(g.credit).toFixed(2) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
-              {viewOrder.status !== 'CANCELLED' && (
-                <button
-                  onClick={() => handleEditOrder(viewOrder)}
-                  style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #0284c7', background: '#f0f9ff', color: '#0369a1', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                >
-                  {viewOrder.status === 'APPROVED' ? 'Reopen & Edit Voucher' : 'Edit Order'}
-                </button>
-              )}
-              {viewOrder.status === 'PENDING' && canApprove && (
-                <button
-                  onClick={() => handleApproveOrder(viewOrder.id)}
-                  style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                >
-                  Approve &amp; Post Voucher
-                </button>
-              )}
               <button
-                onClick={() => setViewOrder(null)}
-                style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
+                type="button"
+                onClick={() => setSchedRows([...schedRows, { date: new Date().toISOString().split('T')[0], qty: '' }])}
+                style={{ alignSelf: 'flex-start', padding: '5px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
-                Close
+                + Add Another Date Split
               </button>
-            </div>
+
+              {schedModalReq.raw_material?.raw_item_name && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#334155', background: '#fefce8', padding: '8px 10px', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                  <input type="checkbox" checked={reqRmPurchase} onChange={(e) => setReqRmPurchase(e.target.checked)} />
+                  Send Raw Material Purchase Request ONLY if stock is short in Manufacturing
+                </label>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={() => setSchedModalReq(null)} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+                <button type="submit" disabled={schedBusy} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+                  {schedBusy ? 'Saving...' : 'Submit Date-Wise Schedule to Sales'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1293,6 +1289,89 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     Post &amp; Approve Production
                   </button>
                 )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {planReqTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: '480px', maxWidth: '94vw', padding: '22px' }}>
+            <h3 style={{ margin: '0 0 6px 0', fontSize: '17px' }}>Accept &amp; Split Capacity — {planReqTarget.request_no}</h3>
+            <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#475569' }}>
+              Total Requested: <strong>{planReqTarget.requested_qty} {planReqTarget.finished_item_name}</strong>. Decide how many units to make In-House vs Outsource (direct purchase), and Smart MRP will check Raw Material stock automatically.
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setPlanBusy(true);
+                setErrorMsg('');
+                try {
+                  const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${planReqTarget.id}/accept-plan/?company_id=${activeCompany.id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      inhouse_qty: inhouseQtyInput,
+                      outsource_qty: outsourceQtyInput,
+                      accepted_by: user?.username || 'Manufacturing Manager',
+                    }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || 'Smart MRP failed');
+                  setPlanReqTarget(null);
+                  setSuccessMsg(
+                    `Smart MRP Planned! Batch #1 Production: ${data.producible_now_qty} units (${data.created_mfg_vno || 'None'})` +
+                    (data.rm_purchase_req_no ? ` | RM Purchase Request: ${data.rm_purchase_req_no}` : '') +
+                    (data.outsource_purchase_req_no ? ` | Outsource Purchase Request: ${data.outsource_purchase_req_no}` : '')
+                  );
+                  await fetchManufacturing();
+                  if (onRefreshData) onRefreshData();
+                } catch (err) {
+                  setErrorMsg(getErrorMessage(err));
+                } finally {
+                  setPlanBusy(false);
+                }
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+            >
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, color: '#15803d' }}>In-House Production Qty *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={planReqTarget.requested_qty}
+                    required
+                    value={inhouseQtyInput}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/^0+(?=\d)/, '');
+                      setInhouseQtyInput(val);
+                      const rem = Math.max(0, Number(planReqTarget.requested_qty) - Number(val || 0));
+                      setOutsourceQtyInput(String(rem));
+                    }}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, color: '#1d4ed8' }}>Outsource / Direct Buy Qty *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={outsourceQtyInput}
+                    onChange={(e) => setOutsourceQtyInput(e.target.value.replace(/^0+(?=\d)/, ''))}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={() => setPlanReqTarget(null)} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+                <button type="submit" disabled={planBusy} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+                  {planBusy ? 'Running MRP...' : 'Confirm & Generate MRP'}
+                </button>
               </div>
             </form>
           </div>

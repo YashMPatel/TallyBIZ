@@ -2,6 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { X, Printer, Download } from 'lucide-react';
 import type { SalesInvoice, Customer, Item } from '../types/erp';
 import html2pdf from 'html2pdf.js';
+import {
+  type CompanyBrandingData,
+  getInitialCompanyBranding,
+  fetchFreshCompanyBranding,
+  getCompanyMonogram,
+  generateUpiQrDataUrl,
+  formatAmountInWords,
+} from '../utils/invoiceBranding';
 
 interface InvoicePrintModalProps {
   invoice: SalesInvoice | null;
@@ -10,6 +18,14 @@ interface InvoicePrintModalProps {
   company?: any;
   onClose: () => void;
 }
+
+type CopyMode = 'ORIGINAL' | 'DUPLICATE' | 'TRIPLICATE' | 'ALL';
+
+const COPY_LABELS: Record<Exclude<CopyMode, 'ALL'>, string> = {
+  ORIGINAL: '(Original for Recipient)',
+  DUPLICATE: '(Duplicate for Transporter)',
+  TRIPLICATE: '(Triplicate for Supplier)',
+};
 
 export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   invoice,
@@ -21,16 +37,43 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   const [isProforma, setIsProforma] = useState<boolean>(
     invoice ? invoice.status !== 'Approved' : false
   );
+  const [copyMode, setCopyMode] = useState<CopyMode>('ORIGINAL');
+
+  const [branding, setBranding] = useState<CompanyBrandingData>(() =>
+    getInitialCompanyBranding(company)
+  );
+  const [upiQrUrl, setUpiQrUrl] = useState<string>('');
+
+  useEffect(() => {
+    setBranding(getInitialCompanyBranding(company));
+    fetchFreshCompanyBranding(company).then(setBranding);
+  }, [company, invoice?.id]);
+
+  useEffect(() => {
+    if (!invoice || !branding.upi_id) {
+      setUpiQrUrl('');
+      return;
+    }
+    const amt = parseFloat(invoice.grand_total.toString()) || 0;
+    const docNo = isProforma
+      ? invoice.invoice_number.replace(/^INV-/i, 'PI-')
+      : invoice.invoice_number;
+    generateUpiQrDataUrl(branding.upi_id, branding.name, amt, docNo).then(setUpiQrUrl);
+  }, [branding.upi_id, branding.name, invoice, isProforma]);
 
   useEffect(() => {
     if (invoice) {
       setIsProforma(invoice.status !== 'Approved');
+      setCopyMode('ORIGINAL');
     }
   }, [invoice]);
 
   const formattedParty = (invoice?.customer_name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
   const docPrefix = isProforma ? 'Proforma_Invoice' : 'Invoice';
-  const targetFileName = invoice ? `${docPrefix}_${invoice.invoice_number}_${formattedParty}` : '';
+  const copySuffix = !isProforma && copyMode !== 'ORIGINAL' ? `_${copyMode}` : '';
+  const targetFileName = invoice
+    ? `${docPrefix}_${invoice.invoice_number}_${formattedParty}${copySuffix}`
+    : '';
 
   useEffect(() => {
     const originalTitle = document.title;
@@ -47,15 +90,16 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   };
 
   const handleDownloadPDF = () => {
-    const element = document.getElementById('printable-invoice');
+    const element = document.getElementById('printable-invoice-wrapper');
     if (!element) return;
 
     const opt: any = {
-      margin: [10, 10, 10, 10],
-      filename: `${docPrefix}_${invoice.invoice_number}.pdf`,
+      margin: [8, 8, 8, 8],
+      filename: `${docPrefix}_${invoice.invoice_number}${copySuffix}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
     };
 
     (html2pdf as any)().set(opt).from(element).save();
@@ -66,22 +110,543 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   const grandTotal = parseFloat(invoice.grand_total.toString()) || 0;
   const halfTax = taxTotal / 2;
 
-  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
+  const sym =
+    company?.symbol ||
+    company?.currency_symbol ||
+    (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
 
-  const roundOff = (invoice as any).round_off !== undefined && (invoice as any).round_off !== null
-    ? parseFloat((invoice as any).round_off.toString()) || 0
-    : parseFloat((grandTotal - (netTotal + taxTotal)).toFixed(2));
+  const roundOff =
+    (invoice as any).round_off !== undefined && (invoice as any).round_off !== null
+      ? parseFloat((invoice as any).round_off.toString()) || 0
+      : parseFloat((grandTotal - (netTotal + taxTotal)).toFixed(2));
 
-  const companyStateCode = company?.gstin ? company.gstin.substring(0, 2) : '24';
+  const companyStateCode = branding.gstin ? branding.gstin.substring(0, 2) : '24';
   const isInterState = customer?.gstin && !customer.gstin.startsWith(companyStateCode);
 
-  const customerGstCategory = customer?.gst_category 
-    ? customer.gst_category 
-    : (customer?.gstin && customer.gstin.trim() !== '' ? 'Registered Regular' : 'Unregistered');
+  const customerGstCategory = customer?.gst_category
+    ? customer.gst_category
+    : customer?.gstin && customer.gstin.trim() !== ''
+    ? 'Registered Regular'
+    : 'Unregistered';
 
   const displayDocNo = isProforma
     ? invoice.invoice_number.replace(/^INV-/i, 'PI-')
     : invoice.invoice_number;
+
+  const invoiceItems = invoice.items || [];
+
+  const copiesToRender: Exclude<CopyMode, 'ALL'>[] = isProforma
+    ? ['ORIGINAL']
+    : copyMode === 'ALL'
+    ? ['ORIGINAL', 'DUPLICATE', 'TRIPLICATE']
+    : [copyMode];
+
+  const renderSingleInvoiceSheet = (
+    copyKey: Exclude<CopyMode, 'ALL'>,
+    sheetIndex: number,
+    totalSheets: number
+  ) => {
+    const isLastSheet = sheetIndex === totalSheets - 1;
+
+    return (
+      <div
+        key={copyKey}
+        className="invoice-sheet"
+        style={{
+          padding: '20px 26px',
+          fontFamily: 'Arial, sans-serif',
+          color: '#0f172a',
+          boxSizing: 'border-box',
+          width: '100%',
+          minHeight: '250mm',
+          background: '#fff',
+          fontSize: '12px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          boxShadow: '0 4px 16px rgba(15, 23, 42, 0.08)',
+          marginBottom: !isLastSheet ? '20px' : '0',
+          pageBreakAfter: !isLastSheet ? 'always' : 'auto',
+          breakAfter: !isLastSheet ? 'page' : 'auto',
+        }}
+      >
+        {/* TOP SECTION: HEADER + CUSTOMER + CLEAN ITEMS TABLE */}
+        <div>
+          {/* 1. DYNAMIC COMPANY HEADER */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              borderBottom: '2px solid #0284c7',
+              paddingBottom: '12px',
+              marginBottom: '12px',
+              gap: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', maxWidth: '66%' }}>
+              {branding.logo_data_url ? (
+                <img
+                  src={branding.logo_data_url}
+                  alt={branding.name}
+                  style={{
+                    width: '54px',
+                    height: '54px',
+                    objectFit: 'contain',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    padding: '3px',
+                    background: '#fff',
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '50px',
+                    height: '50px',
+                    borderRadius: '10px',
+                    background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 'bold',
+                    fontSize: '18px',
+                    letterSpacing: '0.5px',
+                    flexShrink: 0,
+                  }}
+                >
+                  {getCompanyMonogram(branding.name)}
+                </div>
+              )}
+              <div>
+                <h1 style={{ margin: '0 0 2px 0', fontSize: '20px', fontWeight: 'bold', color: '#0284c7' }}>
+                  {branding.name}
+                </h1>
+                {branding.tagline ? (
+                  <div style={{ fontSize: '10.5px', color: '#64748b', fontStyle: 'italic', marginBottom: '4px' }}>
+                    {branding.tagline}
+                  </div>
+                ) : null}
+                <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.42' }}>
+                  {branding.address ? (
+                    <>
+                      {branding.address}
+                      <br />
+                    </>
+                  ) : null}
+                  {branding.phone || branding.email ? (
+                    <>
+                      {branding.phone ? (
+                        <>
+                          <strong>Ph:</strong> {branding.phone}
+                        </>
+                      ) : null}
+                      {branding.phone && branding.email ? ' | ' : null}
+                      {branding.email ? (
+                        <>
+                          <strong>Email:</strong> {branding.email}
+                        </>
+                      ) : null}
+                      <br />
+                    </>
+                  ) : null}
+                  {branding.gstin ? (
+                    <>
+                      <strong>GSTIN:</strong> {branding.gstin}
+                    </>
+                  ) : null}
+                  {branding.pan ? (
+                    <>
+                      {branding.gstin ? ' | ' : ''}
+                      <strong>PAN:</strong> {branding.pan}
+                    </>
+                  ) : null}
+                  {branding.state ? (
+                    <>
+                      {branding.gstin || branding.pan ? ' | ' : ''}
+                      <strong>State:</strong> {branding.state}
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  background: isProforma ? '#fef3c7' : '#e0f2fe',
+                  color: isProforma ? '#b45309' : '#0369a1',
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  marginBottom: '4px',
+                }}
+              >
+                {isProforma ? 'PROFORMA INVOICE' : 'TAX INVOICE'}
+              </span>
+              {!isProforma ? (
+                <div
+                  style={{
+                    fontSize: '10.5px',
+                    color: '#334155',
+                    fontWeight: '600',
+                    fontStyle: 'italic',
+                    marginBottom: '4px',
+                  }}
+                >
+                  {COPY_LABELS[copyKey]}
+                </div>
+              ) : null}
+              <p style={{ margin: 0, fontSize: '11px', color: '#334155', lineHeight: '1.45' }}>
+                <strong>{isProforma ? 'Proforma No:' : 'Invoice No:'}</strong> {displayDocNo}
+                <br />
+                <strong>Date:</strong> {invoice.posting_date}
+              </p>
+            </div>
+          </div>
+
+          {/* 2. BILLED TO CUSTOMER */}
+          <div
+            style={{
+              marginBottom: '14px',
+              padding: '9px 14px',
+              background: '#f8fafc',
+              borderRadius: '6px',
+              border: '1px solid #e2e8f0',
+            }}
+          >
+            <span
+              style={{
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: '#64748b',
+                fontWeight: 'bold',
+              }}
+            >
+              BILLED TO (CUSTOMER DETAILS)
+            </span>
+            <h3 style={{ margin: '3px 0 2px 0', fontSize: '15px', color: '#0f172a' }}>
+              {invoice.customer_name}
+            </h3>
+            <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
+              {customer?.address && (
+                <>
+                  {customer.address}
+                  <br />
+                </>
+              )}
+              {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}
+              <br />
+              <strong>GSTIN / Tax ID:</strong> {customer?.gstin || 'Unregistered'} |{' '}
+              <strong>Category:</strong> {customerGstCategory}
+            </p>
+          </div>
+
+          {/* 3. CLEAN ITEMS TABLE (NO EXTRA GRID LINES, 5-6 ITEMS SPACE) */}
+          <div style={{ minHeight: '225px', marginBottom: '14px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9', borderTop: '1px solid #cbd5e1', borderBottom: '2px solid #cbd5e1' }}>
+                  <th style={{ padding: '8px 8px', textAlign: 'left', width: '32px' }}>#</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'left' }}>Item Description</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'right', width: '65px' }}>Qty</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'right', width: '90px' }}>Rate ({sym})</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'center', width: '55px' }}>Disc %</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'right', width: '110px' }}>Amount ({sym})</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceItems.length > 0
+                  ? invoiceItems.map((itemRow, idx) => {
+                      const masterItem = itemsMaster.find((m) => m.id === itemRow.item);
+                      const isFoc = (itemRow as any).is_foc;
+                      const discPct = parseFloat((itemRow as any).discount_percentage || '0');
+
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ padding: '10px 8px', verticalAlign: 'top' }}>{idx + 1}</td>
+                          <td style={{ padding: '10px 8px', verticalAlign: 'top' }}>
+                            <strong style={{ fontSize: '12px', color: '#0f172a' }}>
+                              {masterItem ? masterItem.item_name : `Item #${itemRow.item}`}
+                            </strong>
+                            <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                              Code: {masterItem?.item_code || '-'} | HSN: {(masterItem as any)?.hsn_code || '-'} | Unit:{' '}
+                              {masterItem?.unit || 'Nos'}
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
+                            {itemRow.quantity}
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
+                            {isFoc ? '0.00' : parseFloat(itemRow.rate.toString()).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center', verticalAlign: 'top' }}>
+                            {discPct > 0 ? `${discPct}%` : '-'}
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 'bold', verticalAlign: 'top' }}>
+                            {sym} {parseFloat(itemRow.amount.toString()).toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* BOTTOM SECTION: BANK DETAILS, TAX BREAKDOWN & RIGHT-SIDE STAMP BOX */}
+        <div>
+          {/* 4. DYNAMIC BANK DETAILS & TAX BREAKDOWN */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', borderTop: '1px solid #cbd5e1', paddingTop: '10px' }}>
+            <tbody>
+              <tr>
+                <td style={{ verticalAlign: 'top', width: '52%', paddingRight: '18px', paddingTop: '10px' }}>
+                  <div
+                    style={{
+                      background: '#f8fafc',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid #e2e8f0',
+                      marginBottom: '10px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '10px',
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <p style={{ margin: '0 0 4px 0', fontWeight: 'bold', color: '#334155', fontSize: '11px' }}>
+                        BANK PAYMENT DETAILS:
+                      </p>
+                      <div style={{ fontSize: '10.5px', color: '#475569', lineHeight: '1.45' }}>
+                        {branding.bank_name || branding.bank_account_no || branding.bank_ifsc || branding.upi_id ? (
+                          <>
+                            {branding.bank_name ? (
+                              <div>
+                                <strong>Bank:</strong> {branding.bank_name}
+                                {branding.bank_branch ? ` (${branding.bank_branch})` : ''}
+                              </div>
+                            ) : null}
+                            {branding.bank_account_name ? (
+                              <div>
+                                <strong>A/c Name:</strong> {branding.bank_account_name}
+                              </div>
+                            ) : null}
+                            {branding.bank_account_no ? (
+                              <div>
+                                <strong>A/c No:</strong> {branding.bank_account_no}
+                              </div>
+                            ) : null}
+                            {branding.bank_ifsc ? (
+                              <div>
+                                <strong>IFSC:</strong> {branding.bank_ifsc}
+                              </div>
+                            ) : null}
+                            {branding.upi_id ? (
+                              <div>
+                                <strong>UPI ID:</strong> {branding.upi_id}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : branding.bank_details ? (
+                          <div>
+                            {branding.bank_details.split(' | ').map((line: string, i: number) => (
+                              <div key={i}>{line}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div>Bank details not configured</div>
+                        )}
+                      </div>
+                    </div>
+                    {upiQrUrl ? (
+                      <div
+                        style={{
+                          textAlign: 'center',
+                          background: '#fff',
+                          padding: '5px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <img src={upiQrUrl} alt="UPI QR" style={{ width: '74px', height: '74px', display: 'block' }} />
+                        <div style={{ fontSize: '8.5px', fontWeight: 'bold', color: '#0369a1', marginTop: '2px' }}>
+                          Scan & Pay (UPI)
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div style={{ fontSize: '10px', color: '#64748b', lineHeight: '1.4' }}>
+                    <strong style={{ color: '#334155' }}>Terms & Conditions:</strong>
+                    <br />
+                    {branding.invoice_terms
+                      .split('\n')
+                      .filter(Boolean)
+                      .map((termLine: string, idx: number) => (
+                        <div key={idx}>{termLine}</div>
+                      ))}
+                  </div>
+
+                  {isProforma && (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        padding: '6px 8px',
+                        background: '#fffbeb',
+                        border: '1px solid #fde68a',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        color: '#92400e',
+                      }}
+                    >
+                      <strong>Note:</strong> This is a Proforma Invoice / Estimate issued for order confirmation and
+                      advance payment only. Official Tax Invoice will be issued upon final approval.
+                    </div>
+                  )}
+                </td>
+
+                <td style={{ verticalAlign: 'top', width: '48%', paddingTop: '10px' }}>
+                  <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                    <tbody>
+                      <tr>
+                        <td style={{ padding: '4px 0', color: '#475569' }}>Taxable Value (Net):</td>
+                        <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
+                          {sym} {netTotal.toFixed(2)}
+                        </td>
+                      </tr>
+                      {isInterState ? (
+                        <tr>
+                          <td style={{ padding: '4px 0', color: '#475569' }}>IGST (18.00%):</td>
+                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
+                            {sym} {taxTotal.toFixed(2)}
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          <tr>
+                            <td style={{ padding: '4px 0', color: '#475569' }}>CGST (9.00%):</td>
+                            <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
+                              {sym} {halfTax.toFixed(2)}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '4px 0', color: '#475569' }}>SGST (9.00%):</td>
+                            <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
+                              {sym} {halfTax.toFixed(2)}
+                            </td>
+                          </tr>
+                        </>
+                      )}
+                      <tr>
+                        <td style={{ padding: '4px 0', color: '#0369a1', fontWeight: 'bold' }}>
+                          Total Tax (18.00%):
+                        </td>
+                        <td style={{ padding: '4px 0', textAlign: 'right', color: '#0369a1', fontWeight: 'bold' }}>
+                          {sym} {taxTotal.toFixed(2)}
+                        </td>
+                      </tr>
+                      {Math.abs(roundOff) > 0.001 && (
+                        <tr>
+                          <td style={{ padding: '4px 0', color: '#475569' }}>Round Off:</td>
+                          <td style={{ padding: '4px 0', textAlign: 'right' }}>
+                            {roundOff > 0 ? `+${sym} ${roundOff.toFixed(2)}` : `-${sym} ${Math.abs(roundOff).toFixed(2)}`}
+                          </td>
+                        </tr>
+                      )}
+                      <tr>
+                        <td colSpan={2} style={{ borderTop: '2px solid #0284c7', paddingTop: '6px' }}></td>
+                      </tr>
+                      <tr style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                        <td style={{ color: '#0f172a' }}>Grand Total:</td>
+                        <td style={{ textAlign: 'right', color: '#0284c7' }}>
+                          {sym} {grandTotal.toFixed(2)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colSpan={2} style={{ paddingTop: '8px' }}>
+                          <div
+                            style={{
+                              background: '#f0f9ff',
+                              border: '1px solid #bae6fd',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              fontSize: '10px',
+                              color: '#0369a1',
+                              lineHeight: '1.35',
+                            }}
+                          >
+                            <strong>Amount in Words:</strong>
+                            <br />
+                            <span style={{ fontWeight: '600', color: '#0f172a' }}>
+                              {formatAmountInWords(grandTotal, sym)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* 5. RIGHT-SIDE STAMP & AUTHORISED SIGNATORY BOX */}
+          <div
+            style={{
+              marginTop: '14px',
+              borderTop: '1px solid #cbd5e1',
+              paddingTop: '10px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-end',
+            }}
+          >
+            <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+              This is a computer-generated invoice.
+            </div>
+
+            <div
+              style={{
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                padding: '8px 18px 10px 18px',
+                width: '235px',
+                textAlign: 'center',
+                background: '#fff',
+              }}
+            >
+              <p style={{ margin: 0, fontWeight: 'bold', color: '#334155', fontSize: '11.5px' }}>
+                For, {branding.name || 'Authorised Signatory'}
+              </p>
+              {/* 65px Clear Space for Physical Rubber Stamp & Signature */}
+              <div style={{ height: '65px' }} />
+              <span
+                style={{
+                  borderTop: '1px dashed #94a3b8',
+                  paddingTop: '4px',
+                  display: 'inline-block',
+                  width: '185px',
+                  fontSize: '10.5px',
+                  fontWeight: '600',
+                  color: '#475569',
+                }}
+              >
+                Authorised Signatory &amp; Stamp
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -93,23 +658,21 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 200,
-        overflowY: 'auto',
-        padding: '20px',
+        padding: '16px',
       }}
     >
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 10mm;
+          margin: 8mm;
         }
         @media print {
           table thead {
-            display: table-row-group !important;
+            display: table-header-group !important;
           }
           table tr {
             page-break-inside: avoid !important;
           }
-
           html, body {
             width: 100% !important;
             height: auto !important;
@@ -125,19 +688,35 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           .no-print {
             display: none !important;
           }
-          #printable-invoice, #printable-invoice * {
+          .preview-scroll-wrapper {
+            overflow: visible !important;
+            padding: 0 !important;
+            background: #fff !important;
+            display: block !important;
+          }
+          #printable-invoice-wrapper, #printable-invoice-wrapper * {
             visibility: visible !important;
           }
-          #printable-invoice {
+          #printable-invoice-wrapper {
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
+            background: #fff !important;
+          }
+          .invoice-sheet {
+            width: 100% !important;
+            min-height: 250mm !important;
+            margin: 0 !important;
+            padding: 4mm 5mm !important;
             box-shadow: none !important;
             border: none !important;
             background: #fff !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-between !important;
           }
         }
       `}</style>
@@ -146,12 +725,13 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
         style={{
           background: '#fff',
           borderRadius: '12px',
-          width: '850px',
+          width: '920px',
           maxWidth: '100%',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
           display: 'flex',
           flexDirection: 'column',
-          maxHeight: '94vh',
+          maxHeight: '95vh',
+          overflow: 'hidden',
         }}
       >
         {/* Controls Header */}
@@ -159,18 +739,69 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           className="no-print"
           style={{
             display: 'flex',
+            flexWrap: 'wrap',
             justifyContent: 'space-between',
             alignItems: 'center',
-            padding: '16px 24px',
+            gap: '10px',
+            padding: '12px 20px',
             borderBottom: '1px solid #e2e8f0',
+            background: '#fff',
+            flexShrink: 0,
           }}
         >
-          <span style={{ fontWeight: '600', color: '#334155', fontSize: '16px' }}>
-            {isProforma ? 'Proforma Invoice Preview' : 'Tax Invoice Preview'} - {displayDocNo}
-          </span>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '600', color: '#334155', fontSize: '15px' }}>
+              {isProforma ? 'Proforma Preview' : 'Tax Invoice'} - {displayDocNo}
+            </span>
+
+            {/* Copy Selector Pills (Original / Duplicate / Triplicate / All 3) */}
+            {!isProforma && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  background: '#f1f5f9',
+                  padding: '3px',
+                  borderRadius: '7px',
+                  border: '1px solid #cbd5e1',
+                  gap: '2px',
+                }}
+              >
+                {(
+                  [
+                    { id: 'ORIGINAL', label: 'Original' },
+                    { id: 'DUPLICATE', label: 'Duplicate' },
+                    { id: 'TRIPLICATE', label: 'Triplicate' },
+                    { id: 'ALL', label: 'All 3 Copies' },
+                  ] as { id: CopyMode; label: string }[]
+                ).map((tab) => {
+                  const active = copyMode === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setCopyMode(tab.id)}
+                      style={{
+                        background: active ? '#0284c7' : 'transparent',
+                        color: active ? '#fff' : '#475569',
+                        border: 'none',
+                        padding: '5px 10px',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        fontWeight: '600',
+                        fontSize: '12px',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
-              onClick={() => setIsProforma(prev => !prev)}
+              onClick={() => setIsProforma((prev) => !prev)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -178,11 +809,11 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 background: isProforma ? '#f59e0b' : '#475569',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 14px',
+                padding: '7px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
-                fontSize: '13px'
+                fontSize: '12.5px',
               }}
             >
               {isProforma ? 'Switch to Tax Invoice' : 'View as Proforma'}
@@ -196,13 +827,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 background: '#0284c7',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 16px',
+                padding: '7px 14px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              <Printer size={16} /> Print / Save PDF
+              <Printer size={15} /> Print / Save PDF
             </button>
             <button
               onClick={handleDownloadPDF}
@@ -213,11 +845,11 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 background: '#10b981',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 14px',
+                padding: '7px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
-                fontSize: '13px'
+                fontSize: '12.5px',
               }}
             >
               <Download size={15} /> Download PDF
@@ -231,224 +863,33 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 background: '#ef4444',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 14px',
+                padding: '7px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              <X size={16} /> Close
+              <X size={15} /> Close
             </button>
           </div>
         </div>
 
-        {/* Invoice Printable Sheet */}
+        {/* Scrollable A4 Preview Container */}
         <div
-          id="printable-invoice"
+          className="preview-scroll-wrapper"
           style={{
-            padding: '24px 30px',
-            fontFamily: 'Arial, sans-serif',
-            color: '#0f172a',
-            boxSizing: 'border-box',
-            width: '100%',
-            background: '#fff',
-            fontSize: '12px'
+            overflowY: 'auto',
+            flex: 1,
+            background: '#f1f5f9',
+            padding: '16px',
           }}
         >
-          {/* 1. DYNAMIC COMPANY HEADER */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '14px', marginBottom: '14px' }}>
-            <div>
-              <h1 style={{ margin: '0 0 4px 0', fontSize: '20px', fontWeight: 'bold', color: '#0284c7' }}>
-                {company?.name || 'TallyBIZ Pvt Ltd'}
-              </h1>
-              <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
-                {company?.address || ''}<br />
-                {company?.gstin ? (
-                  <><strong>GSTIN / Tax ID:</strong> {company.gstin}</>
-                ) : null}
-                {company?.state ? <> | <strong>State:</strong> {company.state}</> : null}
-              </p>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  background: isProforma ? '#fef3c7' : '#e0f2fe',
-                  color: isProforma ? '#b45309' : '#0369a1',
-                  padding: '4px 10px',
-                  borderRadius: '4px',
-                  fontWeight: 'bold',
-                  fontSize: '12px',
-                  marginBottom: '6px',
-                }}
-              >
-                {isProforma ? 'PROFORMA INVOICE' : 'TAX INVOICE'}
-              </span>
-              <p style={{ margin: 0, fontSize: '11px', color: '#334155', lineHeight: '1.4' }}>
-                <strong>{isProforma ? 'Proforma No:' : 'Invoice No:'}</strong> {displayDocNo}<br />
-                <strong>Date:</strong> {invoice.posting_date}
-              </p>
-            </div>
+          <div id="printable-invoice-wrapper">
+            {copiesToRender.map((copyKey, idx) =>
+              renderSingleInvoiceSheet(copyKey, idx, copiesToRender.length)
+            )}
           </div>
-
-          {/* 2. BILLED TO CUSTOMER */}
-          <div style={{ marginBottom: '14px', padding: '10px 14px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 'bold' }}>
-              BILLED TO (CUSTOMER DETAILS)
-            </span>
-            <h3 style={{ margin: '4px 0 2px 0', fontSize: '15px', color: '#0f172a' }}>
-              {invoice.customer_name}
-            </h3>
-            <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
-              {customer?.address && <>{customer.address}<br /></>}
-              {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}<br />
-              <strong>GSTIN / Tax ID:</strong> {customer?.gstin || 'Unregistered'} | <strong>Category:</strong> {customerGstCategory}
-            </p>
-          </div>
-
-          {/* 3. ITEMS TABLE */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px', fontSize: '11px' }}>
-            <thead>
-              <tr style={{ background: '#f1f5f9', borderTop: '1px solid #cbd5e1', borderBottom: '2px solid #cbd5e1' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'left', width: '28px' }}>#</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Item Description</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', width: '50px' }}>Qty</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', width: '85px' }}>Rate ({sym})</th>
-                <th style={{ padding: '6px 8px', textAlign: 'center', width: '50px' }}>Disc %</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', width: '100px' }}>Amount ({sym})</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.items && invoice.items.length > 0 ? (
-                invoice.items.map((itemRow, idx) => {
-                  const masterItem = itemsMaster.find(m => m.id === itemRow.item);
-                  const isFoc = (itemRow as any).is_foc;
-                  const discPct = parseFloat((itemRow as any).discount_percentage || '0');
-
-                  return (
-                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '6px 8px' }}>{idx + 1}</td>
-                      <td style={{ padding: '6px 8px' }}>
-                        <strong>{masterItem ? masterItem.item_name : `Item #${itemRow.item}`}</strong>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>Code: {masterItem?.item_code || '-'} | Unit: {masterItem?.unit || 'Nos'}</div>
-                      </td>
-                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>{itemRow.quantity}</td>
-                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                        {isFoc ? '0.00' : parseFloat(itemRow.rate.toString()).toFixed(2)}
-                      </td>
-                      <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                        {discPct > 0 ? `${discPct}%` : '-'}
-                      </td>
-                      <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold' }}>
-                        {sym} {parseFloat(itemRow.amount.toString()).toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : null}
-            </tbody>
-          </table>
-
-          {/* 4. DYNAMIC BANK DETAILS & TAX BREAKDOWN */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px', tableLayout: 'fixed' }}>
-            <tbody>
-              <tr>
-                <td style={{ verticalAlign: 'top', width: '52%', paddingRight: '20px' }}>
-                  <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
-                    <p style={{ margin: '0 0 4px 0', fontWeight: 'bold', color: '#334155', fontSize: '11px' }}>BANK PAYMENT DETAILS:</p>
-                    <div style={{ fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
-                      {company?.bank_details ? (
-                        <div>
-                          {company.bank_details.split(' | ').map((line: string, i: number) => (
-                            <div key={i}>{line}</div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div>Bank details not configured</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: '10px', color: '#64748b', lineHeight: '1.4' }}>
-                    <strong style={{ color: '#334155' }}>Terms & Conditions:</strong><br />
-                    1. Goods once sold will not be taken back.<br />
-                    2. Interest @18% p.a. will be charged if payment is delayed.<br />
-                    3. Subject to {company?.state ? company.state.split(',')[0].replace(/\s*\(\d+\)/, '') : 'local'} jurisdiction only.
-                  </div>
-
-                  {isProforma && (
-                    <div style={{ marginTop: '8px', padding: '6px 8px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '4px', fontSize: '10px', color: '#92400e' }}>
-                      <strong>Note:</strong> This is a Proforma Invoice / Estimate issued for order confirmation and advance payment only. Official Tax Invoice will be issued upon final approval.
-                    </div>
-                  )}
-                </td>
-
-                <td style={{ verticalAlign: 'top', width: '48%' }}>
-                  <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
-                    <tbody>
-                      <tr>
-                        <td style={{ padding: '3px 0', color: '#475569' }}>Taxable Value (Net):</td>
-                        <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {netTotal.toFixed(2)}</td>
-                      </tr>
-                      {isInterState ? (
-                        <tr>
-                          <td style={{ padding: '3px 0', color: '#475569' }}>IGST (18.00%):</td>
-                          <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {taxTotal.toFixed(2)}</td>
-                        </tr>
-                      ) : (
-                        <>
-                          <tr>
-                            <td style={{ padding: '3px 0', color: '#475569' }}>CGST (9.00%):</td>
-                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {halfTax.toFixed(2)}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '3px 0', color: '#475569' }}>SGST (9.00%):</td>
-                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: '600' }}>{sym} {halfTax.toFixed(2)}</td>
-                          </tr>
-                        </>
-                      )}
-                      <tr>
-                        <td style={{ padding: '3px 0', color: '#0369a1', fontWeight: 'bold' }}>Total Tax (18.00%):</td>
-                        <td style={{ padding: '3px 0', textAlign: 'right', color: '#0369a1', fontWeight: 'bold' }}>{sym} {taxTotal.toFixed(2)}</td>
-                      </tr>
-                      {Math.abs(roundOff) > 0.001 && (
-                        <tr>
-                          <td style={{ padding: '3px 0', color: '#475569' }}>Round Off:</td>
-                          <td style={{ padding: '3px 0', textAlign: 'right' }}>
-                            {roundOff > 0 ? `+${sym} ${roundOff.toFixed(2)}` : `-${sym} ${Math.abs(roundOff).toFixed(2)}`}
-                          </td>
-                        </tr>
-                      )}
-                      <tr>
-                        <td colSpan={2} style={{ borderTop: '2px solid #0284c7', paddingTop: '6px' }}></td>
-                      </tr>
-                      <tr style={{ fontSize: '14px', fontWeight: 'bold' }}>
-                        <td style={{ color: '#0f172a' }}>Grand Total:</td>
-                        <td style={{ textAlign: 'right', color: '#0284c7' }}>{sym} {grandTotal.toFixed(2)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* 5. DYNAMIC SIGNATURE */}
-          <table style={{ width: '100%', marginTop: '28px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' }}>
-            <tbody>
-              <tr>
-                <td style={{ width: '60%' }}></td>
-                <td style={{ textAlign: 'center', width: '40%' }}>
-                  <p style={{ margin: '0 0 30px 0', fontWeight: 'bold', color: '#334155', fontSize: '11px' }}>
-                    For, {company?.name || 'Authorised Signatory'}
-                  </p>
-                  <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px', fontSize: '10px', color: '#64748b' }}>
-                    Authorised Signatory
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
     </div>

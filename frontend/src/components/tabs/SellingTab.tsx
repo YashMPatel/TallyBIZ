@@ -1,6 +1,7 @@
-import type { FC } from 'react';
-import { Plus, Download, Search, Printer, Edit2, Trash2 } from 'lucide-react';
-import { DataTable } from '../DataTable';
+import { useState, useEffect, type FC, type FormEvent } from 'react';
+import { Plus, Download, Search, Printer, Edit2, Trash2, Factory, CheckCircle2, FileText, RefreshCw } from 'lucide-react';
+import { API_BASE, getErrorMessage } from '../../utils/erpHelpers';
+import { suggestHsnFromNameOrCategory } from '../../utils/hsnLookup';
 import { MonthlyAnalyticsChart } from '../MonthlyAnalyticsChart';
 import type { SalesInvoice, Customer } from '../../types/erp';
 import {
@@ -30,6 +31,8 @@ interface SellingTabProps {
   handleDeleteInvoice: (id: number, invNo: string) => void;
 }
 
+const UOM_LIST = ['Nos', 'Ltr', 'Mtr', 'Kg', 'Box', 'Pcs', 'Ton', 'Roll', 'Sqft', 'Bottle'];
+
 export const SellingTab: FC<SellingTabProps> = ({
   user,
   invoices,
@@ -47,29 +50,299 @@ export const SellingTab: FC<SellingTabProps> = ({
   handleDeleteInvoice,
 }) => {
   const symbol = dashboardSummary.currency_symbol || (localStorage.getItem('active_company_symbol') || '₹');
+  const [showForwardMfgModal, setShowForwardMfgModal] = useState(false);
+  const [showDispatchTracker, setShowDispatchTracker] = useState(false);
+  const [mfgUnits, setMfgUnits] = useState<any[]>([]);
+  const [allItems, setAllItems] = useState<any[]>([]);
+
+  const [fwdMfgUnitId, setFwdMfgUnitId] = useState('');
+  const [fwdSalesRef, setFwdSalesRef] = useState('');
+  const [fwdCustomer, setFwdCustomer] = useState('');
+  const [fwdNotes, setFwdNotes] = useState('');
+
+  const [fwdFinMode, setFwdFinMode] = useState<'new' | 'existing'>('existing');
+  const [fwdItemId, setFwdItemId] = useState('');
+  const [fwdFinName, setFwdFinName] = useState('');
+  const [fwdFinUnit, setFwdFinUnit] = useState('Ltr');
+  const [fwdFinHsn, setFwdFinHsn] = useState('');
+  const [fwdFinGst, setFwdFinGst] = useState('18');
+  const [fwdQty, setFwdQty] = useState('1000');
+  const [fwdSellRate, setFwdSellRate] = useState('');
+  const [fwdCostRate, setFwdCostRate] = useState('');
+
+  const [fwdRawMode, setFwdRawMode] = useState<'existing' | 'new'>('existing');
+  const [fwdRawItemId, setFwdRawItemId] = useState('');
+  const [fwdRawName, setFwdRawName] = useState('');
+  const [fwdRawUnit, setFwdRawUnit] = useState('Ltr');
+  const [fwdRawHsn, setFwdRawHsn] = useState('');
+  const [fwdRawQty, setFwdRawQty] = useState('1000');
+  const [fwdRawBuyRate, setFwdRawBuyRate] = useState('');
+  const [fwdRawWastage, setFwdRawWastage] = useState('0');
+
+  const [fwdMsg, setFwdMsg] = useState('');
+  const [fwdErr, setFwdErr] = useState('');
+  const [fwdBusy, setFwdBusy] = useState(false);
+  const [invoicingBatchId, setInvoicingBatchId] = useState<string | null>(null);
+  const [salesRequests, setSalesRequests] = useState<any[]>([]);
+  const [directInvoices, setDirectInvoices] = useState<SalesInvoice[]>([]);
+
+  const loadInvoicesDirect = () => {
+    const compId = localStorage.getItem('active_company_id') || '';
+    const unitId = localStorage.getItem('active_unit_id') || '';
+    let token = '';
+    for (const store of [localStorage, sessionStorage]) {
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i) || '';
+        const v = store.getItem(k) || '';
+        if ((k.includes('token') || k.includes('jwt') || k.includes('access')) && v.length > 20 && !v.startsWith('{')) {
+          token = v.replace(/^"|"$/g, '');
+          break;
+        }
+        if (v.startsWith('{') && v.includes('access')) {
+          try {
+            const parsed = JSON.parse(v);
+            if (parsed.access || parsed.token) {
+              token = parsed.access || parsed.token;
+              break;
+            }
+          } catch {}
+        }
+      }
+      if (token) break;
+    }
+    if (!compId) return;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const qUnit = unitId ? `&unit_id=${unitId}` : '';
+    fetch(`${API_BASE}/selling/invoices/?company_id=${compId}${qUnit}`, { headers })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((rows) => {
+        if (!rows) return;
+        const list = Array.isArray(rows) ? rows : rows?.results || [];
+        if (list.length > 0) {
+          setDirectInvoices((prev) => {
+            const m = new Map<number, SalesInvoice>();
+            [...list, ...prev].forEach((x) => {
+              if (x && x.id) m.set(x.id, x);
+            });
+            return Array.from(m.values());
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
+  const loadSalesRequests = () => {
+    const compId = localStorage.getItem('active_company_id') || '';
+    if (!compId) return;
+    fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setSalesRequests(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadSalesRequests();
+    loadInvoicesDirect();
+  }, [fwdMsg, invoices.length]);
+
+  useEffect(() => {
+    if (!showForwardMfgModal) return;
+    const compId = localStorage.getItem('active_company_id') || '';
+    if (!compId) return;
+    Promise.all([
+      fetch(`${API_BASE}/accounts/units/?company_id=${compId}`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`${API_BASE}/stock/items/?company_id=${compId}`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`).then((r) => (r.ok ? r.json() : [])),
+    ])
+      .then(([uRows, iRows, reqRows]) => {
+        const uList = (Array.isArray(uRows) ? uRows : uRows?.units || []).filter(
+          (u: any) => String(u.unit_type).toUpperCase() === 'MANUFACTURING'
+        );
+        const iList = Array.isArray(iRows) ? iRows : iRows?.results || [];
+        const rList = Array.isArray(reqRows) ? reqRows : [];
+        const yr = new Date().getFullYear();
+        let maxSeq = rList.length;
+        for (const r of rList) {
+          const m = String(r.sales_ref || '').match(/(\d+)$/);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (n > maxSeq) maxSeq = n;
+          }
+        }
+        setMfgUnits(uList);
+        setAllItems(iList);
+        setFwdSalesRef(`SO-${yr}-${String(maxSeq + 1).padStart(2, '0')}`);
+        if (uList.length > 0 && !fwdMfgUnitId) setFwdMfgUnitId(String(uList[0].id));
+        if (iList.length > 0) {
+          setFwdFinMode('existing');
+          const fg = iList.find((x: any) => String(x.category).toLowerCase().includes('finish'))
+            || iList.find((x: any) => !String(x.category).toLowerCase().includes('raw'));
+          if (fg) {
+            setFwdItemId(String(fg.id));
+            setFwdFinUnit(fg.unit || 'Ltr');
+            setFwdFinHsn(fg.hsn_code || '');
+            setFwdSellRate(String(fg.selling_rate || ''));
+            setFwdCostRate(String(fg.standard_rate || ''));
+          }
+          setFwdRawMode('existing');
+          const rm = iList.find((x: any) => String(x.category).toLowerCase().includes('raw')) || iList[0];
+          setFwdRawItemId(String(rm.id));
+          setFwdRawUnit(rm.unit || 'Ltr');
+          setFwdRawHsn(rm.hsn_code || '3907');
+          setFwdRawBuyRate(String(rm.standard_rate || '250'));
+        } else {
+          setFwdFinMode('existing');
+          setFwdRawMode('new');
+        }
+      })
+      .catch(() => {});
+  }, [showForwardMfgModal]);
+
+  const handleForwardToMfg = async (e: FormEvent) => {
+    e.preventDefault();
+    setFwdErr('');
+    setFwdBusy(true);
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const payload: any = {
+        mfg_unit_id: fwdMfgUnitId,
+        sales_ref: fwdSalesRef,
+        customer_name: fwdCustomer,
+        requested_qty: fwdQty,
+        finished_unit: fwdFinUnit,
+        finished_hsn: fwdFinHsn,
+        finished_gst: fwdFinGst,
+        selling_rate: fwdSellRate || 0,
+        cost_rate: fwdCostRate || 0,
+        raw_unit: fwdRawUnit,
+        raw_hsn: fwdRawHsn,
+        raw_qty: fwdRawQty || 0,
+        raw_purchase_rate: fwdRawBuyRate || 0,
+        raw_wastage: fwdRawWastage || 0,
+        notes: fwdNotes,
+        created_by: user?.username || 'Sales Team',
+      };
+      if (fwdFinMode === 'existing' && fwdItemId) {
+        payload.finished_item_id = fwdItemId;
+      } else {
+        payload.finished_item_name = fwdFinName;
+      }
+      if (fwdRawMode === 'existing' && fwdRawItemId) {
+        payload.raw_item_id = fwdRawItemId;
+      } else if (fwdRawName.trim()) {
+        payload.raw_item_name = fwdRawName.trim();
+      }
+
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit order');
+      setShowForwardMfgModal(false);
+      setFwdMsg(`Order ${data.sales_ref} (${data.request_no}) sent directly to Manufacturing Division!`);
+    } catch (err) {
+      setFwdErr(getErrorMessage(err));
+    } finally {
+      setFwdBusy(false);
+    }
+  };
+
+  const handleOneClickInvoice = async (reqId: number, batchId: string) => {
+    setInvoicingBatchId(batchId);
+    setFwdErr('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${reqId}/create-invoice/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: batchId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate invoice');
+
+      // Shift batch out of active dispatch list & insert straight into bottom Sales Invoices table
+      setSalesRequests((prev) =>
+        prev.map((r) =>
+          r.id === reqId ? { ...r, delivery_schedule: data.delivery_schedule || r.delivery_schedule } : r
+        )
+      );
+      if (data.invoice) {
+        setDirectInvoices((prev) => [data.invoice, ...prev.filter((x) => x.id !== data.invoice.id)]);
+      }
+      loadInvoicesDirect();
+      setFwdMsg(`Batch shifted to Sales Invoices below! Invoice ${data.invoice_number} (${symbol}${Number(data.grand_total).toFixed(2)}) generated.`);
+      const tblEl = document.getElementById('sales-invoices-register');
+      if (tblEl) tblEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      alert(getErrorMessage(err));
+    } finally {
+      setInvoicingBatchId(null);
+    }
+  };
+
+  // Merge prop invoices + direct fetched invoices so newly generated invoices always appear immediately
+  const mergedInvoicesMap = new Map<number, SalesInvoice>();
+  [...directInvoices, ...filteredInvoices].forEach((inv) => {
+    if (inv && inv.id) mergedInvoicesMap.set(inv.id, inv);
+  });
+  const displayInvoices = Array.from(mergedInvoicesMap.values())
+    .filter((inv) => {
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        String(inv.invoice_number || '').toLowerCase().includes(q) ||
+        String(inv.customer_name || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => (b.id || 0) - (a.id || 0));
 
   return (
     <div>
-      {/* Header Actions */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Sales Invoices</h1>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Customer sales with GST & automatic inventory deductions</p>
+          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Sales Orders &amp; Invoices</h1>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>All-in-one order entry to Manufacturing, live date-wise dispatch tracking &amp; 1-click GST invoicing</p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             onClick={() => {
-              const exportData = invoices.map(inv => ({
-                'Invoice No': inv.invoice_number,
-                'Customer': inv.customer_name,
-                'Date': inv.posting_date,
-                [`Net Total (${symbol})`]: inv.net_total,
-                [`Tax (${symbol})`]: inv.tax_amount,
-                [`Grand Total (${symbol})`]: inv.grand_total,
-                'Payment Status': salesStatusMap[inv.id || 0]?.status || 'Unpaid',
-                [`Balance Due (${symbol})`]: (salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total))).toFixed(2)
-              }));
-              exportToCSV(exportData, 'Sales_Invoices');
+              setFwdErr('');
+              setFwdFinMode('new');
+              setFwdFinName('');
+              setFwdFinHsn('');
+              setFwdQty('1000');
+              setFwdSellRate('');
+              setFwdCostRate('');
+              setFwdRawQty('1000');
+              setFwdRawWastage('0');
+              setFwdCustomer('');
+              setFwdNotes('');
+              setShowForwardMfgModal(true);
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#7c3aed', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', boxShadow: '0 2px 6px rgba(124,58,237,0.3)' }}
+          >
+            <Factory size={16} /> + New Order to Manufacturing
+          </button>
+          <button
+            onClick={() => {
+              const rows = filteredInvoices.map((inv) => {
+                const payInfo = salesStatusMap[inv.id ?? 0] || { status: 'Unpaid', paid: 0, balance: parseFloat(String(inv.grand_total)) || 0 };
+                return {
+                  'Invoice #': inv.invoice_number,
+                  'Customer': inv.customer_name || 'Walk-in Customer',
+                  'Date': inv.posting_date,
+                  'Due Date': getDueStatus(inv.posting_date, inv.due_date).dueDate,
+                  [`Net (${symbol})`]: parseFloat(String(inv.net_total)).toFixed(2),
+                  [`Tax (${symbol})`]: parseFloat(String(inv.tax_amount)).toFixed(2),
+                  [`Grand Total (${symbol})`]: parseFloat(String(inv.grand_total)).toFixed(2),
+                  'Approval Status': inv.status,
+                  'Payment Status': payInfo.status,
+                };
+              });
+              exportToCSV(rows, 'TallyBIZ_Sales_Invoices');
             }}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
           >
@@ -78,262 +351,550 @@ export const SellingTab: FC<SellingTabProps> = ({
           <button
             onClick={() => {
               setEditingId(null);
-              setInvoiceForm((prev: any) => ({
-                ...prev,
-                invoice_number: getNextInvoiceNumber(invoices),
-                customer_id: '',
+              const nextInvNo = getNextInvoiceNumber(invoices);
+              setInvoiceForm({
+                invoice_number: nextInvNo,
+                customer_id: customers.length > 0 ? String(customers[0].id) : '',
+                posting_date: new Date().toISOString().split('T')[0],
+                due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
                 tax_rate: '18',
                 status: 'Draft',
-                lines: [newLine()]
-              }));
+                lines: [newLine()],
+              });
               setShowInvoiceModal(true);
             }}
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
           >
-            <Plus size={16} /> New Invoice
+            <Plus size={16} /> + Direct Invoice
           </button>
         </div>
       </div>
 
-      {/* Dashboard Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-          <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Sales</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#0284c7' }}>
-            {symbol} {(dashboardSummary.total_sales || 0).toFixed(2)}
-          </h3>
+      {fwdMsg && (
+        <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', fontWeight: 600 }}>
+          {fwdMsg}
         </div>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-          <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Total Purchases</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#dc2626' }}>
-            {symbol} {(dashboardSummary.total_purchases || 0).toFixed(2)}
-          </h3>
+      )}
+
+      {/* KPI Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+        <div style={{ background: '#fff', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <div style={{ color: '#64748b', fontSize: '13px', fontWeight: '600' }}>Total Sales</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#0284c7', marginTop: '6px' }}>{symbol} {Math.max(dashboardSummary.total_sales, displayInvoices.reduce((acc, x) => acc + (parseFloat(String(x.grand_total)) || 0), 0)).toFixed(2)}</div>
         </div>
-        <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-          <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Bank Balance</span>
-          <h3 style={{ margin: '8px 0 0 0', fontSize: '22px', color: '#15803d' }}>
-            {symbol} {(dashboardSummary.bank_balance || 0).toFixed(2)}
-          </h3>
+        <div style={{ background: '#fff', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <div style={{ color: '#64748b', fontSize: '13px', fontWeight: '600' }}>Total Purchases</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#dc2626', marginTop: '6px' }}>{symbol} {dashboardSummary.total_purchases.toFixed(2)}</div>
+        </div>
+        <div style={{ background: '#fff', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+          <div style={{ color: '#64748b', fontSize: '13px', fontWeight: '600' }}>Bank Balance</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#10b981', marginTop: '6px' }}>{symbol} {dashboardSummary.bank_balance.toFixed(2)}</div>
         </div>
       </div>
 
-      {/* Payment Overdue Reminder Banner */}
-      {(() => {
-        const overdueInvoices = invoices.filter(inv => {
-          const statusInfo = salesStatusMap[inv.id || 0];
-          if (statusInfo?.status === 'Paid') return false;
-          const dueInfo = getDueStatus(inv.posting_date, (inv as any).due_date);
-          return dueInfo.isOverdue;
-        });
-
-        const totalOverdueAmount = overdueInvoices.reduce((sum, inv) => {
-          const balance = salesStatusMap[inv.id || 0]?.balance ?? parseFloat(String(inv.grand_total));
-          return sum + balance;
-        }, 0);
-
-        if (overdueInvoices.length === 0) return null;
-
-        return (
-          <div style={{
-            background: '#fff5f5',
-            border: '1px solid #fecaca',
-            borderRadius: '10px',
-            padding: '14px 20px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '22px' }}>⚠️</span>
-              <div>
-                <strong style={{ color: '#991b1b', fontSize: '14px' }}>
-                  Payment Reminder: {overdueInvoices.length} {overdueInvoices.length === 1 ? 'Invoice is' : 'Invoices are'} Overdue!
-                </strong>
-                <p style={{ margin: '2px 0 0 0', color: '#7f1d1d', fontSize: '12px' }}>
-                  Total overdue receivables: <strong>{symbol} {totalOverdueAmount.toFixed(2)}</strong> (Parties: {overdueInvoices.map(i => i.customer_name).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}).
-                </p>
-              </div>
-            </div>
+      {/* LIVE ORDERS & MANUFACTURING DATE-WISE DISPATCH TRACKER */}
+      <div style={{ marginBottom: '24px', background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', padding: '18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>
+              Sales Orders &amp; Manufacturing Date-Wise Dispatch ({salesRequests.length})
+            </h3>
+            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+              See date-wise production schedule from Manufacturing and generate 1-click GST Invoices as batches dispatch
+            </p>
           </div>
-        );
-      })()}
-
-      {/* Analytics Chart */}
-      <MonthlyAnalyticsChart data={gstData} />
-
-      {/* Live Search Input Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-        <div style={{ position: 'relative', width: '320px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-          <input
-            type="text"
-            placeholder="Search invoice # or customer..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            style={{ width: '100%', padding: '8px 12px 8px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
-          />
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setShowDispatchTracker((prev) => !prev)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '6px',
+                border: '1px solid #0284c7',
+                background: showDispatchTracker ? '#0284c7' : '#e0f2fe',
+                color: showDispatchTracker ? '#fff' : '#0369a1',
+                fontSize: '12.5px',
+                cursor: 'pointer',
+                fontWeight: 700,
+              }}
+            >
+              Dispatch ({salesRequests.length}) {showDispatchTracker ? '▲' : '▼'}
+            </button>
+            <button
+              type="button"
+              onClick={loadSalesRequests}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              <RefreshCw size={13} /> Refresh Status
+            </button>
+          </div>
         </div>
-        {searchQuery && (
-          <button onClick={() => setSearchQuery('')} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: '#64748b' }}>
-            Clear Search
-          </button>
-        )}
-      </div>
 
-      {/* Invoices Data Table */}
-      <DataTable<SalesInvoice>
-        columns={[
-          { header: 'Invoice #', accessor: 'invoice_number' },
-          { header: 'Customer', accessor: 'customer_name' },
-          { header: 'Posting Date', accessor: 'posting_date' },
-          {
-            header: 'Due Date',
-            accessor: (row) => {
-              const dueInfo = getDueStatus(row.posting_date, (row as any).due_date);
-              const paymentInfo = salesStatusMap[row.id || 0];
-              const isPaid = paymentInfo?.status === 'Paid';
-
+        {showDispatchTracker && (
+          <div style={{ marginTop: '14px' }}>
+        {salesRequests.length === 0 ? (
+          <div style={{ fontSize: '13px', color: '#64748b', padding: '14px', background: '#f8fafc', borderRadius: '8px' }}>
+            No manufacturing orders yet. Click <strong>+ New Order to Manufacturing</strong> above to enter a customer order with raw material &amp; HSN in one form.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {salesRequests.map((r: any) => {
+              const schedule: any[] = r.delivery_schedule || [];
+              const raw = r.raw_material || {};
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <span style={{ fontWeight: '500' }}>{dueInfo.dueDate}</span>
-                  {!isPaid && (
-                    dueInfo.isOverdue ? (
-                      <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', width: 'fit-content' }}>
-                        ⚠️ {dueInfo.text}
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: '11px', color: '#64748b' }}>
-                        {dueInfo.text}
-                      </span>
-                    )
+                <div key={r.id} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px', background: '#f8fafc' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 800, color: '#7c3aed', fontSize: '14px' }}>{r.sales_ref || r.request_no}</span>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>({r.request_no})</span>
+                        <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '14px' }}>• {r.customer_name || 'Walk-in Party'}</span>
+                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: r.status === 'COMPLETED' ? '#dcfce7' : r.status === 'PENDING_MFG' ? '#fef3c7' : '#e0f2fe', color: r.status === 'COMPLETED' ? '#166534' : r.status === 'PENDING_MFG' ? '#92400e' : '#0369a1' }}>
+                          {r.status === 'PENDING_MFG' ? 'Awaiting Factory Date Schedule' : r.status === 'COMPLETED' ? 'Fully Dispatched' : 'Scheduled / In Production'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#1e293b', marginTop: '5px' }}>
+                        <strong>Product:</strong> {r.finished_item_name} — <strong>{r.requested_qty} {r.finished_unit || 'Nos'}</strong>
+                        {r.finished_hsn ? ` • HSN: ${r.finished_hsn}` : ''}
+                        {r.selling_rate > 0 ? ` • Sell Rate: ${symbol}${r.selling_rate}/${r.finished_unit || 'Nos'}` : ''}
+                        {raw.raw_item_name ? (
+                          <span style={{ color: '#475569' }}>
+                            {' '}| <strong>Raw Material:</strong> {raw.raw_qty} {raw.raw_unit} {raw.raw_item_name} (@ {symbol}{raw.raw_purchase_rate})
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: '12px', color: '#475569' }}>
+                      <div>Order Date: <strong>{r.posting_date}</strong></div>
+                      <div>Dispatched: <strong>{r.dispatched_qty || 0} / {r.requested_qty} {r.finished_unit}</strong></div>
+                    </div>
+                  </div>
+
+                  {schedule.length > 0 ? (
+                    <div style={{ marginTop: '10px', background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '10px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '6px', textTransform: 'uppercase' }}>
+                        Manufacturing Date-Wise Delivery Schedule
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {schedule.filter((b: any) => !b.invoiced).length === 0 ? (
+                          <div style={{ fontSize: '12px', color: '#15803d', fontWeight: 600, padding: '6px 8px', background: '#f0fdf4', borderRadius: '6px' }}>
+                            All dispatched batches shifted to Sales Invoices register below!
+                          </div>
+                        ) : null}
+                        {schedule.filter((b: any) => !b.invoiced).map((b: any) => (
+                          <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', padding: '6px 10px', borderRadius: '6px', background: b.status === 'DISPATCHED' ? '#f0fdf4' : '#f8fafc', border: '1px solid #e2e8f0' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              <strong>Date: {b.date}</strong> — Qty: <strong>{b.qty} {r.finished_unit}</strong>
+                              {b.dispatch_no ? <span style={{ marginLeft: '8px', fontSize: '11px', fontWeight: 700, color: '#0369a1' }}>Challan: {b.dispatch_no}</span> : null}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {b.status !== 'DISPATCHED' ? (
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: '999px' }}>
+                                  Scheduled by Factory
+                                </span>
+                              ) : b.invoiced ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '4px 10px', borderRadius: '6px' }}>
+                                  <CheckCircle2 size={14} /> Invoiced ({b.invoice_no})
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={invoicingBatchId === b.id}
+                                  onClick={() => handleOneClickInvoice(r.id, b.id)}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#059669', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                                >
+                                  <FileText size={14} /> {invoicingBatchId === b.id ? 'Creating...' : `1-Click Create Invoice (${b.qty} ${r.finished_unit})`}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#92400e', fontStyle: 'italic' }}>
+                      Waiting for Manufacturing Division to submit date-wise production &amp; dispatch schedule...
+                    </div>
                   )}
                 </div>
               );
-            }
-          },
-          { header: `Net (${symbol})`, accessor: r => `${symbol} ${r.net_total}` },
-          { header: `Tax (${symbol})`, accessor: r => `${symbol} ${r.tax_amount}` },
-          { header: `Grand Total (${symbol})`, accessor: r => <strong>{symbol} {r.grand_total}</strong> },
-    { header: 'Created By', accessor: (r: any) => r.created_by_name || '-' },
-    { header: 'Approved By', accessor: (r: any) => r.approved_by_name || '-' },
-          {
-            header: 'Approval Status',
-            accessor: (row) => (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                <span
-                  style={{
-                    width: 'fit-content',
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                    fontSize: '11px',
-                    fontWeight: 'bold',
-                    background:
-                      row.status === 'Approved' ? '#dcfce7' :
-                      row.status === 'Rejected' ? '#fee2e2' : '#fef3c7',
-                    color:
-                      row.status === 'Approved' ? '#15803d' :
-                      row.status === 'Rejected' ? '#b91c1c' : '#b45309'
-                  }}
-                >
-                  {row.status || 'Draft'}
-                </span>
-
-                {row.status === 'Rejected' && row.rejection_reason && (
-                  <span 
-                    title={row.rejection_reason}
-                    style={{ 
-                      fontSize: '11px', 
-                      color: '#dc2626', 
-                      fontStyle: 'italic',
-                      maxWidth: '150px',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}
-                  >
-                    ⚠️ {row.rejection_reason}
-                  </span>
-                )}
-              </div>
-            )
-          },
-          {
-            header: 'Payment Status',
-            accessor: (row) => {
-              const info = salesStatusMap[row.id || 0];
-              if (!info || info.status === 'Unpaid') {
-                return <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Unpaid</span>;
-              }
-              if (info.status === 'Paid') {
-                return <span style={{ background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>Paid</span>;
-              }
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <span style={{ background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', width: 'fit-content' }}>
-                    Partially Paid
-                  </span>
-                  <span style={{ fontSize: '11px', color: '#64748b' }}>Bal: {symbol} {info.balance.toFixed(2)}</span>
+            })}
+          </div>
+        )}
                 </div>
-              );
-            }
-          },
-          {
-            header: 'Actions',
-            accessor: (row) => (
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <button
-                  onClick={() => setSelectedInvoiceForPrint(row)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#e0f2fe', border: '1px solid #7dd3fc', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#0369a1', fontWeight: '500' }}
-                >
-                  <Printer size={12} /> Print
-                </button>
+        )}
+      </div>
 
-                {row.status !== 'Approved' || user?.role === 'ADMIN' ? (
-                  <>
-                    <button
-                      onClick={() => {
-                        setEditingId(row.id || null);
-                        const matchedCustomer = (customers || []).find(
-                          (c: any) => c.id === row.customer || c.customer_name === row.customer_name
-                        );
-                        const selectedCustId = matchedCustomer ? String(matchedCustomer.id) : (row.customer ? String(row.customer) : '');
+<div style={{ marginBottom: '24px' }}>
+        <MonthlyAnalyticsChart
+          data={gstData}
+          currencySymbol={symbol}
+          title="Monthly Performance: Sales vs Purchases"
+          subtitle="Taxable turnover comparison across fiscal months"
+        />
+      </div>
 
-                        setInvoiceForm({
-                          invoice_number: row.invoice_number,
-                          customer_id: selectedCustId,
-                          posting_date: row.posting_date,
-                          due_date: (row as any).due_date || row.posting_date,
-                          tax_rate: inferTaxRate(row.net_total, row.tax_amount),
-                          status: row.status || 'Draft',
-                          lines: row.items?.length ? row.items.map(lineFromItem) : [newLine()]
-                        });
-                        setShowInvoiceModal(true);
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#475569' }}
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
-                    <button
-                      onClick={() => { if (row.id !== undefined) void handleDeleteInvoice(row.id, row.invoice_number); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', border: '1px solid #fca5a5', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#b91c1c' }}
-                    >
-                      <Trash2 size={12} /> Delete
-                    </button>
-                  </>
-                ) : (
-                  <span style={{ fontSize: '11px', color: '#10b981', fontWeight: '600', padding: '3px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '4px' }}>
-                    🔒 Locked
-                  </span>
-                )}
+      <div style={{ marginBottom: '16px', position: 'relative', maxWidth: '350px' }}>
+        <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#94a3b8' }} />
+        <input
+          type="text"
+          placeholder="Search invoice # or customer..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{ width: '100%', padding: '9px 12px 9px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+        />
+      </div>
+
+      <div id="sales-invoices-register" style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e2e8f0', overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#475569' }}>
+              <th style={{ padding: '12px' }}>Invoice #</th>
+              <th style={{ padding: '12px' }}>Customer</th>
+              <th style={{ padding: '12px' }}>Posting Date</th>
+              <th style={{ padding: '12px' }}>Due Date</th>
+              <th style={{ padding: '12px' }}>Net ({symbol})</th>
+              <th style={{ padding: '12px' }}>Tax ({symbol})</th>
+              <th style={{ padding: '12px' }}>Grand Total ({symbol})</th>
+              <th style={{ padding: '12px' }}>Created By</th>
+              <th style={{ padding: '12px' }}>Approved By</th>
+              <th style={{ padding: '12px' }}>Approval Status</th>
+              <th style={{ padding: '12px' }}>Payment Status</th>
+              <th style={{ padding: '12px' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayInvoices.length === 0 ? (
+              <tr>
+                <td colSpan={12} style={{ padding: '24px', textAlign: 'center', color: '#94a3b8' }}>
+                  No sales invoices found.
+                </td>
+              </tr>
+            ) : (
+              displayInvoices.map((inv) => {
+                const due = getDueStatus(inv.posting_date, inv.due_date);
+                const payInfo = salesStatusMap[inv.id ?? 0] || { status: 'Unpaid', paid: 0, balance: parseFloat(String(inv.grand_total)) || 0 };
+                const badgeColor =
+                  payInfo.status === 'Paid'
+                    ? { bg: '#dcfce7', text: '#166534' }
+                    : payInfo.status === 'Partially Paid'
+                    ? { bg: '#dbeafe', text: '#1e40af' }
+                    : { bg: '#fee2e2', text: '#991b1b' };
+                return (
+                  <tr key={inv.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '12px' }}><strong style={{ color: '#0f172a' }}>{inv.invoice_number}</strong></td>
+                    <td style={{ padding: '12px' }}>{inv.customer_name || 'Walk-in Customer'}</td>
+                    <td style={{ padding: '12px' }}>{inv.posting_date}</td>
+                    <td style={{ padding: '12px' }}>
+                      <div style={{ fontWeight: '600', color: '#1e293b' }}>{due.dueDate}</div>
+                      <div style={{ fontSize: '11px', fontWeight: '600', color: due.isOverdue ? '#dc2626' : '#64748b' }}>{due.text}</div>
+                    </td>
+                    <td style={{ padding: '12px' }}>{symbol} {parseFloat(String(inv.net_total)).toFixed(2)}</td>
+                    <td style={{ padding: '12px' }}>{symbol} {parseFloat(String(inv.tax_amount)).toFixed(2)}</td>
+                    <td style={{ padding: '12px' }}><strong>{symbol} {parseFloat(String(inv.grand_total)).toFixed(2)}</strong></td>
+                    <td style={{ padding: '12px', fontSize: '12px', color: '#475569' }}>{(inv as any).created_by_name || 'Admin'}</td>
+                    <td style={{ padding: '12px', fontSize: '12px', color: '#475569' }}>{(inv as any).approved_by_name || '-'}</td>
+                    <td style={{ padding: '12px' }}>
+                      <span
+                        style={{
+                          padding: '3px 8px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          background: inv.status === 'Approved' ? '#dcfce7' : inv.status === 'Rejected' ? '#fee2e2' : '#fef3c7',
+                          color: inv.status === 'Approved' ? '#166534' : inv.status === 'Rejected' ? '#991b1b' : '#92400e',
+                        }}
+                      >
+                        {inv.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px' }}>
+                      <span style={{ padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', background: badgeColor.bg, color: badgeColor.text }}>
+                        {payInfo.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px' }}>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          onClick={() => setSelectedInvoiceForPrint(inv)}
+                          title="Print GST Invoice"
+                          style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#f8fafc', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                        >
+                          <Printer size={13} /> Print
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(inv.id ?? null);
+                            const lines = inv.items && inv.items.length > 0 ? inv.items.map(lineFromItem) : [newLine()];
+                            const inferredTax = inferTaxRate(inv.net_total, inv.tax_amount);
+                            setInvoiceForm({
+                              invoice_number: inv.invoice_number,
+                              customer_id: String(inv.customer || ''),
+                              posting_date: inv.posting_date,
+                              due_date: inv.due_date || new Date(new Date(inv.posting_date).getTime() + 30 * 86400000).toISOString().split('T')[0],
+                              tax_rate: inferredTax,
+                              status: inv.status,
+                              lines,
+                            });
+                            setShowInvoiceModal(true);
+                          }}
+                          style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                        >
+                          <Edit2 size={13} /> Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteInvoice(inv.id ?? 0, inv.invoice_number)}
+                          style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ALL-IN-ONE ORDER ENTRY MODAL */}
+      {showForwardMfgModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: '12px' }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: '700px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '22px' }}>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#0f172a' }}>New Customer Order &rarr; Direct to Manufacturing</h3>
+            <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#64748b' }}>
+              Enter Party, Finished Product, Raw Material requirement, HSN &amp; Rates in one place — automatically sends to Manufacturing!
+            </p>
+            {fwdErr && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', marginBottom: '10px' }}>
+                {fwdErr}
               </div>
-            )
-          }
-        ]}
-        data={filteredInvoices}
-        emptyMessage="No sales invoices created yet."
-      />
+            )}
+            <form onSubmit={handleForwardToMfg} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '8px' }}>1. PARTY &amp; ORDER DETAILS</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Party / Customer Name *</label>
+                    <input
+                      list="party-list"
+                      required
+                      placeholder="Select or type party name"
+                      value={fwdCustomer}
+                      onChange={(e) => setFwdCustomer(e.target.value)}
+                      style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                    />
+                    <datalist id="party-list">
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.customer_name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Order Ref #</label>
+                    <input type="text" value={fwdSalesRef} onChange={(e) => setFwdSalesRef(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', fontWeight: 700, color: '#7c3aed' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Manufacturing Unit *</label>
+                    <select required value={fwdMfgUnitId} onChange={(e) => setFwdMfgUnitId(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
+                      {mfgUnits.map((u) => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#0369a1' }}>2. FINISHED PRODUCT TO SUPPLY</span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button type="button" onClick={() => setFwdFinMode('new')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #0284c7', background: fwdFinMode === 'new' ? '#0284c7' : '#fff', color: fwdFinMode === 'new' ? '#fff' : '#0284c7', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>+ Type New Item</button>
+                    <button type="button" onClick={() => setFwdFinMode('existing')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #0284c7', background: fwdFinMode === 'existing' ? '#0284c7' : '#fff', color: fwdFinMode === 'existing' ? '#fff' : '#0284c7', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Select Existing</button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Finished Product Name *</label>
+                    {fwdFinMode === 'existing' ? (
+                      <select
+                        required
+                        value={fwdItemId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (id === '__NEW__') { setFwdFinMode('new'); setFwdItemId(''); return; }
+                          setFwdItemId(id);
+                          const it = allItems.find((x) => String(x.id) === id);
+                          if (it) {
+                            setFwdFinUnit(it.unit || 'Nos');
+                            setFwdFinHsn(it.hsn_code || '');
+                            setFwdSellRate(String(it.selling_rate || ''));
+                            setFwdCostRate(String(it.standard_rate || ''));
+                          }
+                        }}
+                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}
+                      >
+                        <option value="">-- Choose Finished Product --</option>
+                        {(allItems.filter((it) => !String(it.category || '').toLowerCase().includes('raw')).length > 0
+                          ? allItems.filter((it) => !String(it.category || '').toLowerCase().includes('raw'))
+                          : allItems
+                        ).map((it) => (
+                          <option key={it.id} value={it.id}>{it.item_name} ({it.unit})</option>
+                        ))}
+                        <option value="__NEW__">+ Create New Finished Product...</option>
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Epoxy Shield Paint"
+                        value={fwdFinName}
+                        onChange={(e) => {
+                          const nm = e.target.value;
+                          setFwdFinName(nm);
+                          const sug = suggestHsnFromNameOrCategory(nm, 'Finished Goods');
+                          if (sug) {
+                            setFwdFinHsn(sug.hsn);
+                            setFwdFinGst(sug.gst);
+                          }
+                        }}
+                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Order Qty *</label>
+                    <input type="number" step="0.01" min="0.01" required value={fwdQty} onChange={(e) => setFwdQty(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Unit (UOM) *</label>
+                    <select value={fwdFinUnit} onChange={(e) => setFwdFinUnit(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
+                      {UOM_LIST.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>HSN Code (Auto)</label>
+                    <input type="text" placeholder="e.g. 3208" value={fwdFinHsn} onChange={(e) => setFwdFinHsn(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>GST %</label>
+                    <select value={fwdFinGst} onChange={(e) => setFwdFinGst(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
+                      <option value="0">0%</option>
+                      <option value="5">5%</option>
+                      <option value="12">12%</option>
+                      <option value="18">18%</option>
+                      <option value="28">28%</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Selling Rate ({symbol}) *</label>
+                    <input type="number" step="0.01" required placeholder="e.g. 650" value={fwdSellRate} onChange={(e) => setFwdSellRate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Mfg Cost Rate ({symbol})</label>
+                    <input type="number" step="0.01" placeholder="e.g. 420" value={fwdCostRate} onChange={(e) => setFwdCostRate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#92400e' }}>3. RAW MATERIAL REQUIRED FOR THIS ORDER</span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button type="button" onClick={() => setFwdRawMode('existing')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: fwdRawMode === 'existing' ? '#d97706' : '#fff', color: fwdRawMode === 'existing' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Select Existing RM</button>
+                    <button type="button" onClick={() => setFwdRawMode('new')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: fwdRawMode === 'new' ? '#d97706' : '#fff', color: fwdRawMode === 'new' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>+ Type New RM</button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Raw Material Name</label>
+                    {fwdRawMode === 'existing' ? (
+                      <select
+                        value={fwdRawItemId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setFwdRawItemId(id);
+                          const it = allItems.find((x) => String(x.id) === id);
+                          if (it) {
+                            setFwdRawUnit(it.unit || 'Nos');
+                            setFwdRawHsn(it.hsn_code || '');
+                            setFwdRawBuyRate(String(it.standard_rate || ''));
+                          }
+                        }}
+                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}
+                      >
+                        <option value="">-- Choose Raw Material --</option>
+                        {allItems.filter((it) => !String(it.category || '').toLowerCase().includes('finish')).map((it) => (
+                          <option key={it.id} value={it.id}>{it.item_name} ({it.unit}) — Stock: {it.current_stock}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="e.g. Industrial Base Resin"
+                        value={fwdRawName}
+                        onChange={(e) => {
+                          const nm = e.target.value;
+                          setFwdRawName(nm);
+                          const sug = suggestHsnFromNameOrCategory(nm, 'Raw Material');
+                          if (sug) setFwdRawHsn(sug.hsn);
+                        }}
+                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Qty Needed</label>
+                    <input type="number" step="0.01" placeholder="e.g. 1000" value={fwdRawQty} onChange={(e) => setFwdRawQty(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Unit</label>
+                    <select value={fwdRawUnit} onChange={(e) => setFwdRawUnit(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
+                      {UOM_LIST.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM HSN Code</label>
+                    <input type="text" placeholder="e.g. 3907" value={fwdRawHsn} onChange={(e) => setFwdRawHsn(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Purchase Rate ({symbol})</label>
+                    <input type="number" step="0.01" placeholder="e.g. 250" value={fwdRawBuyRate} onChange={(e) => setFwdRawBuyRate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Wastage %</label>
+                    <input type="number" step="0.1" value={fwdRawWastage} onChange={(e) => setFwdRawWastage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600 }}>Delivery Notes / Instructions</label>
+                <input type="text" placeholder="e.g. Deliver in 2 date-wise batches..." value={fwdNotes} onChange={(e) => setFwdNotes(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+                <button type="button" onClick={() => setShowForwardMfgModal(false)} style={{ padding: '9px 16px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={fwdBusy} style={{ padding: '9px 20px', borderRadius: '6px', border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+                  {fwdBusy ? 'Submitting...' : 'Submit Order to Manufacturing'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

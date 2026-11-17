@@ -35,6 +35,7 @@ class PurchaseInvoice(models.Model):
         ('Rejected', 'Rejected'),
     )
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='purchase_invoices')
+    unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_invoices')
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True, related_name='bills')
     bill_number = models.CharField(max_length=50)
     supplier_name = models.CharField(max_length=150)

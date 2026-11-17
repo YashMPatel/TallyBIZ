@@ -50,11 +50,12 @@ def _scope_qs(qs, model, doc):
     return qs
 
 
-def _create_sl_entry(StockLedgerEntry, item_obj, comp, p_date, v_type, v_no, in_qty, out_qty, actual_qty, new_bal, rate_val):
+def _create_sl_entry(StockLedgerEntry, item_obj, comp, p_date, v_type, v_no, in_qty, out_qty, actual_qty, new_bal, rate_val, unit_obj=None):
     return _safe_create(
         StockLedgerEntry,
         item=item_obj,
         company=comp or getattr(item_obj, 'company', None),
+        unit=unit_obj,
         posting_date=p_date,
         voucher_type=v_type,
         voucher_no=v_no,
@@ -106,23 +107,82 @@ def approve_and_post_sales_invoice(invoice):
     comp = getattr(invoice, 'company', None)
     p_date = invoice.posting_date
 
-    for line in lines:
+    from django.db.models import Sum
+    BusinessUnit = apps.get_model('accounts', 'BusinessUnit')
+    target_unit = getattr(invoice, 'unit', None)
+    if not target_unit and comp:
+        target_unit = (
+            BusinessUnit.objects.filter(company=comp, unit_type='TRADING', is_active=True).first()
+            or BusinessUnit.objects.filter(company=comp, is_active=True).first()
+        )
+        if target_unit and _has_field(invoice.__class__, 'unit'):
+            invoice.unit = target_unit
+            invoice.save(update_fields=['unit'])
+
+    inter_div_supply_total = Decimal('0.00')
+    mfg_donor_unit = None
+
+    for line_idx, line in enumerate(lines, start=1):
         item_obj = Item.objects.select_for_update().get(id=line.item_id)
         qty = Decimal(str(line.quantity or 0))
-        curr = Decimal(str(item_obj.current_stock or 0))
-        new_bal = curr - qty
-        if new_bal < 0:
+        curr_total = Decimal(str(item_obj.current_stock or 0))
+        new_total = curr_total - qty
+        rate_val = Decimal(str(getattr(line, 'rate', 0) or item_obj.standard_rate or 0)).quantize(Decimal('0.01'))
+        cost_rate = Decimal(str(item_obj.standard_rate or rate_val or 0)).quantize(Decimal('0.01'))
+
+        # Check stock specifically in selling division (target_unit)
+        unit_avail = (
+            StockLedgerEntry.objects.filter(company=comp, unit=target_unit, item=item_obj).aggregate(q=Sum('actual_qty'))['q']
+            or Decimal('0.00')
+        )
+
+        # Auto-Transfer from Manufacturing Unit (or other division) if selling division lacks stock
+        if comp and target_unit and unit_avail < qty:
+            other_units = list(BusinessUnit.objects.filter(company=comp, is_active=True).exclude(id=target_unit.id).order_by('id'))
+            other_units.sort(key=lambda u: 0 if u.unit_type == 'MANUFACTURING' else 1)
+            shortfall = qty - max(Decimal('0.00'), unit_avail)
+            for donor_u in other_units:
+                if shortfall <= 0:
+                    break
+                donor_avail = (
+                    StockLedgerEntry.objects.filter(company=comp, unit=donor_u, item=item_obj).aggregate(q=Sum('actual_qty'))['q']
+                    or Decimal('0.00')
+                )
+                if donor_avail <= 0:
+                    continue
+                move_qty = min(shortfall, donor_avail)
+                trf_vno = f"AUTO-TRF-{invoice.invoice_number}-{line_idx}"
+                donor_after = donor_avail - move_qty
+                unit_avail = unit_avail + move_qty
+
+                _create_sl_entry(
+                    StockLedgerEntry, item_obj, comp, p_date,
+                    'Stock Transfer', trf_vno,
+                    Decimal('0.00'), move_qty, -move_qty, donor_after, cost_rate, donor_u
+                )
+                _create_sl_entry(
+                    StockLedgerEntry, item_obj, comp, p_date,
+                    'Stock Transfer', trf_vno,
+                    move_qty, Decimal('0.00'), move_qty, unit_avail, cost_rate, target_unit
+                )
+                if donor_u.unit_type == 'MANUFACTURING':
+                    mfg_donor_unit = donor_u
+                    inter_div_supply_total += (move_qty * cost_rate).quantize(Decimal('0.01'))
+                shortfall -= move_qty
+
+        if new_total < 0 or (target_unit and unit_avail < qty):
             raise ValidationError({
-                'error': f'Insufficient Stock for {item_obj.item_name}: Available {curr}, Requested {qty}.'
+                'error': f'Insufficient Stock for {item_obj.item_name}: Available {unit_avail}, Requested {qty}.'
             })
-        item_obj.current_stock = new_bal
+
+        unit_bal_after = unit_avail - qty
+        item_obj.current_stock = new_total
         item_obj.save(update_fields=['current_stock'])
 
-        rate_val = Decimal(str(getattr(line, 'rate', 0) or item_obj.standard_rate or 0)).quantize(Decimal('0.01'))
         _create_sl_entry(
             StockLedgerEntry, item_obj, comp, p_date,
             'Sales Invoice', invoice.invoice_number,
-            Decimal('0.00'), qty, -qty, new_bal, rate_val
+            Decimal('0.00'), qty, -qty, unit_bal_after, rate_val, target_unit
         )
 
     net_total = Decimal(str(invoice.net_total or 0))
@@ -133,15 +193,24 @@ def approve_and_post_sales_invoice(invoice):
     rem = f'Sales Invoice #{invoice.invoice_number} - {party_name}'
 
     if grand_total > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Debtors', against='Sales Income, Output GST', party_type='Customer', party=party_name, debit=grand_total, credit=Decimal('0.00'), remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Debtors', against='Sales Income, Output GST', party_type='Customer', party=party_name, debit=grand_total, credit=Decimal('0.00'), remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if net_total > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Sales Income', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=net_total, remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Sales Income', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=net_total, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if tax_amount > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Output GST', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=tax_amount, remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Output GST', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=tax_amount, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if adjustment != 0:
         adj_debit = abs(adjustment) if adjustment < 0 else Decimal('0.00')
         adj_credit = adjustment if adjustment > 0 else Decimal('0.00')
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Freight & Adjustments', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=adj_debit, credit=adj_credit, remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Freight & Adjustments', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=adj_debit, credit=adj_credit, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
+
+    if inter_div_supply_total > 0 and mfg_donor_unit and target_unit:
+        rem_trf = f'Inter-Division Stock Supply for #{invoice.invoice_number} ({mfg_donor_unit.name} -> {target_unit.name})'
+        # Manufacturing Unit books Inter-Division Supply Income & Inter-Division Receivable
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Inter-Division Receivable', against='Inter-Division Supply Income', party_type='Division', party=target_unit.name, debit=inter_div_supply_total, credit=Decimal('0.00'), remarks=rem_trf, company=comp, unit=mfg_donor_unit)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Inter-Division Supply Income', against='Inter-Division Receivable', party_type='Division', party=target_unit.name, debit=Decimal('0.00'), credit=inter_div_supply_total, remarks=rem_trf, company=comp, unit=mfg_donor_unit)
+        # Selling Division books Inter-Division Stock Cost & Inter-Division Payable (Eliminated in Consolidated!)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Inter-Division Stock Cost', against='Inter-Division Payable', party_type='Division', party=mfg_donor_unit.name, debit=inter_div_supply_total, credit=Decimal('0.00'), remarks=rem_trf, company=comp, unit=target_unit)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Inter-Division Payable', against='Inter-Division Stock Cost', party_type='Division', party=mfg_donor_unit.name, debit=Decimal('0.00'), credit=inter_div_supply_total, remarks=rem_trf, company=comp, unit=target_unit)
 
     invoice.status = 'Approved'
     invoice.save(update_fields=['status'])
@@ -165,6 +234,11 @@ def reverse_sales_invoice_on_delete(invoice):
                 item_obj.current_stock = Decimal(str(item_obj.current_stock or 0)) + qty
                 item_obj.save(update_fields=['current_stock'])
 
+        StockLedgerEntry.objects.filter(
+            company=getattr(invoice, 'company', None),
+            voucher_type='Stock Transfer',
+            voucher_no__startswith=f'AUTO-TRF-{invoice.invoice_number}'
+        ).delete()
         sl_qs.delete()
         gl_qs.delete()
 
@@ -213,7 +287,7 @@ def sync_purchase_invoice(bill):
         _create_sl_entry(
             StockLedgerEntry, item_obj, comp, p_date,
             'Purchase Invoice', bill.bill_number,
-            qty, Decimal('0.00'), qty, new_bal, eff_rate
+            qty, Decimal('0.00'), qty, new_bal, eff_rate, getattr(bill, 'unit', None)
         )
 
     net_total = Decimal(str(bill.net_total or 0))
@@ -223,11 +297,11 @@ def sync_purchase_invoice(bill):
     rem = f'Purchase Bill #{bill.bill_number} - {party_name}'
 
     if net_total > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Purchases', against=party_name or 'Creditors', party_type='Supplier', party=party_name, debit=net_total, credit=Decimal('0.00'), remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Purchases', against=party_name or 'Creditors', party_type='Supplier', party=party_name, debit=net_total, credit=Decimal('0.00'), remarks=rem, company=comp, unit=getattr(bill, 'unit', None))
     if tax_amount > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Input GST', against=party_name or 'Creditors', party_type='Supplier', party=party_name, debit=tax_amount, credit=Decimal('0.00'), remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Input GST', against=party_name or 'Creditors', party_type='Supplier', party=party_name, debit=tax_amount, credit=Decimal('0.00'), remarks=rem, company=comp, unit=getattr(bill, 'unit', None))
     if grand_total > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Creditors', against='Purchases, Input GST', party_type='Supplier', party=party_name, debit=Decimal('0.00'), credit=grand_total, remarks=rem, company=comp)
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Purchase Invoice', voucher_no=bill.bill_number, account='Creditors', against='Purchases, Input GST', party_type='Supplier', party=party_name, debit=Decimal('0.00'), credit=grand_total, remarks=rem, company=comp, unit=getattr(bill, 'unit', None))
 
 
 @transaction.atomic

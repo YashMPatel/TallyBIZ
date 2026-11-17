@@ -152,7 +152,7 @@ export const Login: React.FC = () => {
         throw new Error(data.error || 'Login failed. Please check credentials.');
       }
 
-      login(data.access, data.user);
+      localStorage.setItem('access_token', data.access || data.token || ''); localStorage.setItem('token', data.access || data.token || ''); login(data.access, data.user);
     } catch (err: any) {
       setError(err.message || 'Server error occurred');
     } finally {

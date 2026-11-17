@@ -16,7 +16,29 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
   const { user } = useAuth();
   const u: any = user || {};
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'password'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'company' | 'password'>('profile');
+
+  // Company & Invoice Branding States
+  const [compId, setCompId] = useState<number | null>(null);
+  const [compName, setCompName] = useState('');
+  const [tagline, setTagline] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
+  const [compPhone, setCompPhone] = useState('');
+  const [compEmail, setCompEmail] = useState('');
+  const [compAddress, setCompAddress] = useState('');
+  const [gstin, setGstin] = useState('');
+  const [pan, setPan] = useState('');
+  const [stateName, setStateName] = useState('Gujarat (24)');
+  const [upiId, setUpiId] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [bankBranch, setBankBranch] = useState('');
+  const [bankAccName, setBankAccName] = useState('');
+  const [bankAccNo, setBankAccNo] = useState('');
+  const [bankIfsc, setBankIfsc] = useState('');
+  const [logoDataUrl, setLogoDataUrl] = useState('');
+  const [invoiceTerms, setInvoiceTerms] = useState('');
+  const [compSaving, setCompSaving] = useState(false);
+  const [compSavedMsg, setCompSavedMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [firstName, setFirstName] = useState('');
@@ -72,12 +94,136 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
     }
   };
 
+  const loadCompanyBranding = async () => {
+    setCompSavedMsg('');
+    let cid = localStorage.getItem('active_company_id') || '';
+    try {
+      const stored = JSON.parse(localStorage.getItem('active_company') || '{}');
+      if (!cid && stored?.id) cid = String(stored.id);
+      if (stored?.id) setCompId(Number(stored.id));
+      if (stored?.name) setCompName(stored.name);
+      if (stored?.address) setCompAddress(stored.address);
+      if (stored?.gstin) setGstin(stored.gstin);
+      if (stored?.state) setStateName(stored.state);
+    } catch {}
+    try {
+      const q = cid ? `?company_id=${cid}` : '';
+      const res = await fetch(`${API_BASE}/accounts/company-branding/${q}`, {
+        headers: { ...getAuthHeader() },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCompId(d.id ?? (cid ? Number(cid) : null));
+        setCompName(d.name || '');
+        setTagline(d.tagline || '');
+        setContactPerson(d.contact_person || '');
+        setCompPhone(d.phone || '');
+        setCompEmail(d.email || '');
+        setCompAddress(d.address || '');
+        setGstin(d.gstin || '');
+        setPan(d.pan || '');
+        setStateName(d.state || 'Gujarat (24)');
+        setUpiId(d.upi_id || '');
+        setBankName(d.bank_name || '');
+        setBankBranch(d.bank_branch || '');
+        setBankAccName(d.bank_account_name || d.name || '');
+        setBankAccNo(d.bank_account_no || '');
+        setBankIfsc(d.bank_ifsc || '');
+        setLogoDataUrl(d.logo_data_url || '');
+        setInvoiceTerms(d.invoice_terms || '');
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     if (isOpen) {
       setActiveTab('profile');
       void loadProfile();
+      void loadCompanyBranding();
     }
   }, [isOpen]);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 220;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          setLogoDataUrl(canvas.toDataURL('image/png'));
+        }
+      };
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveCompanyBranding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCompSaving(true);
+    setCompSavedMsg('');
+    try {
+      const cid = compId || localStorage.getItem('active_company_id') || '';
+      const q = cid ? `?company_id=${cid}` : '';
+      const res = await fetch(`${API_BASE}/accounts/company-branding/${q}`, {
+        method: 'PUT',
+        headers: {
+          ...getAuthHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: compName,
+          tagline,
+          contact_person: contactPerson,
+          phone: compPhone,
+          email: compEmail,
+          address: compAddress,
+          gstin,
+          pan,
+          state: stateName,
+          upi_id: upiId,
+          bank_name: bankName,
+          bank_branch: bankBranch,
+          bank_account_name: bankAccName,
+          bank_account_no: bankAccNo,
+          bank_ifsc: bankIfsc,
+          logo_data_url: logoDataUrl,
+          invoice_terms: invoiceTerms,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save company branding');
+      try {
+        const prevComp = JSON.parse(localStorage.getItem('active_company') || '{}');
+        const merged = { ...prevComp, ...data };
+        localStorage.setItem('active_company', JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent('company-branding-updated', { detail: merged }));
+      } catch {}
+      setCompSavedMsg('Company Logo, Contact, Bank & UPI QR settings saved! All invoices will use these defaults.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to save branding');
+    } finally {
+      setCompSaving(false);
+    }
+  };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -243,7 +389,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
         style={{
           background: '#fff',
           borderRadius: '12px',
-          width: '640px',
+          width: '740px',
           maxWidth: '96vw',
           maxHeight: '90vh',
           display: 'flex',
@@ -362,6 +508,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
             }}
           >
             Profile &amp; Permissions
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('company')}
+            style={{
+              padding: '10px 4px',
+              border: 'none',
+              borderBottom: activeTab === 'company' ? '2px solid #0284c7' : '2px solid transparent',
+              background: 'transparent',
+              color: activeTab === 'company' ? '#0284c7' : '#64748b',
+              fontWeight: '700',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Company &amp; Invoice Branding (Logo / UPI QR)
           </button>
           <button
             type="button"
@@ -680,6 +842,146 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
                 </div>
               </form>
             </div>
+          ) : activeTab === 'company' ? (
+            <form onSubmit={handleSaveCompanyBranding} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {compSavedMsg && (
+                <div style={{ padding: '10px 12px', background: '#dcfce7', border: '1px solid #86efac', color: '#166534', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>
+                  ✓ {compSavedMsg}
+                </div>
+              )}
+
+              {/* Logo & Monogram Preview Card */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', padding: '12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {logoDataUrl ? (
+                    <img
+                      src={logoDataUrl}
+                      alt="Company Logo"
+                      style={{ width: '58px', height: '58px', objectFit: 'contain', borderRadius: '8px', background: '#fff', border: '1px solid #cbd5e1', padding: '4px' }}
+                    />
+                  ) : (
+                    <div style={{ width: '58px', height: '58px', borderRadius: '8px', background: 'linear-gradient(135deg, #0284c7, #0f172a)', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '18px', letterSpacing: '1px' }}>
+                      {(compName || 'TB').split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || 'TB'}
+                      <span style={{ fontSize: '8px', fontWeight: '600', opacity: 0.85, marginTop: '2px' }}>LOGO</span>
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a' }}>
+                      {logoDataUrl ? 'Custom Company Logo Active' : 'Auto Temporary Monogram Logo Active'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>
+                      Appears on top-left of every Tax Invoice &amp; Proforma PDF
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <label style={{ padding: '6px 12px', background: '#0284c7', color: '#fff', borderRadius: '5px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                    Upload Logo
+                    <input type="file" accept="image/*" onChange={handleLogoUpload} style={{ display: 'none' }} />
+                  </label>
+                  {logoDataUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setLogoDataUrl('')}
+                      style={{ padding: '6px 10px', background: '#fee2e2', color: '#b91c1c', border: 'none', borderRadius: '5px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+                    >
+                      Use Auto Monogram
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Identity & Contact Details */}
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>
+                1. Company Identity &amp; Contact Details (Printed on Invoice Header)
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Company / Firm Name *</label>
+                  <input type="text" required value={compName} onChange={(e) => setCompName(e.target.value)} style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Business Tagline / Work Description</label>
+                  <input type="text" value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder="e.g. Precision Engineering & Industrial Supplies" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Proprietor / Contact Person Name</label>
+                  <input type="text" value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} placeholder="e.g. Mr. Manish Patel" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Contact Phone Number</label>
+                  <input type="text" value={compPhone} onChange={(e) => setCompPhone(e.target.value)} placeholder="e.g. +91 98255 30601" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Company Email Address</label>
+                  <input type="email" value={compEmail} onChange={(e) => setCompEmail(e.target.value)} placeholder="e.g. billing@company.com" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>State &amp; Code</label>
+                  <input type="text" value={stateName} onChange={(e) => setStateName(e.target.value)} placeholder="Gujarat (24)" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>GSTIN Number</label>
+                  <input type="text" value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} placeholder="24ABCDE1234F1Z5" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>PAN Number</label>
+                  <input type="text" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Registered Office / Factory Address</label>
+                <textarea rows={2} value={compAddress} onChange={(e) => setCompAddress(e.target.value)} style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+              </div>
+
+              {/* Bank & UPI QR Code Details */}
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px', marginTop: '4px' }}>
+                2. Bank Payment Details &amp; Auto UPI QR Code
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#0369a1' }}>UPI ID (Auto-Generates QR Code on Invoice)</label>
+                  <input type="text" value={upiId} onChange={(e) => setUpiId(e.target.value.trim())} placeholder="e.g. business@okaxis or 9825530601@upi" style={{ width: '100%', padding: '7px 8px', border: '1px solid #7dd3fc', background: '#f0f9ff', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Bank Name</label>
+                  <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="e.g. HDFC Bank / Kotak Mahindra Bank" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Account Holder Name</label>
+                  <input type="text" value={bankAccName} onChange={(e) => setBankAccName(e.target.value)} placeholder="e.g. TallyBIZ Pvt Ltd" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Account Number</label>
+                  <input type="text" value={bankAccNo} onChange={(e) => setBankAccNo(e.target.value)} placeholder="e.g. 50200012345678" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>IFSC Code</label>
+                  <input type="text" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} placeholder="e.g. HDFC0000240" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Bank Branch &amp; Location</label>
+                  <input type="text" value={bankBranch} onChange={(e) => setBankBranch(e.target.value)} placeholder="e.g. Vastral Branch, Ahmedabad" style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box' }} />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Default Invoice Terms &amp; Conditions</label>
+                <textarea rows={3} value={invoiceTerms} onChange={(e) => setInvoiceTerms(e.target.value)} style={{ width: '100%', padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: '5px', marginTop: '3px', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: '12px' }} />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+                <button type="button" onClick={onClose} style={{ padding: '8px 16px', background: '#e2e8f0', color: '#334155', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: '600' }}>
+                  Close
+                </button>
+                <button type="submit" disabled={compSaving} style={{ padding: '8px 18px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: '700' }}>
+                  {compSaving ? 'Saving...' : 'Save Company & Invoice Settings'}
+                </button>
+              </div>
+            </form>
           ) : (
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>

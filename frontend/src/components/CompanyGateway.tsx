@@ -34,6 +34,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
   const [compName, setCompName] = useState('');
   const [country, setCountry] = useState('India');
   const [currency, setCurrency] = useState('INR');
+  const [businessType, setBusinessType] = useState('HYBRID');
   const [gstin, setGstin] = useState('');
   const [address, setAddress] = useState('');
   const [busy, setBusy] = useState(false);
@@ -41,12 +42,16 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (companies.length === 0) {
-      setShowCreateForm(true);
-    } else {
-      setSelectedIndex((prev) => (prev >= companies.length ? 0 : prev));
+    if (companies.length > 0) {
+      const lastId = localStorage.getItem('last_active_company_id') || localStorage.getItem('active_company_id');
+      const foundIdx = lastId ? companies.findIndex((c) => String(c.id) === String(lastId)) : -1;
+      if (foundIdx >= 0) {
+        setSelectedIndex(foundIdx);
+      } else {
+        setSelectedIndex((prev) => (prev >= companies.length ? 0 : prev));
+      }
     }
-  }, [companies.length]);
+  }, [companies]);
 
   const getAuthHeaders = (): Record<string, string> => {
     const token = localStorage.getItem('access_token');
@@ -112,6 +117,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
           name: compName.trim(),
           country,
           currency,
+          business_type: businessType,
           symbol: currency === 'INR' ? '₹' : '$',
           gstin: gstin.trim(),
           address: address.trim(),
@@ -318,9 +324,7 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                 <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>
                   Create New Company (Auto-assigns you as Admin)
                 </h3>
-                {companies.length > 0 && (
-                  <button type="button" onClick={() => { setShowCreateForm(false); setStatusMsg(null); }} style={{ padding: '10px 18px', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>← Back to List</button>
-                )}
+                <button type="button" onClick={() => { setShowCreateForm(false); setStatusMsg(null); if (onRefreshCompanies) onRefreshCompanies(); }} style={{ padding: '10px 18px', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>← Back to List</button>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
@@ -336,6 +340,20 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                     onChange={(e) => setCompName(e.target.value)}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
                   />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                    Company Business Model / Division Structure *
+                  </label>
+                  <select
+                    value={businessType}
+                    onChange={(e) => setBusinessType(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#f8fafc', fontWeight: 600 }}
+                  >
+                    <option value="HYBRID">Hybrid (Head Office + Trading Division + Manufacturing Unit)</option>
+                    <option value="TRADING">Trading Only (Buying &amp; Selling Division)</option>
+                    <option value="MANUFACTURING">Manufacturing Unit Only (Production &amp; BOM)</option>
+                  </select>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
