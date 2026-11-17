@@ -399,3 +399,5 @@ export const GSTTab: FC<GSTTabProps> = ({ gstData = [] }) => {
     </div>
   );
 };
+
+export default GSTTab;
