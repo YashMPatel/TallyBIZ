@@ -1584,8 +1584,12 @@ class DatabaseRestoreAPIView(APIView):
                             else:
                                 kwargs['invoice_id'] = pk_map.get('selling.salesinvoice', {}).get(old_inv_id, old_inv_id)
 
-                        new_obj = m(**kwargs)
-                        new_obj.save()
+                        if lbl == 'accounts.userprofile' and kwargs.get('user_id'):
+                            u_id = kwargs.pop('user_id')
+                            new_obj, _ = m.objects.update_or_create(user_id=u_id, defaults=kwargs)
+                        else:
+                            new_obj = m(**kwargs)
+                            new_obj.save()
                         if old_pk is not None:
                             pk_map[lbl][old_pk] = new_obj.pk
                         restored_count += 1
