@@ -85,7 +85,10 @@ class StockLedgerAPIView(generics.ListAPIView):
             qs = qs.filter(item_id=item_id)
         uid = self.request.headers.get('X-Unit-Id') or self.request.GET.get('unit_id')
         if uid and str(uid) not in ('all', 'ALL', 'undefined', 'null', ''):
-            qs = qs.filter(unit_id=int(uid))
+            from accounts.models import BusinessUnit
+            u_obj = BusinessUnit.objects.filter(id=int(uid)).first()
+            if u_obj and u_obj.unit_type != 'HO':
+                qs = qs.filter(unit_id=int(uid))
         return qs
 
 StockLedgerEntryListAPIView = StockLedgerAPIView

@@ -252,7 +252,7 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
             else:
                 qs = qs.filter(company=comp)
         u = resolve_active_unit(self.request, comp)
-        if u:
+        if u and u.unit_type != 'HO':
             qs = qs.filter(unit=u)
         return qs
 

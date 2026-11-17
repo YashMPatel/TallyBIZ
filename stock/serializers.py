@@ -11,9 +11,12 @@ class ItemSerializer(serializers.ModelSerializer):
         req = self.context.get('request')
         uid = (req.headers.get('X-Unit-Id') or req.GET.get('unit_id')) if req else None
         if uid and str(uid) not in ('all', 'ALL', 'undefined', 'null', ''):
-            from django.db.models import Sum
-            val = StockLedgerEntry.objects.filter(item=obj, unit_id=int(uid)).aggregate(q=Sum('actual_qty'))['q']
-            return float(val or 0)
+            from accounts.models import BusinessUnit
+            u_obj = BusinessUnit.objects.filter(id=int(uid)).first()
+            if u_obj and u_obj.unit_type != 'HO':
+                from django.db.models import Sum
+                val = StockLedgerEntry.objects.filter(item=obj, unit_id=int(uid)).aggregate(q=Sum('actual_qty'))['q']
+                return float(val or 0)
         return float(obj.current_stock or 0)
 
     class Meta:

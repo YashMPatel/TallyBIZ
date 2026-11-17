@@ -453,9 +453,7 @@ class GeneralLedgerAPIView(APIView):
         ho_unit_filter = None
         if unit_id and str(unit_id) not in ('all', 'ALL', 'undefined', 'null', ''):
             u_obj = BusinessUnit.objects.filter(id=int(unit_id)).first()
-            if u_obj and u_obj.unit_type == 'HO':
-                ho_unit_filter = int(unit_id)
-            else:
+            if u_obj and u_obj.unit_type != 'HO':
                 filters['unit_id'] = int(unit_id)
 
         try:
@@ -540,7 +538,7 @@ class DashboardSummaryAPIView(APIView):
             sales_qs = SalesInvoice.objects.filter(company=company)
             pur_qs = PurchaseInvoice.objects.filter(company=company)
             active_u = resolve_active_unit(request, company)
-            if active_u:
+            if active_u and active_u.unit_type != 'HO':
                 sales_qs = sales_qs.filter(unit=active_u)
                 pur_qs = pur_qs.filter(unit=active_u)
 
@@ -551,11 +549,11 @@ class DashboardSummaryAPIView(APIView):
             total_purchases = Decimal('0.00')
 
         try:
-            bank_entries = GLEntry.objects.filter(account__in=['Bank Account', 'Cash Account'], is_cancelled=False)
+            bank_entries = GLEntry.objects.filter(account__regex=r'(?i)^(bank|cash)', is_cancelled=False)
             if company:
                 bank_entries = bank_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else bank_entries.filter(company=company)
             active_u = resolve_active_unit(request, company)
-            if active_u:
+            if active_u and active_u.unit_type != 'HO':
                 bank_entries = bank_entries.filter(unit=active_u)
             bank_debit = bank_entries.aggregate(total=Sum('debit'))['total'] or 0
             bank_credit = bank_entries.aggregate(total=Sum('credit'))['total'] or 0

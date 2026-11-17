@@ -79,7 +79,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           TallyBIZ ERP
         </h2>
         <span style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          {isMfg ? 'FACTORY / PRODUCTION DESK' : isTrading ? 'SALES & PURCHASE DESK' : isHO ? 'HEAD OFFICE FINANCE' : 'CONSOLIDATED OWNER VIEW'}
+          {isMfg ? 'FACTORY / PRODUCTION DESK' : isTrading ? 'SALES & PURCHASE DESK' : isHO ? 'HEAD OFFICE (CEO / CA VIEW)' : 'CONSOLIDATED OWNER VIEW'}
         </span>
       </div>
 
@@ -106,7 +106,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         )}
 
         {/* TRADING & CONSOLIDATED: Selling, Buying, Customers, Suppliers, Returns */}
-        {(isTrading || isAll) && (
+        {(isTrading || isHO || isAll) && (
           <>
             <button onClick={() => setActiveTab('selling')} style={btnStyle('selling')}>
               <ShoppingCart size={16} /> Selling (Invoices &amp; Orders)
@@ -131,14 +131,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         )}
 
         {/* MANUFACTURING & CONSOLIDATED: Production, BOM & Sales Production Requests */}
-        {(isMfg || isAll) && (
+        {(isMfg || isHO || isAll) && (
           <button onClick={() => setActiveTab('production')} style={btnStyle('production', '#34d399')}>
             <Factory size={16} /> {isMfg ? 'Production, MRP & Requests' : 'Production & BOM'}
           </button>
         )}
 
         {/* TRADING, MANUFACTURING & CONSOLIDATED: Stock & Stock Movement */}
-        {(isTrading || isMfg || isAll) && (
+        {(isTrading || isMfg || isHO || isAll) && (
           <>
             <button onClick={() => setActiveTab('stock')} style={btnStyle('stock')}>
               <Package size={16} /> {isMfg ? 'Factory Stock & Dispatch' : 'Stock (Items)'}
