@@ -1,7 +1,14 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Printer, Download } from 'lucide-react';
 import type { PurchaseInvoice, Supplier, Item } from '../types/erp';
 import html2pdf from 'html2pdf.js';
+import {
+  type CompanyBrandingData,
+  getInitialCompanyBranding,
+  fetchFreshCompanyBranding,
+  getCompanyMonogram,
+  formatAmountInWords,
+} from '../utils/invoiceBranding';
 
 interface PurchaseBillPrintModalProps {
   bill: PurchaseInvoice | null;
@@ -18,6 +25,15 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
   company,
   onClose,
 }) => {
+  const [branding, setBranding] = useState<CompanyBrandingData>(() =>
+    getInitialCompanyBranding(company)
+  );
+
+  useEffect(() => {
+    setBranding(getInitialCompanyBranding(company));
+    fetchFreshCompanyBranding(company).then(setBranding);
+  }, [company, bill?.id]);
+
   const formattedParty = (bill?.supplier_name || 'Supplier').replace(/[^a-zA-Z0-9]/g, '_');
   const targetFileName = bill ? `PurchaseBill_${bill.bill_number}_${formattedParty}` : '';
 
@@ -40,11 +56,11 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
     if (!element) return;
 
     const opt: any = {
-      margin: [10, 10, 10, 10],
-      filename: `${bill.bill_number}.pdf`,
+      margin: [8, 8, 8, 8],
+      filename: `${targetFileName || bill.bill_number}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     };
 
     (html2pdf as any)().set(opt).from(element).save();
@@ -54,42 +70,51 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
   const taxTotal = parseFloat(bill.tax_amount.toString()) || 0;
   const grandTotal = parseFloat(bill.grand_total.toString()) || 0;
   const halfTax = taxTotal / 2;
+  const taxRate = parseFloat((bill as any).tax_rate?.toString() || '18') || 18;
+  const halfRateLabel = (taxRate / 2).toFixed(taxRate % 2 === 0 ? 0 : 2);
+  const fullRateLabel = taxRate.toFixed(taxRate % 1 === 0 ? 0 : 2);
 
-  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
-  const companyStateCode = company?.gstin ? company.gstin.substring(0, 2) : '24';
+  const sym = branding.currency_symbol || '₹';
+  const companyStateCode = branding.gstin ? branding.gstin.substring(0, 2) : '24';
+  const isInterState = Boolean(
+    supplier?.gstin && supplier.gstin.trim().length >= 2 && !supplier.gstin.startsWith(companyStateCode)
+  );
+  const roundOff = parseFloat((grandTotal - (netTotal + taxTotal)).toFixed(2));
 
   return (
     <div
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.65)',
+        background: 'rgba(15, 23, 42, 0.7)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 200,
         overflowY: 'auto',
-        padding: '20px',
+        padding: '16px',
       }}
     >
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 0;
+          margin: 8mm;
         }
         @media print {
           html, body {
             width: 100% !important;
-            height: 100% !important;
+            height: auto !important;
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
           #printable-purchase-bill, #printable-purchase-bill * {
-            visibility: visible;
+            visibility: visible !important;
           }
           #printable-purchase-bill {
             position: absolute !important;
@@ -97,7 +122,7 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
             top: 0 !important;
             width: 100% !important;
             margin: 0 !important;
-            padding: 15mm !important;
+            padding: 6mm !important;
             box-shadow: none !important;
             border: none !important;
             box-sizing: border-box !important;
@@ -112,12 +137,13 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
         style={{
           background: '#fff',
           borderRadius: '12px',
-          width: '850px',
+          width: '880px',
           maxWidth: '100%',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
           display: 'flex',
           flexDirection: 'column',
           maxHeight: '94vh',
+          overflow: 'hidden',
         }}
       >
         {/* Controls Header */}
@@ -127,14 +153,15 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            padding: '16px 24px',
+            padding: '14px 22px',
             borderBottom: '1px solid #e2e8f0',
+            background: '#fff',
           }}
         >
-          <span style={{ fontWeight: '600', color: '#334155', fontSize: '16px' }}>
-            Purchase Bill Preview - {bill.bill_number}
+          <span style={{ fontWeight: '600', color: '#334155', fontSize: '15px' }}>
+            Purchase Voucher &amp; ITC Bill Preview — {bill.bill_number}
           </span>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               onClick={handlePrint}
               style={{
@@ -144,13 +171,14 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                 background: '#0284c7',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 16px',
+                padding: '7px 14px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              <Printer size={16} /> Print / Save PDF
+              <Printer size={15} /> Print / Save PDF
             </button>
 
             <button
@@ -162,11 +190,11 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                 background: '#10b981',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 14px',
+                padding: '7px 14px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
-                fontSize: '13px'
+                fontSize: '13px',
               }}
             >
               <Download size={15} /> Download PDF
@@ -181,13 +209,14 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                 background: '#ef4444',
                 color: '#fff',
                 border: 'none',
-                padding: '8px 14px',
+                padding: '7px 12px',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              <X size={16} /> Close
+              <X size={15} /> Close
             </button>
           </div>
         </div>
@@ -196,97 +225,149 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
         <div
           id="printable-purchase-bill"
           style={{
-            padding: '30px 36px',
+            padding: '26px 32px',
             overflowY: 'auto',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontFamily: 'Arial, system-ui, sans-serif',
             color: '#0f172a',
             boxSizing: 'border-box',
             width: '100%',
           }}
         >
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0284c7', paddingBottom: '16px' }}>
-            <div style={{ maxWidth: '60%' }}>
-              <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', fontWeight: 'bold', color: '#0284c7' }}>
-                {company?.name || 'TallyBIZ Pvt Ltd'}
-              </h1>
-              <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-                {company?.address || ''}<br />
-                {company?.gstin ? (
-                  <>GSTIN / Tax ID: <strong>{company.gstin}</strong></>
-                ) : null}
-                {company?.state ? <> | State: {company.state}</> : null}
-                {(company?.gstin || company?.state) ? <br /> : null}
-                Recipient Branch: Central Warehouse
-              </p>
+          {/* Branded Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #0f172a', paddingBottom: '14px' }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', maxWidth: '62%' }}>
+              {branding.logo_data_url ? (
+                <img
+                  src={branding.logo_data_url}
+                  alt={branding.name}
+                  style={{ width: '48px', height: '48px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '46px',
+                    height: '46px',
+                    borderRadius: '8px',
+                    background: '#0f172a',
+                    color: '#38bdf8',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: '16px',
+                    flexShrink: 0,
+                  }}
+                >
+                  {getCompanyMonogram(branding.name)}
+                </div>
+              )}
+              <div>
+                <h1 style={{ margin: '0 0 3px 0', fontSize: '20px', fontWeight: 800, color: '#0f172a' }}>
+                  {branding.name}
+                </h1>
+                {branding.tagline && (
+                  <div style={{ fontSize: '11px', color: '#0284c7', fontWeight: 600, marginBottom: '2px' }}>{branding.tagline}</div>
+                )}
+                <p style={{ margin: 0, fontSize: '11.5px', color: '#475569', lineHeight: '1.45' }}>
+                  {branding.address && <>{branding.address}<br /></>}
+                  {branding.gstin && <><strong>GSTIN:</strong> {branding.gstin} </>}
+                  {branding.pan && <>| <strong>PAN:</strong> {branding.pan} </>}
+                  {branding.state && <>| <strong>State:</strong> {branding.state}</>}
+                  {(branding.phone || branding.email) && (
+                    <><br />{[branding.phone, branding.email].filter(Boolean).join(' | ')}</>
+                  )}
+                </p>
+              </div>
             </div>
+
             <div style={{ textAlign: 'right' }}>
-              <span style={{ display: 'inline-block', background: '#fef3c7', color: '#b45309', padding: '4px 10px', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px', letterSpacing: '0.05em', marginBottom: '6px' }}>
-                PURCHASE VOUCHER
+              <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b', padding: '4px 10px', borderRadius: '4px', fontWeight: 800, fontSize: '12px', letterSpacing: '0.05em', marginBottom: '6px' }}>
+                PURCHASE BILL / INWARD VOUCHER
               </span>
-              <p style={{ margin: 0, fontSize: '12px', color: '#334155', lineHeight: '1.4' }}>
+              <p style={{ margin: 0, fontSize: '12px', color: '#1e293b', lineHeight: '1.5' }}>
                 <strong>Bill Ref #:</strong> {bill.bill_number}<br />
-                <strong>Posting Date:</strong> {bill.posting_date}
+                <strong>Bill Date:</strong> {bill.posting_date}<br />
+                {(bill as any).due_date && <><strong>Due Date:</strong> {(bill as any).due_date}<br /></>}
+                <strong>Status:</strong> <span style={{ color: '#15803d', fontWeight: 700 }}>{bill.status}</span>
               </p>
             </div>
           </div>
 
-          {/* Supplier Details */}
-          <div style={{ margin: '18px 0', padding: '12px 16px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 'bold' }}>
-              Supplier / Vendor (Inward From)
-            </span>
-            <h3 style={{ margin: '4px 0 2px 0', fontSize: '16px', color: '#0f172a' }}>
-              {bill.supplier_name}
-            </h3>
-            <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.4' }}>
-              {supplier?.address && <>{supplier.address}<br /></>}
-              {[supplier?.city, supplier?.postal_code].filter(Boolean).join(' - ') || 'Vendor Address Registered'}<br />
-              <strong>GSTIN / Tax ID:</strong> {supplier?.gstin || 'Unregistered'} | <strong>Category:</strong> {supplier?.gst_category || 'Regular Registered'}
-            </p>
+          {/* Supplier Details Box */}
+          <div style={{ margin: '16px 0', padding: '12px 16px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+            <div>
+              <span style={{ fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 700 }}>
+                Supplier / Vendor (Billed From)
+              </span>
+              <h3 style={{ margin: '3px 0 3px 0', fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>
+                {bill.supplier_name}
+              </h3>
+              <p style={{ margin: 0, fontSize: '11.5px', color: '#475569', lineHeight: '1.45' }}>
+                {supplier?.address && <>{supplier.address}<br /></>}
+                {[supplier?.city, supplier?.postal_code].filter(Boolean).join(' - ') || 'Registered Vendor Address'}<br />
+                <strong>Supplier GSTIN:</strong> <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{supplier?.gstin || 'Unregistered'}</span> |{' '}
+                <strong>GST Category:</strong> {supplier?.gst_category || 'Registered Regular'}
+              </p>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: '11.5px', color: '#334155' }}>
+              <span style={{ fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', fontWeight: 700 }}>
+                Place of Supply &amp; ITC
+              </span>
+              <div style={{ marginTop: '4px', fontWeight: 700 }}>
+                {isInterState ? 'Inter-State Supply (IGST)' : `Intra-State (${branding.state})`}
+              </div>
+              <div style={{ color: '#15803d', fontWeight: 600, marginTop: '2px' }}>
+                {supplier?.gstin ? 'Eligible for GSTR-2B ITC' : 'Unregistered Purchase'}
+              </div>
+            </div>
           </div>
 
-          {/* Items Table */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', fontSize: '12px', tableLayout: 'auto' }}>
+          {/* Items Table with HSN/SAC */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px', fontSize: '12px' }}>
             <thead>
-              <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
-                <th style={{ padding: '8px 10px', textAlign: 'left', width: '30px' }}>#</th>
-                <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item Inward Description</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '60px' }}>Qty</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '85px' }}>Cost ({sym})</th>
-                <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', width: '105px' }}>Net Amount ({sym})</th>
+              <tr style={{ background: '#0f172a', color: '#f8fafc' }}>
+                <th style={{ padding: '8px 8px', textAlign: 'left', width: '28px' }}>#</th>
+                <th style={{ padding: '8px 8px', textAlign: 'left' }}>Item / Inward Description</th>
+                <th style={{ padding: '8px 8px', textAlign: 'center', width: '78px' }}>HSN/SAC</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', width: '68px' }}>Qty</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', width: '85px' }}>Rate ({sym})</th>
+                <th style={{ padding: '8px 8px', textAlign: 'center', width: '54px' }}>Disc %</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', width: '105px' }}>Taxable ({sym})</th>
               </tr>
             </thead>
             <tbody>
               {bill.items && bill.items.length > 0 ? (
                 bill.items.map((itemRow, idx) => {
-                  const masterItem = itemsMaster.find(m => m.id === itemRow.item);
+                  const masterItem = itemsMaster.find((m) => m.id === itemRow.item);
                   const isFoc = (itemRow as any).is_foc;
                   const discPct = parseFloat((itemRow as any).discount_percentage || '0');
+                  const hsnCode = (masterItem as any)?.hsn_code || '-';
 
                   return (
-                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '8px 10px' }}>{idx + 1}</td>
-                      <td style={{ padding: '8px 10px' }}>
+                    <tr key={idx} style={{ borderBottom: '1px solid #cbd5e1' }}>
+                      <td style={{ padding: '8px 8px' }}>{idx + 1}</td>
+                      <td style={{ padding: '8px 8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <strong>{masterItem ? masterItem.item_name : `Item #${itemRow.item}`}</strong>
+                          <strong>{masterItem ? masterItem.item_name : (itemRow as any).description || `Item #${itemRow.item}`}</strong>
                           {isFoc && (
                             <span style={{ background: '#fef3c7', color: '#b45309', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>
                               FOC / Sample
                             </span>
                           )}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#64748b' }}>Code: {masterItem?.item_code || '-'} | Unit: {masterItem?.unit || 'Nos'}</div>
+                        <div style={{ fontSize: '10.5px', color: '#64748b' }}>
+                          Code: {masterItem?.item_code || '-'} | Unit: {masterItem?.unit || 'Nos'}
+                        </div>
                       </td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{itemRow.quantity}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                      <td style={{ padding: '8px 8px', textAlign: 'center', fontFamily: 'monospace' }}>{hsnCode}</td>
+                      <td style={{ padding: '8px 8px', textAlign: 'right' }}>{itemRow.quantity}</td>
+                      <td style={{ padding: '8px 8px', textAlign: 'right' }}>
                         {isFoc ? '0.00' : parseFloat(itemRow.rate.toString()).toFixed(2)}
                       </td>
-                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      <td style={{ padding: '8px 8px', textAlign: 'center' }}>
                         {discPct > 0 ? `${discPct}%` : '-'}
                       </td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '600' }}>
+                      <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700 }}>
                         {sym} {parseFloat(itemRow.amount.toString()).toFixed(2)}
                       </td>
                     </tr>
@@ -294,65 +375,84 @@ export const PurchaseBillPrintModal: React.FC<PurchaseBillPrintModalProps> = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan={6} style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>No items found</td>
+                  <td colSpan={7} style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>
+                    No line items found
+                  </td>
                 </tr>
               )}
             </tbody>
           </table>
 
-          {/* Tax Breakdown & Total */}
-          {(() => {
-            const isInterState = supplier?.gstin && !supplier.gstin.startsWith(companyStateCode);
-            return (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-                <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                    <span>Subtotal (Net Purchases):</span>
-                    <span>{sym} {netTotal.toFixed(2)}</span>
-                  </div>
-                  {isInterState ? (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                      <span>Input IGST ITC (18.00%):</span>
-                      <span>{sym} {taxTotal.toFixed(2)}</span>
-                    </div>
-                  ) : (
-                    <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                        <span>Input CGST ITC (9.00%):</span>
-                        <span>{sym} {halfTax.toFixed(2)}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                        <span>Input SGST ITC (9.00%):</span>
-                        <span>{sym} {halfTax.toFixed(2)}</span>
-                      </div>
-                    </>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d', fontWeight: 'bold' }}>
-                    <span>Total Input Tax Credit:</span>
-                    <span>{sym} {taxTotal.toFixed(2)}</span>
-                  </div>
-                  <hr style={{ border: 'none', borderTop: '2px solid #0284c7', margin: '4px 0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', color: '#0f172a' }}>
-                    <span>Total Amount Payable:</span>
-                    <span style={{ color: '#0284c7' }}>{sym} {grandTotal.toFixed(2)}</span>
-                  </div>
-                </div>
+          {/* Amount in Words + Tax Breakdown */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginTop: '8px' }}>
+            <div style={{ flex: 1, background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '10px 14px', fontSize: '11.5px' }}>
+              <div style={{ fontWeight: 700, color: '#475569', textTransform: 'uppercase', fontSize: '10px' }}>
+                Bill Total Amount (In Words)
               </div>
-            );
-          })()}
+              <div style={{ fontWeight: 700, color: '#0f172a', marginTop: '3px', fontSize: '12px' }}>
+                {formatAmountInWords(grandTotal, sym)}
+              </div>
+              <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', color: '#475569', fontSize: '11px', lineHeight: '1.45' }}>
+                <strong>Internal Verification &amp; Audit Note:</strong><br />
+                1. Goods inspected and inwarded into warehouse stock ledger.<br />
+                2. Input Tax Credit (ITC) reconciled under GST Section 16.<br />
+                3. Posted to Supplier Creditors &amp; Input GST Ledgers.
+              </div>
+            </div>
 
-          {/* Footer */}
-          <div style={{ marginTop: '36px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '11px', color: '#64748b' }}>
-            <div>
-              <p style={{ margin: '0 0 2px 0', fontWeight: 'bold', color: '#334155' }}>Internal Verification Note:</p>
-              1. Inventory goods inspected and accepted into warehouse stock.<br />
-              2. Eligible for Input Tax Credit (ITC) under GST Section 16.<br />
-              3. Voucher posted to Creditors & Inventory Ledgers.
+            <div style={{ width: '310px', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '10px 14px', fontSize: '12px', background: '#fff' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', marginBottom: '5px' }}>
+                <span>Taxable Subtotal:</span>
+                <span>{sym} {netTotal.toFixed(2)}</span>
+              </div>
+              {isInterState ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', marginBottom: '5px' }}>
+                  <span>Input IGST ITC ({fullRateLabel}%):</span>
+                  <span>{sym} {taxTotal.toFixed(2)}</span>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', marginBottom: '5px' }}>
+                    <span>Input CGST ITC ({halfRateLabel}%):</span>
+                    <span>{sym} {halfTax.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', marginBottom: '5px' }}>
+                    <span>Input SGST ITC ({halfRateLabel}%):</span>
+                    <span>{sym} {halfTax.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#15803d', fontWeight: 700, marginBottom: '5px' }}>
+                <span>Total Input Tax Credit:</span>
+                <span>{sym} {taxTotal.toFixed(2)}</span>
+              </div>
+              {Math.abs(roundOff) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', marginBottom: '5px' }}>
+                  <span>Round Off:</span>
+                  <span>{roundOff >= 0 ? '+' : ''}{sym} {roundOff.toFixed(2)}</span>
+                </div>
+              )}
+              <hr style={{ border: 'none', borderTop: '2px solid #0f172a', margin: '6px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 800, color: '#0f172a' }}>
+                <span>Grand Total Payable:</span>
+                <span style={{ color: '#0284c7' }}>{sym} {grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Signature Footer */}
+          <div style={{ marginTop: '34px', paddingTop: '14px', borderTop: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '11px', color: '#475569' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ height: '42px' }} />
+              <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '170px' }}>
+                Store / Inward Receiver
+              </span>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ margin: '0 0 32px 0', fontWeight: 'bold', color: '#334155' }}>For, {company?.name || 'Authorised Signatory'}</p>
-              <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '160px' }}>
-                Verified & Passed By
+              <p style={{ margin: 0, fontWeight: 700, color: '#0f172a' }}>For, {branding.name}</p>
+              <div style={{ height: '42px' }} />
+              <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: '4px', display: 'inline-block', width: '185px' }}>
+                Verified &amp; Authorised Signatory
               </span>
             </div>
           </div>

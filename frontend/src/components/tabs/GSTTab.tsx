@@ -1,6 +1,7 @@
 import { useState, type FC } from 'react';
 import { Printer, Download, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { GSTPrintModal, type GSTReportType } from '../GSTPrintModal';
+import { getInitialCompanyBranding } from '../../utils/invoiceBranding';
 
 interface GSTTabProps {
   gstData: any[];
@@ -17,7 +18,12 @@ const PRINT_BTN_LABELS: Record<Exclude<GSTReportType, 'all'>, string> = {
 export const GSTTab: FC<GSTTabProps> = ({ gstData = [] }) => {
   const safeData = Array.isArray(gstData) ? gstData : [];
   const symbol = safeData[0]?.currency_symbol || localStorage.getItem('active_company_symbol') || '₹';
-  const companyName = localStorage.getItem('active_company') || 'TallyBIZ Enterprise';
+  let activeCompObj: any = null;
+  try {
+    activeCompObj = JSON.parse(localStorage.getItem('active_company') || 'null');
+  } catch {}
+  const companyBranding = getInitialCompanyBranding(activeCompObj);
+  const companyName = companyBranding.name || 'TallyBIZ Pvt Ltd';
 
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [subView, setSubView] = useState<Exclude<GSTReportType, 'all'>>('gstr3b');
@@ -390,6 +396,7 @@ export const GSTTab: FC<GSTTabProps> = ({ gstData = [] }) => {
       {showPrintModal && (
         <GSTPrintModal
           data={gstData}
+          company={activeCompObj}
           companyName={companyName}
           initialReportType={subView}
           selectedMonth={selectedMonth}

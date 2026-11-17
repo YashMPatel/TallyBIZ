@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { X, Printer } from 'lucide-react';
+import { X, Printer, Download } from 'lucide-react';
+import html2pdf from 'html2pdf.js';
 import type { FinancialStatements } from '../types/erp';
 
 interface FinancialReportPrintModalProps {
@@ -31,7 +32,22 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
     window.print();
   };
 
-  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : 'Rs.');
+  const handleDownloadPDF = () => {
+    const element = document.getElementById('printable-financial-statements');
+    if (!element) return;
+    (html2pdf as any)()
+      .set({
+        margin: [8, 8, 8, 8],
+        filename: `${targetFileName}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      })
+      .from(element)
+      .save();
+  };
+
+  const sym = company?.symbol || company?.currency_symbol || (company?.currency === 'CAD' || company?.currency === 'USD' ? '$' : '₹');
 
   return (
     <div
@@ -126,6 +142,23 @@ export const FinancialReportPrintModal: React.FC<FinancialReportPrintModalProps>
             >
               <Printer size={16} /> Print / Save PDF
             </button>
+              <button
+                onClick={handleDownloadPDF}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#10b981',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                }}
+              >
+                <Download size={16} /> Download PDF
+              </button>
             <button
               onClick={onClose}
               style={{

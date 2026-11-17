@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Printer } from 'lucide-react';
+import { X, Printer, Download } from 'lucide-react';
+import html2pdf from 'html2pdf.js';
+import { getInitialCompanyBranding, fetchFreshCompanyBranding, getCompanyMonogram } from '../utils/invoiceBranding';
 
 export type GSTReportType = 'gstr3b' | 'gstr1_sales' | 'gstr1_hsn' | 'gstr2_itc' | 'all';
 
@@ -60,15 +62,47 @@ export const GSTPrintModal: React.FC<GSTPrintModalProps> = ({
       ? safeData.filter((r) => r.month === selectedMonth)
       : safeData;
 
+  let parsedPropCompany: any = company;
+  if (typeof company === 'string') {
+    try { parsedPropCompany = JSON.parse(company); } catch { parsedPropCompany = { name: company }; }
+  }
+  let parsedName = companyName;
+  if (typeof companyName === 'string' && companyName.trim().startsWith('{')) {
+    try { parsedName = JSON.parse(companyName)?.name || 'TallyBIZ Pvt Ltd'; } catch {}
+  }
+  const [branding, setBranding] = useState(() =>
+    getInitialCompanyBranding(parsedPropCompany || { name: parsedName })
+  );
+  useEffect(() => {
+    const init = getInitialCompanyBranding(parsedPropCompany || { name: parsedName });
+    setBranding(init);
+    fetchFreshCompanyBranding(parsedPropCompany || { name: parsedName }).then(setBranding);
+  }, [company, companyName]);
+
   const symbol =
-    company?.currency_symbol ||
+    branding.currency_symbol ||
     safeData[0]?.currency_symbol ||
     localStorage.getItem('active_company_symbol') ||
     '₹';
-  const displayCompany = company?.name || companyName;
-  const gstin = company?.gstin || company?.tax_id || safeData[0]?.company_gstin || 'N/A';
-  const state = company?.state || safeData[0]?.company_state || '';
-  const address = company?.address || '';
+  const displayCompany = branding.name || parsedName || 'TallyBIZ Pvt Ltd';
+  const gstin = branding.gstin || safeData[0]?.company_gstin || 'N/A';
+  const state = branding.state || safeData[0]?.company_state || '';
+  const address = branding.address || '';
+
+  const handleDownloadPDF = () => {
+    const el = document.getElementById('printable-gst-report');
+    if (!el) return;
+    (html2pdf as any)()
+      .set({
+        margin: [8, 8, 8, 8],
+        filename: `GST_${reportType.toUpperCase()}_${selectedMonth === 'ALL' ? 'All_Months' : selectedMonth}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      })
+      .from(el)
+      .save();
+  };
 
   const allInvoices = activeRows.flatMap((r) => [
     ...(Array.isArray(r.b2b_invoices) ? r.b2b_invoices : []),
@@ -183,7 +217,7 @@ export const GSTPrintModal: React.FC<GSTPrintModalProps> = ({
                 alignItems: 'center',
                 gap: '6px',
                 padding: '6px 14px',
-                backgroundColor: '#16a34a',
+                backgroundColor: '#0284c7',
                 color: '#ffffff',
                 border: 'none',
                 borderRadius: '6px',
@@ -193,6 +227,25 @@ export const GSTPrintModal: React.FC<GSTPrintModalProps> = ({
               }}
             >
               <Printer size={15} /> Print / Save PDF
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadPDF}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                backgroundColor: '#10b981',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '12px',
+              }}
+            >
+              <Download size={15} /> Download PDF
             </button>
             <button
               type="button"
@@ -212,7 +265,7 @@ export const GSTPrintModal: React.FC<GSTPrintModalProps> = ({
         </div>
 
         {/* Printable A4 Sheet */}
-        <div style={{ padding: '28px 32px', overflowY: 'auto', color: '#0f172a' }}>
+        <div id="printable-gst-report" style={{ padding: '28px 32px', overflowY: 'auto', color: '#0f172a', backgroundColor: '#ffffff' }}>
           {/* Company & Return Header */}
           <div
             style={{
@@ -224,13 +277,22 @@ export const GSTPrintModal: React.FC<GSTPrintModalProps> = ({
               marginBottom: '20px',
             }}
           >
-            <div>
-              <h2 style={{ margin: '0 0 4px 0', fontSize: '20px', fontWeight: 800 }}>{displayCompany}</h2>
-              {address && (
-                <div style={{ fontSize: '12px', color: '#475569', maxWidth: '460px' }}>{address}</div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', maxWidth: '58%' }}>
+              {branding.logo_data_url ? (
+                <img src={branding.logo_data_url} alt={displayCompany} style={{ width: '44px', height: '44px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #e2e8f0' }} />
+              ) : (
+                <div style={{ width: '42px', height: '42px', borderRadius: '8px', background: '#0f172a', color: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
+                  {getCompanyMonogram(displayCompany)}
+                </div>
               )}
-              <div style={{ fontSize: '12px', color: '#334155', marginTop: '4px' }}>
-                <strong>GSTIN:</strong> {gstin} {state ? `| State: ${state}` : ''}
+              <div>
+                <h2 style={{ margin: '0 0 4px 0', fontSize: '19px', fontWeight: 800 }}>{displayCompany}</h2>
+                {address && (
+                  <div style={{ fontSize: '11.5px', color: '#475569', lineHeight: '1.4' }}>{address}</div>
+                )}
+                <div style={{ fontSize: '11.5px', color: '#334155', marginTop: '4px' }}>
+                  <strong>GSTIN:</strong> {gstin} {branding.pan ? `| PAN: ${branding.pan}` : ''} {state ? `| State: ${state}` : ''}
+                </div>
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
