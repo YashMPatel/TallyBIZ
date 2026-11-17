@@ -145,11 +145,17 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
   };
 
   const handleBackup = async () => {
+    const selComp = companies[selectedIndex];
+    if (!selComp) {
+      setStatusMsg({ type: 'error', text: 'Please select a company first.' });
+      return;
+    }
     setBusy(true);
     setStatusMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/accounts/manage/backup/`, {
-        headers: getAuthHeaders(),
+      const hdrs = { ...getAuthHeaders(), 'X-Company-Id': String(selComp.id) };
+      const res = await fetch(`${API_BASE}/accounts/manage/backup/?company_id=${selComp.id}`, {
+        headers: hdrs,
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -160,12 +166,13 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
       const a = document.createElement('a');
       a.href = url;
       const dt = new Date().toISOString().slice(0, 10);
-      a.download = `TallyBIZ_Backup_${dt}.json`;
+      const safeComp = selComp.name.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '') || `Company_${selComp.id}`;
+      a.download = `${safeComp}_Backup_${dt}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      setStatusMsg({ type: 'success', text: 'Full data backup downloaded successfully.' });
+      setStatusMsg({ type: 'success', text: `Backup downloaded for "${selComp.name}".` });
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'Backup failed' });
     } finally {
@@ -178,7 +185,15 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
     e.target.value = '';
     if (!file) return;
 
-    if (!window.confirm(`Restore data from "${file.name}"? Existing matching records will be updated.`)) {
+    const selComp = companies[selectedIndex];
+    if (!selComp) {
+      setStatusMsg({ type: 'error', text: 'Please select a target company in the list first.' });
+      return;
+    }
+
+    if (!window.confirm(`Restore data from "${file.name}" into "${selComp.name}"?
+
+Existing data in "${selComp.name}" will be replaced. Other companies will NOT be affected.`)) {
       return;
     }
 
@@ -187,14 +202,16 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('company_id', String(selComp.id));
+      const hdrs = { ...getAuthHeaders(), 'X-Company-Id': String(selComp.id) };
       const res = await fetch(`${API_BASE}/accounts/manage/restore/`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: hdrs,
         body: formData,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Restore failed');
-      setStatusMsg({ type: 'success', text: data.message || 'Data restored successfully!' });
+      setStatusMsg({ type: 'success', text: data.message || `Data restored into "${selComp.name}"!` });
       if (onRefreshCompanies) await onRefreshCompanies();
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'Restore failed' });
@@ -202,7 +219,6 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
       setBusy(false);
     }
   };
-
   return (
     <div style={{
       position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)',
@@ -278,8 +294,8 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                     return (
                       <div
                         key={c.id}
-                        onClick={() => onSelectCompany(c)}
-                        onMouseEnter={() => setSelectedIndex(idx)}
+                        onClick={() => setSelectedIndex(idx)}
+                        onDoubleClick={() => onSelectCompany(c)}
                         style={{
                           padding: '11px 14px', display: 'flex', alignItems: 'center',
                           justifyContent: 'space-between', cursor: 'pointer',
@@ -297,12 +313,18 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
                             </div>
                           </div>
                         </div>
-                        <span style={{
-                          fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px',
-                          color: active ? '#38bdf8' : '#64748b'
-                        }}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onSelectCompany(c); }}
+                          style={{
+                            fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            color: active ? '#0f172a' : '#0369a1',
+                            backgroundColor: active ? '#38bdf8' : '#e0f2fe',
+                            border: 'none', borderRadius: '5px', padding: '4px 9px', cursor: 'pointer'
+                          }}
+                        >
                           Open <ArrowRight size={13} />
-                        </span>
+                        </button>
                       </div>
                     );
                   })}
@@ -426,6 +448,16 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
             </form>
           )}
 
+              {companies[selectedIndex] && (
+                <div style={{
+                  fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9',
+                  padding: '6px 10px', borderRadius: '6px', marginBottom: '10px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                }}>
+                  <span>Backup / Restore Target: <strong style={{ color: '#0f172a' }}>{companies[selectedIndex].name}</strong></span>
+                  <span style={{ color: '#64748b' }}>Click row to select • Click Open to enter</span>
+                </div>
+              )}
               <div style={{
                 display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px',
                 paddingTop: '12px', borderTop: '1px solid #e2e8f0'

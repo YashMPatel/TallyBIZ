@@ -220,6 +220,10 @@ class FinancialStatementsAPIView(APIView):
         company = get_active_company(request)
         unit_id = request.headers.get('X-Unit-Id') or request.GET.get('unit_id')
         has_unit_filter = bool(unit_id and str(unit_id) not in ('all', 'ALL', 'undefined', 'null', ''))
+        if has_unit_filter:
+            u_check = BusinessUnit.objects.filter(id=int(unit_id)).first()
+            if u_check and u_check.unit_type == 'HO':
+                has_unit_filter = False
 
         is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
         base_sales_qs = SalesInvoice.objects.filter(company=company)
@@ -360,7 +364,7 @@ class FinancialStatementsAPIView(APIView):
                 u_adj = (u_adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (u_adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
                 u_exp_qs = (
                     u_gl.exclude(account__in=excluded_accs)
-                    .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division)')
+                    .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
                     .values('account')
                     .annotate(dr=Sum('debit'), cr=Sum('credit'))
                 )
@@ -946,8 +950,9 @@ class DatabaseBackupAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        import io
-        from django.core.management import call_command
+        import re as _re
+        from django.apps import apps
+        from django.core import serializers
         from django.http import HttpResponse
         from django.utils import timezone
 
@@ -957,6 +962,79 @@ class DatabaseBackupAPIView(APIView):
             if prof and prof.company_id and prof.role != 'ADMIN':
                 return Response({'error': 'Only Company Admin can backup data.'}, status=status.HTTP_403_FORBIDDEN)
 
+        comp_id = request.GET.get('company_id') or request.headers.get('X-Company-Id')
+        if comp_id and str(comp_id).isdigit():
+            comp = AccountsCompany.objects.filter(id=int(comp_id)).first()
+            if not comp:
+                return Response({'error': 'Selected company not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            erp_apps = {'accounts', 'stock', 'buying', 'selling', 'manufacturing'}
+            all_models = [m for m in apps.get_models() if m._meta.app_label in erp_apps]
+
+            # Separate direct company-scoped models vs child models (e.g. line items, allocations)
+            direct_models = []
+            child_models = []
+            for m in all_models:
+                if m is AccountsCompany:
+                    continue
+                if any(f.name == 'company' and getattr(f, 'related_model', None) is AccountsCompany for f in m._meta.fields):
+                    direct_models.append(m)
+                else:
+                    child_models.append(m)
+
+            collected_ids = {AccountsCompany._meta.label_lower: {comp.pk}}
+            objects_to_dump = [comp]
+
+            for m in direct_models:
+                qs = m.objects.filter(company=comp).order_by('pk')
+                objs = list(qs)
+                collected_ids[m._meta.label_lower] = {o.pk for o in objs}
+                objects_to_dump.extend(objs)
+
+            # Iteratively collect dependent child records (items, BOM components, payment allocations, etc.)
+            changed = True
+            while changed:
+                changed = False
+                for m in child_models:
+                    lbl = m._meta.label_lower
+                    if lbl in collected_ids:
+                        continue
+                    fk_fields = [
+                        f for f in m._meta.fields
+                        if getattr(f, 'related_model', None) and f.related_model._meta.app_label in erp_apps
+                    ]
+                    if not fk_fields:
+                        continue
+                    if any(f.related_model._meta.label_lower in collected_ids for f in fk_fields):
+                        q_filter = Q()
+                        has_any_parent = False
+                        for f in fk_fields:
+                            p_lbl = f.related_model._meta.label_lower
+                            p_ids = collected_ids.get(p_lbl, set())
+                            if p_ids:
+                                q_filter |= Q(**{f"{f.name}_id__in": list(p_ids)})
+                                has_any_parent = True
+                        objs = list(m.objects.filter(q_filter).distinct().order_by('pk')) if has_any_parent else []
+                        collected_ids[lbl] = {o.pk for o in objs}
+                        objects_to_dump.extend(objs)
+                        changed = True
+
+            raw_json = serializers.serialize(
+                'json',
+                objects_to_dump,
+                indent=2,
+                use_natural_foreign_keys=False,
+                use_natural_primary_keys=False,
+            )
+            safe_name = _re.sub(r'[^A-Za-z0-9_-]+', '_', comp.name).strip('_') or f"Company_{comp.id}"
+            fname = f"{safe_name}_Backup_{timezone.now().strftime('%Y-%m-%d_%H-%M')}.json"
+            resp = HttpResponse(raw_json, content_type='application/json; charset=utf-8')
+            resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+            return resp
+
+        # Fallback: full database backup
+        import io
+        from django.core.management import call_command
         buf = io.StringIO()
         call_command(
             'dumpdata',
@@ -966,7 +1044,7 @@ class DatabaseBackupAPIView(APIView):
             indent=2,
             stdout=buf,
         )
-        fname = f"TallyBIZ_Backup_{timezone.now().strftime('%Y-%m-%d_%H-%M')}.json"
+        fname = f"TallyBIZ_Full_Backup_{timezone.now().strftime('%Y-%m-%d_%H-%M')}.json"
         resp = HttpResponse(buf.getvalue(), content_type='application/json; charset=utf-8')
         resp['Content-Disposition'] = f'attachment; filename="{fname}"'
         return resp
@@ -977,8 +1055,10 @@ class DatabaseRestoreAPIView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        import json, os, tempfile
-        from django.core.management import call_command
+        import json
+        from django.apps import apps
+        from django.contrib.auth import get_user_model
+        from django.db import connection
 
         req_user = _resolve_gateway_user(request)
         has_companies = AccountsCompany.objects.exists()
@@ -1002,33 +1082,260 @@ class DatabaseRestoreAPIView(APIView):
         except Exception as exc:
             return Response({'error': f'Invalid JSON file: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        tmp_path = None
+        target_comp_id = (
+            request.POST.get('company_id')
+            or request.GET.get('company_id')
+            or request.headers.get('X-Company-Id')
+        )
+        target_comp = None
+        if target_comp_id and str(target_comp_id).isdigit():
+            target_comp = AccountsCompany.objects.filter(id=int(target_comp_id)).first()
+
+        if not target_comp:
+            return Response({'error': 'Please select a target company in the Gateway before restoring.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        erp_apps = {'accounts', 'stock', 'buying', 'selling', 'manufacturing'}
+        model_map = {m._meta.label_lower: m for m in apps.get_models() if m._meta.app_label in erp_apps}
+
+        # Group records from JSON by model label
+        records_by_model = {}
+        for item in parsed:
+            m_lbl = (item.get('model') or '').lower()
+            if m_lbl in model_map:
+                records_by_model.setdefault(m_lbl, []).append(item)
+
+        # Determine which source company inside the backup JSON to restore
+        comp_records = records_by_model.get('accounts.company', [])
+        source_comp_rec = None
+        source_comp_id = None
+
+        if len(comp_records) == 1:
+            source_comp_rec = comp_records[0]
+            source_comp_id = source_comp_rec.get('pk')
+        elif len(comp_records) > 1:
+            for cr in comp_records:
+                if cr.get('pk') == target_comp.id:
+                    source_comp_rec = cr
+                    break
+            if not source_comp_rec:
+                for cr in comp_records:
+                    if (cr.get('fields', {}).get('name') or '').strip().lower() == target_comp.name.strip().lower():
+                        source_comp_rec = cr
+                        break
+            if not source_comp_rec:
+                source_comp_rec = comp_records[0]
+            source_comp_id = source_comp_rec.get('pk')
+        else:
+            # Infer source_comp_id from records if accounts.company header wasn't included
+            counts = {}
+            for m_lbl, items in records_by_model.items():
+                for it in items:
+                    cid = it.get('fields', {}).get('company')
+                    if isinstance(cid, int):
+                        counts[cid] = counts.get(cid, 0) + 1
+            if counts:
+                source_comp_id = max(counts, key=counts.get)
+
+        # Helper to resolve FK value (supports integer PK or natural-key list)
+        User = get_user_model()
+        default_user = req_user if (req_user and getattr(req_user, 'pk', None)) else User.objects.filter(is_superuser=True).first()
+
+        def resolve_fk_raw(rel_model, val):
+            if val is None:
+                return None
+            if isinstance(val, int):
+                return val
+            if isinstance(val, (list, tuple)) and hasattr(rel_model.objects, 'get_by_natural_key'):
+                try:
+                    return rel_model.objects.get_by_natural_key(*val).pk
+                except Exception:
+                    return None
+            return val
+
+        # Filter JSON records strictly to source_comp_id
+        filtered_records = {}
+        kept_pks = {'accounts.company': {source_comp_id} if source_comp_id is not None else set()}
+
+        direct_models = [
+            m for m in model_map.values()
+            if m is not AccountsCompany and any(f.name == 'company' and getattr(f, 'related_model', None) is AccountsCompany for f in m._meta.fields)
+        ]
+        child_models = [
+            m for m in model_map.values()
+            if m is not AccountsCompany and m not in direct_models
+        ]
+
+        for m in direct_models:
+            lbl = m._meta.label_lower
+            kept = []
+            pks = set()
+            for it in records_by_model.get(lbl, []):
+                c_val = resolve_fk_raw(AccountsCompany, it.get('fields', {}).get('company'))
+                if source_comp_id is None or c_val == source_comp_id:
+                    kept.append(it)
+                    if it.get('pk') is not None:
+                        pks.add(it['pk'])
+            filtered_records[lbl] = kept
+            kept_pks[lbl] = pks
+
+        progress = True
+        while progress:
+            progress = False
+            for m in child_models:
+                lbl = m._meta.label_lower
+                if lbl in filtered_records:
+                    continue
+                fk_fields = [
+                    f for f in m._meta.fields
+                    if getattr(f, 'related_model', None) and f.related_model._meta.app_label in erp_apps
+                ]
+                if not fk_fields:
+                    continue
+                if any(f.related_model._meta.label_lower in kept_pks for f in fk_fields):
+                    kept = []
+                    pks = set()
+                    for it in records_by_model.get(lbl, []):
+                        flds = it.get('fields', {})
+                        matched = False
+                        for f in fk_fields:
+                            p_lbl = f.related_model._meta.label_lower
+                            raw_v = resolve_fk_raw(f.related_model, flds.get(f.name))
+                            if raw_v is not None and raw_v in kept_pks.get(p_lbl, set()):
+                                matched = True
+                                break
+                        if matched:
+                            kept.append(it)
+                            if it.get('pk') is not None:
+                                pks.add(it['pk'])
+                    filtered_records[lbl] = kept
+                    kept_pks[lbl] = pks
+                    progress = True
+
+        # Topological sort of ERP models so parents insert before children
+        ordered_models = []
+        visited = set()
+
+        def visit(m):
+            lbl = m._meta.label_lower
+            if lbl in visited or m is AccountsCompany:
+                return
+            visited.add(lbl)
+            for f in m._meta.fields:
+                rel = getattr(f, 'related_model', None)
+                if rel and rel._meta.app_label in erp_apps and rel is not AccountsCompany and rel is not m:
+                    visit(rel)
+            ordered_models.append(m)
+
+        for m in model_map.values():
+            visit(m)
+
         try:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
-                tmp.write(raw_text)
-                tmp_path = tmp.name
-            import json as _json
-            from django.db.models.signals import post_save
-            from .models import UserProfile
-            orig_rcv = list(post_save.receivers)
-            post_save.receivers = []
-            post_save.sender_receivers_cache.clear()
-            try:
-                with transaction.atomic():
-                    unames = [x["fields"]["user"][0] for x in _json.load(open(tmp_path, encoding="utf-8")) if x.get("model") == "accounts.userprofile" and isinstance(x.get("fields", {}).get("user"), list)]
-                    if unames:
-                        UserProfile.objects.filter(user__username__in=unames).delete()
-                    call_command("loaddata", tmp_path, verbosity=0)
-            finally:
-                post_save.receivers = orig_rcv
-                post_save.sender_receivers_cache.clear()
-            return Response({'message': 'Database restored successfully!'}, status=status.HTTP_200_OK)
+            with transaction.atomic():
+                # 1. Clear ONLY target_comp's existing ERP data (never touches other companies!)
+                for m in reversed(ordered_models):
+                    lbl = m._meta.label_lower
+                    if any(f.name == 'company' and getattr(f, 'related_model', None) is AccountsCompany for f in m._meta.fields):
+                        m.objects.filter(company=target_comp).delete()
+                    else:
+                        fk_fields = [
+                            f for f in m._meta.fields
+                            if getattr(f, 'related_model', None) and f.related_model._meta.app_label in erp_apps
+                        ]
+                        q_del = Q()
+                        has_rel = False
+                        for f in fk_fields:
+                            if any(pf.name == 'company' for pf in f.related_model._meta.fields):
+                                q_del |= Q(**{f"{f.name}__company": target_comp})
+                                has_rel = True
+                        if has_rel:
+                            m.objects.filter(q_del).delete()
+
+                # 2. Update target_comp branding/tax/bank details from backup while preserving target_comp.name
+                if source_comp_rec:
+                    c_flds = source_comp_rec.get('fields', {})
+                    meta_fields = [
+                        'tax_id', 'address', 'gstin', 'state', 'bank_details', 'country',
+                        'default_currency', 'currency_symbol', 'business_type', 'tagline',
+                        'contact_person', 'phone', 'email', 'pan', 'upi_id',
+                        'bank_name', 'bank_branch', 'bank_account_name', 'bank_account_no',
+                        'bank_ifsc', 'invoice_terms',
+                    ]
+                    for mf in meta_fields:
+                        if mf in c_flds and hasattr(target_comp, mf):
+                            setattr(target_comp, mf, c_flds[mf])
+                    target_comp.save()
+
+                # 3. Insert records into target_comp with fresh PKs and remapped ForeignKeys
+                pk_map = {'accounts.company': {source_comp_id: target_comp.pk}}
+                restored_count = 0
+
+                for m in ordered_models:
+                    lbl = m._meta.label_lower
+                    pk_map[lbl] = {}
+                    items = filtered_records.get(lbl, [])
+                    if not items:
+                        continue
+
+                    fields_by_name = {f.name: f for f in m._meta.fields}
+                    for it in items:
+                        old_pk = it.get('pk')
+                        raw_flds = it.get('fields', {})
+                        kwargs = {}
+
+                        for fname, val in raw_flds.items():
+                            f = fields_by_name.get(fname)
+                            if not f or f.primary_key:
+                                continue
+                            if f.is_relation and getattr(f, 'related_model', None):
+                                rel_m = f.related_model
+                                rel_lbl = rel_m._meta.label_lower
+                                if rel_m is AccountsCompany:
+                                    kwargs[f"{fname}_id"] = target_comp.pk
+                                elif rel_m is User:
+                                    u_pk = resolve_fk_raw(User, val)
+                                    if u_pk and User.objects.filter(pk=u_pk).exists():
+                                        kwargs[f"{fname}_id"] = u_pk
+                                    else:
+                                        kwargs[f"{fname}_id"] = default_user.pk if (default_user and not f.null) else None
+                                elif rel_lbl in pk_map:
+                                    old_fk = resolve_fk_raw(rel_m, val)
+                                    mapped_fk = pk_map[rel_lbl].get(old_fk)
+                                    if mapped_fk is None and old_fk is not None and rel_m.objects.filter(pk=old_fk).exists():
+                                        mapped_fk = old_fk
+                                    kwargs[f"{fname}_id"] = mapped_fk
+                                else:
+                                    kwargs[f"{fname}_id"] = resolve_fk_raw(rel_m, val)
+                            else:
+                                kwargs[fname] = val
+
+                        # Remap PaymentInvoiceAllocation.invoice_id integer pointer
+                        if lbl == 'accounts.paymentinvoiceallocation' and kwargs.get('invoice_id'):
+                            inv_t = (kwargs.get('invoice_type') or '').lower()
+                            old_inv_id = kwargs['invoice_id']
+                            if 'purch' in inv_t or 'buy' in inv_t:
+                                kwargs['invoice_id'] = pk_map.get('buying.purchaseinvoice', {}).get(old_inv_id, old_inv_id)
+                            else:
+                                kwargs['invoice_id'] = pk_map.get('selling.salesinvoice', {}).get(old_inv_id, old_inv_id)
+
+                        new_obj = m(**kwargs)
+                        new_obj.save()
+                        if old_pk is not None:
+                            pk_map[lbl][old_pk] = new_obj.pk
+                        restored_count += 1
+
+                # Reset DB sequences if PostgreSQL
+                if connection.vendor == 'postgresql':
+                    from django.core.management.color import no_style
+                    sqls = connection.ops.sequence_reset_sql(no_style(), ordered_models)
+                    with connection.cursor() as cursor:
+                        for sql in sqls:
+                            cursor.execute(sql)
+
+            return Response({
+                'message': f'Restored {restored_count} records into "{target_comp.name}" successfully! (Other companies untouched)'
+            }, status=status.HTTP_200_OK)
         except Exception as exc:
             return Response({'error': f'Restore failed: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
 
 class CompanyBrandingAPIView(APIView):
     authentication_classes = []
