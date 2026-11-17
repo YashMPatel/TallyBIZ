@@ -551,7 +551,7 @@ class DashboardSummaryAPIView(APIView):
         try:
             bank_entries = GLEntry.objects.filter(account__regex=r'(?i)bank|cash', is_cancelled=False)
             if company:
-                bank_entries = bank_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else bank_entries.filter(company=company)
+                bank_entries = bank_entries.filter(company=company)
             active_u = resolve_active_unit(request, company)
             if active_u and active_u.unit_type != 'HO':
                 bank_entries = bank_entries.filter(unit=active_u)
