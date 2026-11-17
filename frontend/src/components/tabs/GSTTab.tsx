@@ -1,17 +1,27 @@
 import { useState, type FC } from 'react';
 import { Printer, Download, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { GSTPrintModal, type GSTReportType } from '../GSTPrintModal';
 
 interface GSTTabProps {
   gstData: any[];
-  setShowGSTPrintModal: (show: boolean) => void;
+  setShowGSTPrintModal?: (show: boolean) => void;
 }
 
-export const GSTTab: FC<GSTTabProps> = ({ gstData = [], setShowGSTPrintModal }) => {
+const PRINT_BTN_LABELS: Record<Exclude<GSTReportType, 'all'>, string> = {
+  gstr3b: 'Print GSTR-3B Report',
+  gstr1_sales: 'Print GSTR-1 B2B/B2C',
+  gstr1_hsn: 'Print HSN Table-12',
+  gstr2_itc: 'Print GSTR-2B ITC',
+};
+
+export const GSTTab: FC<GSTTabProps> = ({ gstData = [] }) => {
   const safeData = Array.isArray(gstData) ? gstData : [];
   const symbol = safeData[0]?.currency_symbol || localStorage.getItem('active_company_symbol') || '₹';
+  const companyName = localStorage.getItem('active_company') || 'TallyBIZ Enterprise';
 
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
-  const [subView, setSubView] = useState<'gstr3b' | 'gstr1_sales' | 'gstr1_hsn' | 'gstr2_itc'>('gstr3b');
+  const [subView, setSubView] = useState<Exclude<GSTReportType, 'all'>>('gstr3b');
+  const [showPrintModal, setShowPrintModal] = useState<boolean>(false);
 
   const activeRows = selectedMonth === 'ALL'
     ? safeData
@@ -128,10 +138,10 @@ export const GSTTab: FC<GSTTabProps> = ({ gstData = [], setShowGSTPrintModal }) 
 
           <button
             type="button"
-            onClick={() => setShowGSTPrintModal(true)}
+            onClick={() => setShowPrintModal(true)}
             style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
           >
-            <Printer size={16} /> Print GST Summary
+            <Printer size={16} /> {PRINT_BTN_LABELS[subView]}
           </button>
         </div>
       </div>
@@ -375,6 +385,16 @@ export const GSTTab: FC<GSTTabProps> = ({ gstData = [], setShowGSTPrintModal }) 
             </tbody>
           </table>
         </div>
+      )}
+
+      {showPrintModal && (
+        <GSTPrintModal
+          data={gstData}
+          companyName={companyName}
+          initialReportType={subView}
+          selectedMonth={selectedMonth}
+          onClose={() => setShowPrintModal(false)}
+        />
       )}
     </div>
   );
