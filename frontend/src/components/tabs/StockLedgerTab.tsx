@@ -93,6 +93,17 @@ export const StockLedgerTab: FC<StockLedgerTabProps> = ({
             accessor: (r) => `${r.voucher_type || ''} #${r.voucher_no || ''}`,
           },
           {
+            header: 'Batch / Lot #',
+            accessor: (r) =>
+              r.batch_no ? (
+                <span style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>
+                  {r.batch_no}
+                </span>
+              ) : (
+                <span style={{ color: '#94a3b8', fontSize: '11px' }}>-</span>
+              ),
+          },
+          {
             header: 'Inward (+)',
             accessor: (r) => {
               const qty = Number(r.actual_qty !== undefined ? r.actual_qty : r.inward_qty);

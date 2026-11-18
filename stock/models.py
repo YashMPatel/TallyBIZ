@@ -40,6 +40,30 @@ class StockLedgerEntry(models.Model):
     actual_qty = models.DecimalField(max_digits=12, decimal_places=2)
     qty_after_transaction = models.DecimalField(max_digits=12, decimal_places=2)
     valuation_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    batch = models.ForeignKey('StockBatch', on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    batch_no = models.CharField(max_length=80, blank=True, default='')
 
     def __str__(self):
         return f"{self.item.item_code} | {self.voucher_type} #{self.voucher_no} | {self.actual_qty}"
+
+class StockBatch(models.Model):
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='stock_batches'
+    )
+    unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='stock_batches')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='batches')
+    batch_no = models.CharField(max_length=80)
+    source_type = models.CharField(max_length=50, default='Purchase Invoice')
+    source_voucher = models.CharField(max_length=60, blank=True, default='')
+    party_name = models.CharField(max_length=150, blank=True, default='')
+    received_date = models.DateField()
+    initial_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    remaining_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    purchase_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    def __str__(self):
+        return f"{self.batch_no} | {self.item.item_name} ({self.remaining_qty}/{self.initial_qty})"

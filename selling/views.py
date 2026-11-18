@@ -16,7 +16,7 @@ from rest_framework.response import Response
 
 from .models import Customer, SalesInvoice, SalesInvoiceItem, CreditNote, CreditNoteItem
 from .serializers import CustomerSerializer, SalesInvoiceSerializer, CreditNoteSerializer
-from stock.models import Item, StockLedgerEntry
+from stock.models import Item, StockLedgerEntry, StockBatch
 from accounts.models import GLEntry, PaymentInvoiceAllocation, Company
 from accounts.views import resolve_active_unit
 
@@ -76,7 +76,14 @@ def get_request_company(request):
 def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     # Strictly scope deletion by company
     GLEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
-    StockLedgerEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
+    prev_sles = list(StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number))
+    for ps in prev_sles:
+        if ps.batch_id and ps.actual_qty < 0:
+            b_restore = StockBatch.objects.filter(id=ps.batch_id).first()
+            if b_restore:
+                b_restore.remaining_qty = (b_restore.remaining_qty or Decimal('0.00')) + abs(ps.actual_qty)
+                b_restore.save(update_fields=['remaining_qty'])
+    StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
     invoice.items.all().delete()
 
     affected_items = set()
@@ -121,16 +128,50 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
             )
 
             if str(getattr(invoice, 'status', '')).strip().lower() == 'approved':
-                StockLedgerEntry.objects.create(
-                    company=comp,
-                    posting_date=invoice.posting_date,
-                    item=item_obj,
-                    voucher_type='Sales Invoice',
-                    voucher_no=invoice.invoice_number,
-                    actual_qty=-qty,
-                    qty_after_transaction=0,
-                    valuation_rate=rate
-                )
+                rem_to_deduct = qty
+                req_batch_id = it.get('batch_id') or it.get('batch')
+                batch_qs = StockBatch.objects.filter(company=comp, item=item_obj, remaining_qty__gt=0).order_by('received_date', 'id')
+                if req_batch_id and str(req_batch_id).isdigit():
+                    chosen = batch_qs.filter(id=int(req_batch_id))
+                    others = batch_qs.exclude(id=int(req_batch_id))
+                    batches_to_use = list(chosen) + list(others)
+                else:
+                    batches_to_use = list(batch_qs)
+
+                for b_obj in batches_to_use:
+                    if rem_to_deduct <= Decimal('0.00'):
+                        break
+                    take = min(rem_to_deduct, b_obj.remaining_qty)
+                    b_obj.remaining_qty -= take
+                    b_obj.save(update_fields=['remaining_qty'])
+                    rem_to_deduct -= take
+                    StockLedgerEntry.objects.create(
+                        company=comp,
+                        unit=getattr(invoice, 'unit', None),
+                        posting_date=invoice.posting_date,
+                        item=item_obj,
+                        voucher_type='Sales Invoice',
+                        voucher_no=invoice.invoice_number,
+                        actual_qty=-take,
+                        qty_after_transaction=0,
+                        valuation_rate=rate,
+                        batch=b_obj,
+                        batch_no=b_obj.batch_no
+                    )
+
+                if rem_to_deduct > Decimal('0.00'):
+                    StockLedgerEntry.objects.create(
+                        company=comp,
+                        unit=getattr(invoice, 'unit', None),
+                        posting_date=invoice.posting_date,
+                        item=item_obj,
+                        voucher_type='Sales Invoice',
+                        voucher_no=invoice.invoice_number,
+                        actual_qty=-rem_to_deduct,
+                        qty_after_transaction=0,
+                        valuation_rate=rate,
+                        batch_no='UNBATCHED'
+                    )
                 affected_items.add(item_obj)
 
     if str(getattr(invoice, 'status', '')).strip().lower() != 'approved':

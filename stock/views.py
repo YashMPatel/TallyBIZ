@@ -1,7 +1,7 @@
 from rest_framework import generics
 from django.db.models import Q
-from .models import Item, StockLedgerEntry
-from .serializers import ItemSerializer, StockLedgerEntrySerializer
+from .models import Item, StockLedgerEntry, StockBatch
+from .serializers import ItemSerializer, StockLedgerEntrySerializer, StockBatchSerializer
 from accounts.models import Company
 
 
@@ -56,6 +56,13 @@ class ItemListCreateAPIView(generics.ListCreateAPIView):
                 target_u = BusinessUnit.objects.filter(company=item.company, id=int(uid)).first()
             if not target_u:
                 target_u = units_map.get('TRADING')
+            opn_batch = StockBatch.objects.create(
+                company=item.company, unit=target_u, item=item,
+                batch_no=f"LOT-OPN-{item.id}", source_type='Opening Stock',
+                source_voucher=f"OPN-{item.id}", party_name='Opening Balance',
+                received_date=timezone.now().date(), initial_qty=qty, remaining_qty=qty,
+                purchase_rate=Decimal(str(item.standard_rate or 0))
+            )
             StockLedgerEntry.objects.create(
                 company=item.company,
                 unit=target_u,
@@ -66,6 +73,8 @@ class ItemListCreateAPIView(generics.ListCreateAPIView):
                 actual_qty=qty,
                 qty_after_transaction=qty,
                 valuation_rate=Decimal(str(item.standard_rate or 0)),
+                batch=opn_batch,
+                batch_no=opn_batch.batch_no,
             )
 
 
@@ -155,7 +164,7 @@ class InterUnitStockTransferAPIView(APIView):
                 }
                 order_keys.append(vno)
             qty_val = float(e.actual_qty or 0)
-            cname = e.company.name.split('—')[-1].strip() if e.company else 'Division'
+            cname = e.unit.name if getattr(e, 'unit', None) else (e.company.name.split('—')[-1].strip() if e.company else 'Division')
             if qty_val < 0:
                 grouped[vno]['from_unit'] = cname
                 grouped[vno]['qty'] = abs(qty_val)
@@ -269,3 +278,57 @@ class InterUnitStockTransferAPIView(APIView):
             dst_item.save(update_fields=['current_stock'])
 
         return Response({'message': f'Transferred {qty} {src_item.unit} via {vno}', 'voucher_no': vno}, status=status.HTTP_201_CREATED)
+
+
+class StockBatchListCreateAPIView(APIView):
+    def get(self, request):
+        cid = get_request_company_id(request)
+        qs = StockBatch.objects.filter(company_id=cid).select_related('item', 'unit').order_by('received_date', 'id')
+        item_id = request.GET.get('item_id') or request.GET.get('item')
+        if item_id and str(item_id) not in ('all', 'ALL', ''):
+            qs = qs.filter(item_id=int(item_id))
+        if request.GET.get('available_only') == '1':
+            qs = qs.filter(remaining_qty__gt=0)
+        uid = request.headers.get('X-Unit-Id') or request.GET.get('unit_id')
+        if uid and str(uid) not in ('all', 'ALL', 'undefined', 'null', ''):
+            from accounts.models import BusinessUnit
+            u_obj = BusinessUnit.objects.filter(id=int(uid)).first()
+            if u_obj and u_obj.unit_type != 'HO':
+                qs = qs.filter(Q(unit_id=int(uid)) | Q(unit__isnull=True))
+        return Response(StockBatchSerializer(qs, many=True).data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from accounts.models import BusinessUnit, ensure_default_units
+        cid = get_request_company_id(request)
+        comp = Company.objects.filter(id=cid).first()
+        data = request.data or {}
+        item_id = data.get('item_id') or data.get('item')
+        itm = Item.objects.filter(id=int(item_id), company=comp).first()
+        if not itm:
+            return Response({'error': 'Item not found.'}, status=status.HTTP_404_NOT_FOUND)
+        qty = Decimal(str(data.get('initial_qty') or data.get('qty') or 0))
+        if qty <= 0:
+            return Response({'error': 'Batch quantity must be greater than 0.'}, status=status.HTTP_400_BAD_REQUEST)
+        rate = Decimal(str(data.get('purchase_rate') or itm.standard_rate or 0))
+        b_no = (data.get('batch_no') or '').strip() or f"LOT-{itm.item_code}-{StockBatch.objects.filter(item=itm).count() + 1:02d}"
+        units_map = ensure_default_units(comp) if comp else {}
+        uid = data.get('unit_id') or request.headers.get('X-Unit-Id') or request.GET.get('unit_id')
+        target_u = BusinessUnit.objects.filter(id=int(uid), company=comp).first() if (uid and str(uid).isdigit()) else units_map.get('TRADING')
+        r_date = data.get('received_date') or timezone.now().date()
+        batch = StockBatch.objects.create(
+            company=comp, unit=target_u, item=itm, batch_no=b_no,
+            source_type=data.get('source_type') or 'Manual Batch Inward',
+            source_voucher=data.get('source_voucher') or b_no,
+            party_name=data.get('party_name') or 'Direct Stock Entry',
+            received_date=r_date, initial_qty=qty, remaining_qty=qty, purchase_rate=rate
+        )
+        new_tot = (StockLedgerEntry.objects.filter(item=itm, company=comp).aggregate(s=Sum('actual_qty'))['s'] or Decimal('0.00')) + qty
+        StockLedgerEntry.objects.create(
+            company=comp, unit=target_u, posting_date=r_date, item=itm,
+            voucher_type='Batch Inward', voucher_no=b_no,
+            actual_qty=qty, qty_after_transaction=new_tot, valuation_rate=rate,
+            batch=batch, batch_no=batch.batch_no
+        )
+        itm.current_stock = new_tot
+        itm.save(update_fields=['current_stock'])
+        return Response(StockBatchSerializer(batch).data, status=status.HTTP_201_CREATED)

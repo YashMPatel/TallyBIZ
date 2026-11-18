@@ -9,6 +9,7 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 
 class PurchaseInvoiceItemSerializer(serializers.ModelSerializer):
+    hsn = serializers.CharField(source='item.hsn_code', read_only=True, default='')
     class Meta:
         model = PurchaseInvoiceItem
         fields = '__all__'

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type FC } from 'react';
-import { Plus, Download, Search, Edit2, ArrowLeftRight, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Download, Search, Edit2, ArrowLeftRight, X, ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { Item } from '../../types/erp';
 import { API_BASE, exportToCSV } from '../../utils/erpHelpers';
@@ -38,6 +38,15 @@ export const StockTab: FC<StockTabProps> = ({
   const [trfQty, setTrfQty] = useState('');
   const [trfBusy, setTrfBusy] = useState(false);
   const [trfMsg, setTrfMsg] = useState<string | null>(null);
+  const [batchModalItem, setBatchModalItem] = useState<Item | null>(null);
+  const [itemBatches, setItemBatches] = useState<any[]>([]);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [newBatchNo, setNewBatchNo] = useState('');
+  const [newBatchQty, setNewBatchQty] = useState('');
+  const [newBatchRate, setNewBatchRate] = useState('');
+  const [newBatchSupplier, setNewBatchSupplier] = useState('');
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchErr, setBatchErr] = useState<string | null>(null);
 
   const [itemPage, setItemPage] = useState(1);
   const [itemPageSize, setItemPageSize] = useState(25);
@@ -178,6 +187,54 @@ export const StockTab: FC<StockTabProps> = ({
       setTrfMsg(err.message || 'Error transferring stock');
     } finally {
       setTrfBusy(false);
+    }
+  };
+
+  const openBatchModal = async (itm: Item) => {
+    setBatchModalItem(itm);
+    setBatchErr(null);
+    setNewBatchNo('');
+    setNewBatchQty('');
+    setNewBatchRate(String(itm.standard_rate || ''));
+    setNewBatchSupplier('');
+    setBatchesLoading(true);
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/stock/batches/?company_id=${compId}&item_id=${itm.id}`);
+      const rows = res.ok ? await res.json() : [];
+      setItemBatches(Array.isArray(rows) ? rows : []);
+    } catch {
+      setItemBatches([]);
+    } finally {
+      setBatchesLoading(false);
+    }
+  };
+
+  const handleAddBatchLot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!batchModalItem) return;
+    setBatchSaving(true);
+    setBatchErr(null);
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/stock/batches/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Company-Id': String(compId) },
+        body: JSON.stringify({
+          item_id: batchModalItem.id,
+          batch_no: newBatchNo.trim(),
+          initial_qty: newBatchQty,
+          purchase_rate: newBatchRate || batchModalItem.standard_rate || 0,
+          party_name: newBatchSupplier.trim() || 'Direct Lot Inward',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add batch');
+      await openBatchModal(batchModalItem);
+    } catch (err: any) {
+      setBatchErr(err.message || 'Failed to create batch');
+    } finally {
+      setBatchSaving(false);
     }
   };
 
@@ -380,8 +437,15 @@ export const StockTab: FC<StockTabProps> = ({
               {
                 header: 'Actions',
                 accessor: (r) => (
-                  <button
-                    onClick={() => {
+                  <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                    <button
+                      onClick={() => openBatchModal(r)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: '#1d4ed8' }}
+                    >
+                      <Layers size={13} /> Batches
+                    </button>
+                    <button
+                      onClick={() => {
                       setEditingId(r.id!);
                       setItemForm({
                         item_code: r.item_code,
@@ -398,6 +462,7 @@ export const StockTab: FC<StockTabProps> = ({
                   >
                     <Edit2 size={13} /> Edit
                   </button>
+                  </div>
                 ),
               },
             ]}
@@ -563,6 +628,111 @@ export const StockTab: FC<StockTabProps> = ({
               </div>
             </>
           )}
+        </div>
+      )}
+
+
+      {batchModalItem && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', width: '820px', maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', padding: '22px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0f172a' }}>
+                  Batch / Lot-Wise Stock Register — {batchModalItem.item_name} ({batchModalItem.item_code})
+                </h3>
+                <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                  Track inward lots (1000 nos), FIFO outward deductions (100 / 50 / 20), and exact remaining stock per batch
+                </p>
+              </div>
+              <button onClick={() => setBatchModalItem(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {batchesLoading ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>Loading batch lots...</div>
+            ) : (
+              <div style={{ overflowX: 'auto', marginBottom: '18px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', textAlign: 'left', color: '#334155' }}>
+                      <th style={{ padding: '8px 10px' }}>Batch / Lot #</th>
+                      <th style={{ padding: '8px 10px' }}>Date</th>
+                      <th style={{ padding: '8px 10px' }}>Source / Supplier</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'right' }}>Inward Qty</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'right' }}>Outward (Sold)</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'right' }}>Balance Stock</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'right' }}>Rate ({symbol})</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'center' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemBatches.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>
+                          No batch lots recorded for this item yet. Create a Purchase Bill or add a batch lot below.
+                        </td>
+                      </tr>
+                    ) : (
+                      itemBatches.map((b: any) => {
+                        const rem = Number(b.remaining_qty || 0);
+                        const init = Number(b.initial_qty || 0);
+                        const sold = Math.max(0, init - rem);
+                        return (
+                          <tr key={b.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '9px 10px', fontWeight: 700, color: '#1d4ed8' }}>{b.batch_no}</td>
+                            <td style={{ padding: '9px 10px', color: '#475569' }}>{b.received_date}</td>
+                            <td style={{ padding: '9px 10px', color: '#0f172a' }}>
+                              {b.party_name || b.source_type} <span style={{ fontSize: '11px', color: '#64748b' }}>({b.source_voucher})</span>
+                            </td>
+                            <td style={{ padding: '9px 10px', textAlign: 'right', fontWeight: 600 }}>{init} {batchModalItem.unit || 'Nos'}</td>
+                            <td style={{ padding: '9px 10px', textAlign: 'right', color: '#dc2626', fontWeight: 600 }}>-{sold} {batchModalItem.unit || 'Nos'}</td>
+                            <td style={{ padding: '9px 10px', textAlign: 'right', fontWeight: 800, color: rem > 0 ? '#15803d' : '#94a3b8' }}>
+                              {rem} {batchModalItem.unit || 'Nos'}
+                            </td>
+                            <td style={{ padding: '9px 10px', textAlign: 'right' }}>{symbol} {Number(b.purchase_rate || 0).toFixed(2)}</td>
+                            <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: rem > 0 ? '#dcfce7' : '#f1f5f9', color: rem > 0 ? '#166534' : '#64748b' }}>
+                                {rem > 0 ? 'AVAILABLE' : 'EXHAUSTED'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <form onSubmit={handleAddBatchLot} style={{ background: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
+                + Add New Inward Batch / Lot Manually
+              </div>
+              {batchErr && <div style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '8px' }}>{batchErr}</div>}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.3fr auto', gap: '8px', alignItems: 'end' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>Batch / Lot # (Optional)</label>
+                  <input value={newBatchNo} onChange={(e) => setNewBatchNo(e.target.value)} placeholder="Auto if blank" style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>Qty ({batchModalItem.unit || 'Nos'}) *</label>
+                  <input type="number" step="0.01" min="0.01" required value={newBatchQty} onChange={(e) => setNewBatchQty(e.target.value)} placeholder="e.g. 1000" style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>Rate ({symbol})</label>
+                  <input type="number" step="0.01" value={newBatchRate} onChange={(e) => setNewBatchRate(e.target.value)} style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>Supplier / Source</label>
+                  <input value={newBatchSupplier} onChange={(e) => setNewBatchSupplier(e.target.value)} placeholder="e.g. Patel & Sons" style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }} />
+                </div>
+                <button type="submit" disabled={batchSaving} style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 700, fontSize: '12px' }}>
+                  {batchSaving ? 'Adding...' : '+ Add Lot'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

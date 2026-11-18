@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem, DebitNote, DebitNoteItem
 from .serializers import SupplierSerializer, PurchaseInvoiceSerializer, DebitNoteSerializer
-from stock.models import Item, StockLedgerEntry
+from stock.models import Item, StockLedgerEntry, StockBatch
 from accounts.models import GLEntry, PaymentInvoiceAllocation, Company
 from accounts.views import resolve_active_unit
 
@@ -48,6 +48,7 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
     # Company scoped cleanup of previous entries for this bill
     GLEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
     StockLedgerEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Purchase Invoice', voucher_no=invoice.bill_number).delete()
+    StockBatch.objects.filter(company=comp, source_type='Purchase Invoice', source_voucher=invoice.bill_number).delete()
     invoice.items.all().delete()
 
     affected_items = set()
@@ -101,7 +102,24 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
             is_foc=is_foc
         )
 
-        # 4. Stock Ledger inward entry
+        # 4. Create Purchase Lot / Batch & Stock Ledger inward entry
+        custom_batch = (str(it.get('batch_no') or '')).strip()
+        if not custom_batch:
+            b_idx = StockBatch.objects.filter(company=comp, item=item_obj).count() + 1
+            custom_batch = f"LOT-{invoice.bill_number}-{b_idx:02d}"
+        batch_obj = StockBatch.objects.create(
+            company=comp,
+            unit=getattr(invoice, 'unit', None),
+            item=item_obj,
+            batch_no=custom_batch,
+            source_type='Purchase Invoice',
+            source_voucher=invoice.bill_number,
+            party_name=invoice.supplier_name or '',
+            received_date=invoice.posting_date,
+            initial_qty=qty,
+            remaining_qty=qty,
+            purchase_rate=rate
+        )
         StockLedgerEntry.objects.create(
             company=comp,
             unit=getattr(invoice, 'unit', None),
@@ -111,7 +129,9 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
             voucher_no=invoice.bill_number,
             actual_qty=qty,
             qty_after_transaction=0,
-            valuation_rate=rate
+            valuation_rate=rate,
+            batch=batch_obj,
+            batch_no=batch_obj.batch_no
         )
         affected_items.add(item_obj)
 

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Item, StockLedgerEntry
+from .models import Item, StockLedgerEntry, StockBatch
 
 class ItemSerializer(serializers.ModelSerializer):
     # Frontend compatibility aliases (so Code & Item Name never show blank)
@@ -30,4 +30,18 @@ class StockLedgerEntrySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StockLedgerEntry
+        fields = '__all__'
+
+class StockBatchSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source='item.item_name', read_only=True)
+    item_code = serializers.CharField(source='item.item_code', read_only=True)
+    item_unit = serializers.CharField(source='item.unit', read_only=True)
+    unit_name = serializers.CharField(source='unit.name', read_only=True, default='All Divisions')
+    outward_qty = serializers.SerializerMethodField()
+
+    def get_outward_qty(self, obj):
+        return float(max(0, (obj.initial_qty or 0) - (obj.remaining_qty or 0)))
+
+    class Meta:
+        model = StockBatch
         fields = '__all__'
