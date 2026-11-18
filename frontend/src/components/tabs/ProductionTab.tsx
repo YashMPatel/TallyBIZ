@@ -697,6 +697,43 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             </tbody>
           </table>
         </div>
+      ) : subTab === 'boms' ? (
+        <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#475569' }}>
+                <th style={{ padding: '12px' }}>BOM Code</th>
+                <th style={{ padding: '12px' }}>Recipe Name</th>
+                <th style={{ padding: '12px' }}>Finished Item</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>Output Qty</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>Raw Cost</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>Unit Cost</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {boms.length === 0 ? (
+                <tr><td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No BOM recipes found.</td></tr>
+              ) : boms.map((b: any) => (
+                <tr key={b.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '12px', fontWeight: 700, color: '#0284c7' }}>{b.bom_code}</td>
+                  <td style={{ padding: '12px', fontWeight: 600 }}>{b.name}</td>
+                  <td style={{ padding: '12px' }}>{b.finished_item_name} ({b.finished_item_unit})</td>
+                  <td style={{ padding: '12px', textAlign: 'right' }}>{b.output_qty}</td>
+                  <td style={{ padding: '12px', textAlign: 'right' }}>₹{Number(b.raw_material_cost || 0).toFixed(2)}</td>
+                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>₹{Number(b.unit_cost || 0).toFixed(2)}</td>
+                  <td style={{ padding: '12px', textAlign: 'right' }}>
+                    <div style={{ display: 'inline-flex', gap: '6px' }}>
+                      <button onClick={() => openOrderForBom(b.id)} style={{ padding: '4px 9px', borderRadius: '6px', border: 'none', background: '#0f172a', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>+ Order</button>
+                      <button onClick={() => openEditBomModal(b)} style={{ padding: '4px 9px', borderRadius: '6px', border: '1px solid #bae6fd', background: '#f0f9ff', color: '#0369a1', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Edit</button>
+                      <button onClick={() => handleDeleteBom(b.id)} style={{ padding: '4px 9px', borderRadius: '6px', border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontSize: '12px', cursor: 'pointer' }}>Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : subTab === 'requests' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {salesRequests.length === 0 ? (
@@ -1374,6 +1411,73 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {viewOrder && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300, padding: '16px' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', padding: '22px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>Manufacturing Voucher: {viewOrder.voucher_no}</h2>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>Date: {viewOrder.posting_date} • Status: <strong>{viewOrder.status}</strong></div>
+              </div>
+              <button onClick={() => setViewOrder(null)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', fontWeight: 700 }}>Close</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px' }}>
+              <div><span style={{ color: '#64748b' }}>Finished Item:</span><br /><strong>{viewOrder.finished_item_name}</strong></div>
+              <div><span style={{ color: '#64748b' }}>Produced Qty:</span><br /><strong>{viewOrder.actual_qty} {viewOrder.finished_item_unit}</strong></div>
+              <div><span style={{ color: '#64748b' }}>Net Cost / Unit:</span><br /><strong>₹{Number(viewOrder.net_production_cost || 0).toFixed(2)} (₹{Number(viewOrder.unit_cost || 0).toFixed(2)}/unit)</strong></div>
+            </div>
+
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#334155' }}>Raw Material Consumption</h4>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '16px' }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9', textAlign: 'left' }}>
+                  <th style={{ padding: '8px' }}>Item</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>Actual Qty</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>Rate</th>
+                  <th style={{ padding: '8px', textAlign: 'right' }}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(viewOrder.consumptions || []).length === 0 ? (
+                  <tr><td colSpan={4} style={{ padding: '10px', textAlign: 'center', color: '#94a3b8' }}>No consumption lines recorded.</td></tr>
+                ) : (viewOrder.consumptions || []).map((c: any) => (
+                  <tr key={c.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px' }}>{c.raw_item_name}</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{c.actual_qty} {c.unit}</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>₹{Number(c.rate || 0).toFixed(2)}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>₹{Number(c.amount || 0).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {(viewOrder.gl_entries || []).length > 0 && (
+              <>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#334155' }}>Accounting Ledger (GL Entries)</h4>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9', textAlign: 'left' }}>
+                      <th style={{ padding: '8px' }}>Account</th>
+                      <th style={{ padding: '8px', textAlign: 'right' }}>Debit</th>
+                      <th style={{ padding: '8px', textAlign: 'right' }}>Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewOrder.gl_entries.map((g: any) => (
+                      <tr key={g.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '8px' }}>{g.account}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>₹{Number(g.debit || 0).toFixed(2)}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>₹{Number(g.credit || 0).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
         </div>
       )}

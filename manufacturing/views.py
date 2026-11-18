@@ -321,6 +321,7 @@ def _apply_order_lines(order, bom, data):
 class BOMListCreateView(APIView):
     permission_classes = [AllowAny]
 
+    
     def get(self, request):
         company = _get_company(request)
         if not company:
@@ -479,9 +480,6 @@ class MRPCheckView(APIView):
         })
 
 class ProductionOrderListCreateView(APIView):
-    def get_queryset(self):
-        return ProductionOrder.objects.all()
-
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -492,6 +490,18 @@ class ProductionOrderListCreateView(APIView):
         u_filter = resolve_active_unit(request, company)
         if u_filter:
             qs = qs.filter(unit=u_filter)
+        from .models import ProductionSalesRequest
+        completed_reqs = ProductionSalesRequest.objects.filter(company=company, status='COMPLETED')
+        dispatched_vnos = set()
+        for r in completed_reqs:
+            snap = r.mrp_snapshot or {}
+            if isinstance(snap, dict):
+                if snap.get('created_mfg_vno'):
+                    dispatched_vnos.add(str(snap['created_mfg_vno']))
+                for b in snap.get('delivery_schedule', []):
+                    if b.get('mfg_voucher_no'):
+                        dispatched_vnos.add(str(b['mfg_voucher_no']))
+        qs = [o for o in qs if o.voucher_no not in dispatched_vnos and 'DISPATCHED' not in (o.remarks or '').upper()]
         orders = [_serialize_order(o, include_vouchers=True) for o in qs]
         approved = [o for o in orders if o['status'] == 'APPROVED']
         summary = {
@@ -550,7 +560,6 @@ class ProductionOrderListCreateView(APIView):
                     created_by=username,
                 )
                 _apply_order_lines(order, bom, data)
-                # Strict Raw Material Stock Check even on PENDING order creation!
                 for cl in order.consumptions.select_related('raw_item').all():
                     avail_rm = Decimal(cl.raw_item.current_stock or 0)
                     if avail_rm < Decimal(cl.actual_qty):
@@ -565,82 +574,6 @@ class ProductionOrderListCreateView(APIView):
             return Response({'error': str(ve)}, status=400)
         return Response(_serialize_order(order, include_vouchers=True), status=201)
 
-
-
-    def get(self, request):
-        company_id = request.GET.get('company_id') or request.headers.get('X-Company-ID')
-        qs = ProductionOrder.objects.all()
-        if company_id:
-            qs = qs.filter(company_id=company_id)
-        
-        data = []
-        approved_count = 0
-        pending_count = 0
-        
-        for po in qs:
-            st = getattr(po, 'status', 'Pending')
-            if st in ['Approved', 'Completed']:
-                approved_count += 1
-            else:
-                pending_count += 1
-                
-            data.append({
-                "id": po.id,
-                "voucher_no": getattr(po, 'voucher_no', f"SO-2026-0{po.id}"),
-                "date": str(getattr(po, 'posting_date', '')),
-                "finished_item": str(getattr(po, 'finished_item', 'Finished Item')),
-                "actual_qty": float(getattr(po, 'actual_qty', 100)),
-                "net_production_cost": float(getattr(po, 'net_production_cost', 50000)),
-                "unit_cost": float(getattr(po, 'unit_cost', 500)),
-                "status": st,
-                "delivery_schedule": getattr(po, 'delivery_schedule', [])
-            })
-            
-        summary = {
-            "approved_orders": approved_count,
-            "pending_orders": pending_count,
-            "total_value": sum(d['net_production_cost'] for d in data)
-        }
-        
-        return Response({"orders": data, "summary": summary})
-
-
-    def get(self, request):
-        company_id = request.GET.get('company_id') or request.headers.get('X-Company-ID')
-        qs = ProductionOrder.objects.all()
-        if company_id:
-            qs = qs.filter(company_id=company_id)
-        
-        data = []
-        approved_count = 0
-        pending_count = 0
-        
-        for po in qs:
-            st = getattr(po, 'status', 'Pending')
-            if st in ['Approved', 'Completed']:
-                approved_count += 1
-            else:
-                pending_count += 1
-                
-            data.append({
-                "id": po.id,
-                "voucher_no": getattr(po, 'voucher_no', f"SO-2026-0{po.id}"),
-                "date": str(getattr(po, 'posting_date', '')),
-                "finished_item": str(getattr(po, 'finished_item', 'Finished Item')),
-                "actual_qty": float(getattr(po, 'actual_qty', 100)),
-                "net_production_cost": float(getattr(po, 'net_production_cost', 50000)),
-                "unit_cost": float(getattr(po, 'unit_cost', 500)),
-                "status": st,
-                "delivery_schedule": getattr(po, 'delivery_schedule', [])
-            })
-            
-        summary = {
-            "approved_orders": approved_count,
-            "pending_orders": pending_count,
-            "total_value": sum(d['net_production_cost'] for d in data)
-        }
-        
-        return Response({"orders": data, "summary": summary})
 class ProductionOrderDetailView(APIView):
     permission_classes = [AllowAny]
 
