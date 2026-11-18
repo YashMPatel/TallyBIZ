@@ -35,6 +35,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   const isSalesUser = roleUpper === 'SALES_USER';
   const isAdmin = roleUpper === 'ADMIN' || Boolean(user?.is_superuser || user?.is_staff);
   const isManager = roleUpper === 'MANAGER';
+  const rawPerms = user?.custom_permissions;
+  const allowedPerms: string[] = Array.isArray(rawPerms) ? rawPerms : (Array.isArray(rawPerms?.allowed) ? rawPerms.allowed : []);
+  const revokedPerms: string[] = Array.isArray(rawPerms?.revoked) ? rawPerms.revoked : [];
+  const canAccess = (modKey: string) => {
+    if (isAdmin) return true;
+    if (revokedPerms.includes(modKey)) return false;
+    return !isSalesUser || allowedPerms.includes(modKey);
+  };
 
   const unitMode = String(activeUnitType || 'ALL').toUpperCase();
   const isAll = unitMode === 'ALL';
@@ -85,7 +93,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: '3px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
         {/* HEAD OFFICE & OWNER: Approvals Hub */}
-        {(isHO || isAll) && (isAdmin || isManager) && (
+        {(isHO || isAll) && (isAdmin || (!revokedPerms.includes('approvals') && (isManager || allowedPerms.includes('approvals')))) && (
           <button
             onClick={() => setActiveTab('approvals')}
             style={{
@@ -108,30 +116,30 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         {/* TRADING & CONSOLIDATED: Selling, Buying, Customers, Suppliers, Returns */}
         {(isTrading || isHO || isAll) && (
           <>
-            <button onClick={() => setActiveTab('selling')} style={btnStyle('selling')}>
+            {!revokedPerms.includes('selling') && <button onClick={() => setActiveTab('selling')} style={btnStyle('selling')}>
               <ShoppingCart size={16} /> Selling (Invoices &amp; Orders)
-            </button>
-            {!isSalesUser && (
+            </button>}
+            {canAccess('buying') && (
               <button onClick={() => setActiveTab('buying')} style={btnStyle('buying')}>
                 <ShoppingBag size={16} /> Buying (Bills &amp; Requests)
               </button>
             )}
-            <button onClick={() => setActiveTab('customers')} style={btnStyle('customers')}>
+            {!revokedPerms.includes('customers') && <button onClick={() => setActiveTab('customers')} style={btnStyle('customers')}>
               <Users size={16} /> Customers
-            </button>
-            {!isSalesUser && (
+            </button>}
+            {canAccess('suppliers') && (
               <button onClick={() => setActiveTab('suppliers')} style={btnStyle('suppliers')}>
                 <Truck size={16} /> Suppliers
               </button>
             )}
-            <button onClick={() => setActiveTab('ReturnsTab')} style={btnStyle('ReturnsTab')}>
+            {!revokedPerms.includes('returns') && <button onClick={() => setActiveTab('ReturnsTab')} style={btnStyle('ReturnsTab')}>
               <CreditCard size={16} /> Credit &amp; Debit Notes
-            </button>
+            </button>}
           </>
         )}
 
         {/* MANUFACTURING & CONSOLIDATED: Production, BOM & Sales Production Requests */}
-        {(isMfg || isHO || isAll) && (
+        {(isMfg || isHO || isAll) && !revokedPerms.includes('production') && (
           <button onClick={() => setActiveTab('production')} style={btnStyle('production', '#34d399')}>
             <Factory size={16} /> {isMfg ? 'Production, MRP & Requests' : 'Production & BOM'}
           </button>
@@ -140,10 +148,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         {/* TRADING, MANUFACTURING & CONSOLIDATED: Stock & Stock Movement */}
         {(isTrading || isMfg || isHO || isAll) && (
           <>
-            <button onClick={() => setActiveTab('stock')} style={btnStyle('stock')}>
+            {!revokedPerms.includes('stock') && <button onClick={() => setActiveTab('stock')} style={btnStyle('stock')}>
               <Package size={16} /> {isMfg ? 'Factory Stock & Dispatch' : 'Stock (Items)'}
-            </button>
-            {!isSalesUser && (
+            </button>}
+            {canAccess('stock_ledger') && (
               <button onClick={() => setActiveTab('stock-ledger')} style={btnStyle('stock-ledger')}>
                 <Layers size={16} /> Stock Movement Ledger
               </button>
@@ -152,31 +160,31 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         )}
 
         {/* ALL DIVISIONS: Unit Petty Cash, Counter Receipts, Scrap Cash & Salary/Expense Requests */}
-        <button onClick={() => setActiveTab('petty_cash')} style={btnStyle('petty_cash', '#a78bfa')}>
+        {!revokedPerms.includes('petty_cash') && <button onClick={() => setActiveTab('petty_cash')} style={btnStyle('petty_cash', '#a78bfa')}>
           <Wallet size={16} /> {isHO ? 'Unit Petty Cash & Requests' : 'Petty Cash & Requests'}
-        </button>
+        </button>}
 
         {/* HEAD OFFICE & CONSOLIDATED ONLY: Central Payments, Bank Accounts, Partners/Loans, GL, P&L, GST, Users */}
-        {(isHO || isAll) && !isSalesUser && (
+        {(isHO || isAll) && (
           <>
-            <button onClick={() => setActiveTab('payments')} style={btnStyle('payments')}>
+            {canAccess('payments') && <button onClick={() => setActiveTab('payments')} style={btnStyle('payments')}>
               <CreditCard size={16} /> Payments (HO Central)
-            </button>
-            <button onClick={() => setActiveTab('bank_accounts')} style={btnStyle('bank_accounts')}>
+            </button>}
+            {canAccess('bank_accounts') && <button onClick={() => setActiveTab('bank_accounts')} style={btnStyle('bank_accounts')}>
               <Building2 size={16} /> Bank Accounts (Statements)
-            </button>
-            <button onClick={() => setActiveTab('capital_loans')} style={btnStyle('capital_loans')}>
+            </button>}
+            {canAccess('capital_loans') && <button onClick={() => setActiveTab('capital_loans')} style={btnStyle('capital_loans')}>
               <Landmark size={16} /> Partners, Capital &amp; Loans
-            </button>
-            <button onClick={() => setActiveTab('accounts')} style={btnStyle('accounts')}>
+            </button>}
+            {canAccess('accounts') && <button onClick={() => setActiveTab('accounts')} style={btnStyle('accounts')}>
               <BookOpen size={16} /> General Ledger
-            </button>
-            <button onClick={() => setActiveTab('reports')} style={btnStyle('reports')}>
+            </button>}
+            {canAccess('reports') && <button onClick={() => setActiveTab('reports')} style={btnStyle('reports')}>
               <PieChart size={16} /> Profit &amp; Loss / Balance Sheet
-            </button>
-            <button onClick={() => setActiveTab('gst')} style={btnStyle('gst')}>
+            </button>}
+            {canAccess('gst') && <button onClick={() => setActiveTab('gst')} style={btnStyle('gst')}>
               <PieChart size={16} /> GST Returns (GSTR-1/3B)
-            </button>
+            </button>}
           </>
         )}
 

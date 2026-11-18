@@ -90,6 +90,7 @@ class UserProfile(models.Model):
     company = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name='users')
     is_approved = models.BooleanField(default=False)
     assigned_unit = models.ForeignKey(BusinessUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_users')
+    custom_permissions = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f"{self.user.username} ({self.role})"

@@ -72,6 +72,7 @@ class UniversalLoginView(APIView):
             'assigned_unit_id': assigned_unit_id,
             'assigned_unit_name': assigned_unit_name,
             'can_view_all_units': assigned_unit_id is None,
+            'custom_permissions': getattr(getattr(auth_user, 'profile', None), 'custom_permissions', []) or [],
         }
 
         return Response({
@@ -123,6 +124,7 @@ class RBACUserManagementView(APIView):
                 'assigned_unit_name': unit_name,
                 'can_view_all_units': unit_id is None,
                 'is_approved': p.is_approved,
+                'custom_permissions': getattr(p, 'custom_permissions', []) or [],
                 'is_superuser': u.is_superuser,
                 'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else '',
             })
@@ -143,6 +145,8 @@ class RBACUserManagementView(APIView):
                 profile.is_approved = True
             if data.get('role'):
                 profile.role = data.get('role')
+            if isinstance(data.get('custom_permissions'), (list, dict)):
+                profile.custom_permissions = data.get('custom_permissions')
             if data.get('company') or data.get('company_id'):
                 cid = data.get('company') or data.get('company_id')
                 c = Company.objects.filter(id=cid).first()

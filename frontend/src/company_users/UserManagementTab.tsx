@@ -13,6 +13,7 @@ interface PendingUser {
   company_name?: string;
   date_joined?: string;
   is_approved?: boolean;
+  custom_permissions?: string[] | { allowed?: string[]; revoked?: string[] };
 }
 
 interface Company {
@@ -27,6 +28,67 @@ export const UserManagementTab: React.FC = () => {
   const [selectedRoles, setSelectedRoles] = useState<Record<number, string>>({});
   const [selectedCompanies, setSelectedCompanies] = useState<Record<number, number>>({});
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [customPermsMap, setCustomPermsMap] = useState<Record<number, { allowed: string[]; revoked: string[] }>>({});
+  const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
+
+  const ALL_MODULES = [
+    { key: 'approvals', label: 'Approvals Hub', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'selling', label: 'Selling (Invoices & Orders)', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'buying', label: 'Buying (Bills & Requests)', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'customers', label: 'Customers', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'suppliers', label: 'Suppliers', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'returns', label: 'Credit & Debit Notes', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'production', label: 'Production & BOM', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'stock', label: 'Stock (Items)', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'stock_ledger', label: 'Stock Movement Ledger', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'petty_cash', label: 'Petty Cash & Requests', salesDefault: true, mgrDefault: true, adminOnly: false },
+    { key: 'payments', label: 'Payments (HO Central)', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'bank_accounts', label: 'Bank Accounts (Statements)', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'capital_loans', label: 'Partners, Capital & Loans', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'accounts', label: 'General Ledger', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'reports', label: 'Profit & Loss / Balance Sheet', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'gst', label: 'GST Returns (GSTR-1/3B)', salesDefault: false, mgrDefault: true, adminOnly: false },
+    { key: 'users_management', label: 'Users & Permissions', salesDefault: false, mgrDefault: false, adminOnly: true },
+  ];
+
+  const isRoleDefault = (roleStr: string, mod: typeof ALL_MODULES[0]) => {
+    const r = String(roleStr || '').trim().toUpperCase().replace(/\s+/g, '_');
+    if (r === 'ADMIN') return true;
+    if (r === 'MANAGER') return mod.mgrDefault;
+    return mod.salesDefault;
+  };
+
+  const isModuleChecked = (u: PendingUser, m: typeof ALL_MODULES[0]) => {
+    const activeRole = selectedRoles[u.id] || u.role || 'Sales User';
+    const rUpper = String(activeRole || '').trim().toUpperCase().replace(/\s+/g, '_');
+    if (rUpper === 'ADMIN') return true;
+    const entry = customPermsMap[u.id] || { allowed: [], revoked: [] };
+    if (entry.revoked.includes(m.key)) return false;
+    return isRoleDefault(activeRole, m) || entry.allowed.includes(m.key);
+  };
+
+  const getActivePermCount = (u: PendingUser) => {
+    return ALL_MODULES.filter((m) => isModuleChecked(u, m)).length;
+  };
+
+  const togglePerm = (u: PendingUser, m: typeof ALL_MODULES[0]) => {
+    const activeRole = selectedRoles[u.id] || u.role || 'Sales User';
+    const byRole = isRoleDefault(activeRole, m);
+    const entry = customPermsMap[u.id] || { allowed: [], revoked: [] };
+    const currentlyChecked = isModuleChecked(u, m);
+
+    let nextAllowed = [...entry.allowed];
+    let nextRevoked = [...entry.revoked];
+
+    if (currentlyChecked) {
+      nextAllowed = nextAllowed.filter((k) => k !== m.key);
+      if (byRole && !nextRevoked.includes(m.key)) nextRevoked.push(m.key);
+    } else {
+      nextRevoked = nextRevoked.filter((k) => k !== m.key);
+      if (!byRole && !nextAllowed.includes(m.key)) nextAllowed.push(m.key);
+    }
+    setCustomPermsMap({ ...customPermsMap, [u.id]: { allowed: nextAllowed, revoked: nextRevoked } });
+  };
 
   const fetchPendingUsers = async () => {
     setLoading(true);
@@ -46,6 +108,14 @@ export const UserManagementTab: React.FC = () => {
         });
         setSelectedRoles(rMap);
         setSelectedCompanies(cMap);
+        const pMap: Record<number, { allowed: string[]; revoked: string[] }> = {};
+        list.forEach((u: PendingUser) => {
+          const raw = u.custom_permissions;
+          if (Array.isArray(raw)) pMap[u.id] = { allowed: raw, revoked: [] };
+          else if (raw && typeof raw === 'object') pMap[u.id] = { allowed: raw.allowed || [], revoked: raw.revoked || [] };
+          else pMap[u.id] = { allowed: [], revoked: [] };
+        });
+        setCustomPermsMap(pMap);
       }
     } catch (err) {
       console.error('Failed to fetch pending users:', err);
@@ -79,7 +149,7 @@ export const UserManagementTab: React.FC = () => {
       const res = await fetch(`${API_BASE}/accounts/users/${user.id}/approve/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, company_id, action: 'approve' }),
+        body: JSON.stringify({ role, company_id, custom_permissions: customPermsMap[user.id] || { allowed: [], revoked: [] }, action: 'approve' }),
       });
 
       if (res.ok) {
@@ -336,11 +406,11 @@ export const UserManagementTab: React.FC = () => {
               borderRadius: '10px',
               padding: '14px 20px',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '16px',
+              flexDirection: 'column',
+              gap: '12px',
             }}
           >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '220px' }}>
               <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px' }}>
                 {u.username.substring(0, 2).toUpperCase()}
@@ -384,12 +454,61 @@ export const UserManagementTab: React.FC = () => {
               </div>
 
               <button
+                type="button"
+                onClick={() => setExpandedUserId(expandedUserId === u.id ? null : u.id)}
+                style={{ marginTop: '16px', padding: '7px 12px', fontSize: '12px', fontWeight: 600, color: '#0f172a', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                {expandedUserId === u.id ? 'Hide Permissions' : `Permissions (${getActivePermCount(u)}/${ALL_MODULES.length})`}
+              </button>
+
+              <button
                 onClick={() => handleApprove(u)}
                 style={{ marginTop: '16px', padding: '7px 14px', fontSize: '12px', fontWeight: 600, color: '#fff', backgroundColor: '#2563eb', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
               >
-                Save Role
+                Save
               </button>
             </div>
+          </div>
+          {expandedUserId === u.id && (
+            <div style={{ paddingTop: '10px', borderTop: '1px dashed #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {ALL_MODULES.map((m) => {
+                const activeRole = selectedRoles[u.id] || u.role || 'Sales User';
+                const rUpper = String(activeRole || '').trim().toUpperCase().replace(/\s+/g, '_');
+                const isTargetAdmin = rUpper === 'ADMIN';
+                const byRole = isRoleDefault(activeRole, m);
+                const checked = isModuleChecked(u, m);
+                const isLocked = isTargetAdmin || m.adminOnly;
+                return (
+                  <label
+                    key={m.key}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: `1px solid ${checked ? (byRole ? '#10b981' : '#2563eb') : '#cbd5e1'}`,
+                      backgroundColor: checked ? (byRole ? '#ecfdf5' : '#eff6ff') : '#fff',
+                      color: checked ? (byRole ? '#065f46' : '#1e40af') : '#64748b',
+                      cursor: isLocked ? 'default' : 'pointer',
+                      opacity: isLocked && !checked ? 0.55 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isLocked}
+                      onChange={() => !isLocked && togglePerm(u, m)}
+                    />
+                    {m.label}
+                    {byRole && checked && <span style={{ fontSize: '10px', fontWeight: 600, opacity: 0.75 }}>(Role)</span>}
+                    {byRole && !checked && <span style={{ fontSize: '10px', fontWeight: 600, color: '#dc2626' }}>(Revoked)</span>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
           </div>
         ))}
       </div>
