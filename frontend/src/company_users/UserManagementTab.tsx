@@ -12,6 +12,7 @@ interface PendingUser {
   company_id?: number | null;
   company_name?: string;
   date_joined?: string;
+  is_approved?: boolean;
 }
 
 interface Company {
@@ -30,7 +31,7 @@ export const UserManagementTab: React.FC = () => {
   const fetchPendingUsers = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/accounts/users/pending/`);
+      const res = await fetch(`${API_BASE}/accounts/users/pending/?include_all=1`);
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.users || data.results || []);
@@ -165,8 +166,10 @@ export const UserManagementTab: React.FC = () => {
         </div>
       )}
 
-      {/* Main Content Area */}
-      {pendingUsers.length === 0 ? (
+      {/* Pending Approval Requests */}
+      {(() => {
+        const pendingList = pendingUsers.filter((u) => !u.is_approved);
+        return pendingList.length === 0 ? (
         <div style={{
           backgroundColor: '#ffffff',
           border: '1px solid #e2e8f0',
@@ -182,10 +185,10 @@ export const UserManagementTab: React.FC = () => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ fontSize: '13px', fontWeight: 700, color: '#334155' }}>
-            Pending Approval Requests ({pendingUsers.length})
+            Pending Approval Requests ({pendingList.length})
           </div>
 
-          {pendingUsers.map((u) => (
+          {pendingList.map((u) => (
             <div
               key={u.id}
               style={{
@@ -316,7 +319,80 @@ export const UserManagementTab: React.FC = () => {
             </div>
           ))}
         </div>
-      )}
+        );
+      })()}
+
+      {/* Approved / Active Users List */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '8px' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>
+          Approved / Active Users ({pendingUsers.filter((u) => u.is_approved).length})
+        </div>
+        {pendingUsers.filter((u) => u.is_approved).map((u) => (
+          <div
+            key={u.id}
+            style={{
+              backgroundColor: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '14px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '220px' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: '#10b981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px' }}>
+                {u.username.substring(0, 2).toUpperCase()}
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>
+                  {u.first_name ? `${u.first_name} ${u.last_name}` : u.username}
+                </div>
+                <div style={{ fontSize: '12px', color: '#64748b' }}>
+                  @{u.username} • {u.email || 'No email'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '3px' }}>Role</label>
+                <select
+                  value={selectedRoles[u.id] || u.role || 'Sales User'}
+                  onChange={(e) => setSelectedRoles({ ...selectedRoles, [u.id]: e.target.value })}
+                  style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff' }}
+                >
+                  <option value="ADMIN">Admin</option>
+                  <option value="Manager">Manager</option>
+                  <option value="Sales User">Sales User</option>
+                  <option value="Staff">Staff</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '3px' }}>Company</label>
+                <select
+                  value={selectedCompanies[u.id] || u.company_id || (companies[0]?.id || '')}
+                  onChange={(e) => setSelectedCompanies({ ...selectedCompanies, [u.id]: parseInt(e.target.value, 10) })}
+                  style={{ padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff', minWidth: '150px' }}
+                >
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => handleApprove(u)}
+                style={{ marginTop: '16px', padding: '7px 14px', fontSize: '12px', fontWeight: 600, color: '#fff', backgroundColor: '#2563eb', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                Save Role
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

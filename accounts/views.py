@@ -173,6 +173,13 @@ class AccountsCompanyListView(APIView):
                 companies = AccountsCompany.objects.none()
         else:
             companies = AccountsCompany.objects.all().order_by('id')
+        seen_names = set()
+        unique_companies = []
+        for c in companies:
+            key = (c.name or '').strip().lower()
+            if key not in seen_names:
+                seen_names.add(key)
+                unique_companies.append(c)
         data = [
             {
                 'id': c.id,
@@ -184,7 +191,7 @@ class AccountsCompanyListView(APIView):
                 'business_type': getattr(c, 'business_type', 'HYBRID'),
                 'parent_company_id': getattr(c, 'parent_company_id', None),
             }
-            for c in companies
+            for c in unique_companies
         ]
         return Response(data, status=status.HTTP_200_OK)
 
@@ -1063,8 +1070,11 @@ class FrontendCompanyCreateView(APIView):
         if business_type not in ('HYBRID', 'TRADING', 'MANUFACTURING'):
             business_type = 'HYBRID'
 
-        if not name:
+        if not name or not str(name).strip():
             return Response({'error': 'Company name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        name = str(name).strip()
+        if AccountsCompany.objects.filter(name__iexact=name).exists():
+            return Response({'error': f'Company "{name}" already exists! Duplicate names are not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
 
         company = AccountsCompany.objects.create(
             name=name,
