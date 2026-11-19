@@ -1372,7 +1372,10 @@ class DatabaseRestoreAPIView(APIView):
             return Response({'error': 'Please select a target company in the Gateway before restoring.'}, status=status.HTTP_400_BAD_REQUEST)
 
         erp_apps = {'accounts', 'stock', 'buying', 'selling', 'manufacturing'}
-        model_map = {m._meta.label_lower: m for m in apps.get_models() if m._meta.app_label in erp_apps}
+        # User profiles (role, company, approval) are account state, not company data: a restore must never
+        # delete or rewrite them. Backup user ids don't match this DB and were remapped onto the restoring admin.
+        model_map = {m._meta.label_lower: m for m in apps.get_models()
+                     if m._meta.app_label in erp_apps and m._meta.label_lower != 'accounts.userprofile'}
 
         # Group records from JSON by model label
         records_by_model = {}
@@ -1505,6 +1508,8 @@ class DatabaseRestoreAPIView(APIView):
 
         for m in model_map.values():
             visit(m)
+        # Allocation.invoice_id is a plain int, invisible to the FK sort: insert it after the invoices it remaps to.
+        ordered_models.sort(key=lambda m: m._meta.label_lower == 'accounts.paymentinvoiceallocation')
 
         try:
             with transaction.atomic():
@@ -1577,8 +1582,11 @@ class DatabaseRestoreAPIView(APIView):
                                 elif rel_lbl in pk_map:
                                     old_fk = resolve_fk_raw(rel_m, val)
                                     mapped_fk = pk_map[rel_lbl].get(old_fk)
-                                    if mapped_fk is None and old_fk is not None and rel_m.objects.filter(pk=old_fk).exists():
-                                        mapped_fk = old_fk
+                                    if mapped_fk is None and old_fk is not None:
+                                        # Reuse an existing row only if it can't belong to another company.
+                                        scoped = any(rf.name == 'company' for rf in rel_m._meta.fields)
+                                        same = rel_m.objects.filter(pk=old_fk, **({'company': target_comp} if scoped else {}))
+                                        mapped_fk = old_fk if same.exists() else None
                                     kwargs[f"{fname}_id"] = mapped_fk
                                 else:
                                     kwargs[f"{fname}_id"] = resolve_fk_raw(rel_m, val)
@@ -1594,12 +1602,8 @@ class DatabaseRestoreAPIView(APIView):
                             else:
                                 kwargs['invoice_id'] = pk_map.get('selling.salesinvoice', {}).get(old_inv_id, old_inv_id)
 
-                        if lbl == 'accounts.userprofile' and kwargs.get('user_id'):
-                            u_id = kwargs.pop('user_id')
-                            new_obj, _ = m.objects.update_or_create(user_id=u_id, defaults=kwargs)
-                        else:
-                            new_obj = m(**kwargs)
-                            new_obj.save()
+                        new_obj = m(**kwargs)
+                        new_obj.save()
                         if old_pk is not None:
                             pk_map[lbl][old_pk] = new_obj.pk
                         restored_count += 1
