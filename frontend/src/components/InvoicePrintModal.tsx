@@ -184,20 +184,13 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
               gap: '16px',
             }}
           >
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', maxWidth: '66%' }}>
+            <div style={{ display: 'flex', gap: '20px', alignItems: 'center', width: '100%' }}>
               {branding.logo_data_url ? (
                 <img
                   src={branding.logo_data_url}
                   alt={branding.name}
                   style={{
-                    width: '54px',
-                    height: '54px',
-                    objectFit: 'contain',
-                    borderRadius: '8px',
-                    border: '1px solid #e2e8f0',
-                    padding: '3px',
-                    background: '#fff',
-                    flexShrink: 0,
+                    width: 'auto', maxWidth: '210px', height: '92px', objectFit: 'contain', flexShrink: 0,
                   }}
                 />
               ) : (
@@ -271,9 +264,60 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                   ) : null}
                 </p>
               </div>
-            </div>
+            </div></div>
 
-            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+      {/* 2. BILLED TO & INVOICE META (SIDE-BY-SIDE) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'stretch', gap: '12px', marginBottom: '14px' }}>
+        <div
+          style={{
+            flex: 1,
+            padding: '9px 14px',
+            background: '#f8fafc',
+            borderRadius: '6px',
+            border: '1px solid #e2e8f0',
+          }}
+        >
+            <span
+              style={{
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: '#64748b',
+                fontWeight: 'bold',
+              }}
+            >
+              BILLED TO (CUSTOMER DETAILS)
+            </span>
+            <h3 style={{ margin: '3px 0 2px 0', fontSize: '15px', color: '#0f172a' }}>
+              {invoice.customer_name}
+            </h3>
+            <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
+              {customer?.address && (
+                <>
+                  {customer.address}
+                  <br />
+                </>
+              )}
+              {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}
+              <br />
+              <strong>GSTIN / Tax ID:</strong> {customer?.gstin || 'Unregistered'} |{' '}
+              <strong>Category:</strong> {customerGstCategory}
+            </p>
+          </div>
+        <div
+          style={{
+            minWidth: '215px',
+            padding: '9px 14px',
+            background: '#f8fafc',
+            borderRadius: '6px',
+            border: '1px solid #e2e8f0',
+            textAlign: 'right',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'flex-end',
+          }}
+        >
               <span
                 style={{
                   display: 'inline-block',
@@ -306,48 +350,11 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 <br />
                 <strong>Date:</strong> {invoice.posting_date}
               </p>
-            </div>
-          </div>
+            
+        </div>
+      </div>
 
-          {/* 2. BILLED TO CUSTOMER */}
-          <div
-            style={{
-              marginBottom: '14px',
-              padding: '9px 14px',
-              background: '#f8fafc',
-              borderRadius: '6px',
-              border: '1px solid #e2e8f0',
-            }}
-          >
-            <span
-              style={{
-                fontSize: '10px',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                color: '#64748b',
-                fontWeight: 'bold',
-              }}
-            >
-              BILLED TO (CUSTOMER DETAILS)
-            </span>
-            <h3 style={{ margin: '3px 0 2px 0', fontSize: '15px', color: '#0f172a' }}>
-              {invoice.customer_name}
-            </h3>
-            <p style={{ margin: 0, fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>
-              {customer?.address && (
-                <>
-                  {customer.address}
-                  <br />
-                </>
-              )}
-              {[customer?.city, customer?.postal_code].filter(Boolean).join(' - ') || 'Address Not Provided'}
-              <br />
-              <strong>GSTIN / Tax ID:</strong> {customer?.gstin || 'Unregistered'} |{' '}
-              <strong>Category:</strong> {customerGstCategory}
-            </p>
-          </div>
-
-          {/* 3. CLEAN ITEMS TABLE (NO EXTRA GRID LINES, 5-6 ITEMS SPACE) */}
+      {/* 3. CLEAN ITEMS TABLE (NO EXTRA GRID LINES, 5-6 ITEMS SPACE) */}
           <div style={{ minHeight: '225px', marginBottom: '14px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
               <thead>
