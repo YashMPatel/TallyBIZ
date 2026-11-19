@@ -80,6 +80,10 @@ def user_profile(request):
         data['phone'] = profile.phone or ''
         data['gender'] = profile.gender or 'OTHER'
         data['address'] = profile.address or ''
+        # Live RBAC fields so the client can refresh a stale login snapshot (same fallback as UniversalLoginView).
+        acc = getattr(user, 'profile', None)
+        data['role'] = (acc and acc.role) or ('ADMIN' if user.is_superuser or user.is_staff else 'STAFF')
+        data['custom_permissions'] = (acc and acc.custom_permissions) or []
         return Response(data)
 
     elif request.method == 'PUT':
