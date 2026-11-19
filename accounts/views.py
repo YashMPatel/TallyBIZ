@@ -1697,6 +1697,8 @@ class CompanyBrandingAPIView(APIView):
                 val = str(d[f]) if f in ('logo_data_url', 'invoice_terms', 'address') else str(d[f]).strip()
                 if f == 'name' and not val:
                     continue
+                if f == 'name' and AccountsCompany.objects.filter(name__iexact=val).exclude(pk=comp.pk).exists():
+                    return Response({'error': f'Company "{val}" already exists! Duplicate names are not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
                 setattr(comp, f, val)
         if 'gstin' in d and d['gstin']:
             comp.tax_id = str(d['gstin']).strip()
