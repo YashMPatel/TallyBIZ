@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { API_BASE } from '../utils/erpHelpers';
 
 export interface UserData {
   id: number;
   username: string;
   email: string;
   first_name: string;
+  custom_permissions?: unknown;
   role: 'ADMIN' | 'MANAGER' | 'SALES_USER' | 'PURCHASE_USER' | 'STOCK_USER' | 'ACCOUNTS_USER';
   company?: {
     name: string;
@@ -51,6 +53,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedUser = localStorage.getItem('user_data');
     return savedUser ? JSON.parse(savedUser) : null;
   });
+
+  // The saved login snapshot goes stale when an admin changes a role: refresh role/permissions from the server.
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_BASE}/org/profile/`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.role) setUser((prev) => prev && { ...prev, role: d.role, custom_permissions: d.custom_permissions });
+      })
+      .catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    if (user) localStorage.setItem('user_data', JSON.stringify(user));
+  }, [user]);
 
   const login = (newToken: string, newUserData: UserData) => {
     try {
