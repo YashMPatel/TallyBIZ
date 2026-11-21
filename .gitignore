@@ -9,3 +9,7 @@ deploy/backups/
 TallyBIZ_Local_Backup.json
 
 *.bak*
+
+# Local Database Backups
+*Backup*.json
+*Clean*.json
