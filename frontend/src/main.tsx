@@ -3,12 +3,23 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 
-const originalfetch = window.fetch.bind(window);
+let isRedirectingToLogin = false;
+
+const handleSessionExpired = () => {
+  if (isRedirectingToLogin) return;
+  isRedirectingToLogin = true;
+  ['access_token', 'refresh_token', 'token', 'jwt_access', 'rbac_user', 'user'].forEach((k) => {
+    try { localStorage.removeItem(k); } catch {}
+  });
+  window.location.reload();
+};
+
+const originalFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   let rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   try {
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
-    
+
     // Grab token from anywhere it might be stored
     let token = localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('jwt_access');
     if (!token) {
@@ -20,7 +31,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         } catch {}
       }
     }
-    
+
     if (token && !headers.has('Authorization')) {
       headers.set('Authorization', `Bearer ${token}`);
     }
@@ -33,12 +44,22 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       }
     }
 
-    if (typeof input === 'string' || input instanceof URL) {
-      return originalfetch(rawUrl, { ...init, headers });
+    const response = (typeof input === 'string' || input instanceof URL)
+      ? await originalFetch(rawUrl, { ...init, headers })
+      : await originalFetch(new Request(rawUrl, input), init);
+
+    if (
+      response.status === 401 &&
+      rawUrl.includes('/api/') &&
+      !rawUrl.includes('/auth/login') &&
+      !rawUrl.includes('/auth/register')
+    ) {
+      handleSessionExpired();
     }
-    return originalfetch(new Request(rawUrl, input), init);
+
+    return response;
   } catch {
-    return originalfetch(input, init);
+    return originalFetch(input, init);
   }
 };
 
