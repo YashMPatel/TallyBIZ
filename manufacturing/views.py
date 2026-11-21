@@ -124,7 +124,7 @@ def _serialize_order(order, include_vouchers=True):
                 'qty_after_transaction': float(s.qty_after_transaction),
                 'valuation_rate': float(s.valuation_rate),
             })
-        for g in GLEntry.objects.filter(company=order.company, voucher_no=order.voucher_no).order_by('id'):
+        for g in GLEntry.objects.filter(company=order.company, voucher_type='Manufacturing', voucher_no=order.voucher_no).order_by('id'):
             gl_entries.append({
                 'id': g.id,
                 'posting_date': str(g.posting_date),

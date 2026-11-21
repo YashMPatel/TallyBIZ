@@ -234,10 +234,16 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     setShowBomModal(true);
   };
 
-  const openOrderForBom = (bom?: any) => {
+  const openOrderForBom = (bomOrId?: any) => {
     setErrorMsg('');
     setSuccessMsg('');
-    const chosen = bom || boms[0];
+    const resolvedBom =
+      bomOrId && typeof bomOrId === 'object'
+        ? boms.find((x) => String(x.id) === String(bomOrId.id)) || bomOrId
+        : bomOrId !== undefined && bomOrId !== null
+        ? boms.find((x) => String(x.id) === String(bomOrId))
+        : boms[0];
+    const chosen = resolvedBom;
     if (!chosen) {
       setErrorMsg('Please create at least one Bill of Materials (BOM) recipe first.');
       setSubTab('boms');
@@ -1003,8 +1009,14 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     + Add Material
                   </button>
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 1.1fr 0.9fr 24px', gap: '8px', marginBottom: '4px', fontSize: '11px', fontWeight: 600, color: '#475569' }}>
+                  <span>Raw Material Item</span>
+                  <span>Batch Qty ({outputQty || 1} Nos)</span>
+                  <span>Scrap / Wastage %</span>
+                  <span></span>
+                </div>
                 {bomComponents.map((comp, idx) => (
-                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2.2fr 1.1fr 0.9fr 24px', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
                     <select
                       required
                       value={comp.raw_item}
@@ -1013,7 +1025,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                         copy[idx].raw_item = e.target.value;
                         setBomComponents(copy);
                       }}
-                      style={{ padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
                     >
                       <option value="">-- Raw Material --</option>
                       {items.filter((it) => String(it.id) !== String(finishedItemId)).map((it) => (
@@ -1027,39 +1039,79 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       step="0.001"
                       min="0.001"
                       required
-                      placeholder="Qty"
+                      placeholder="Batch Qty"
                       value={comp.qty_required}
                       onChange={(e) => {
                         const copy = [...bomComponents];
                         copy[idx].qty_required = e.target.value;
                         setBomComponents(copy);
                       }}
-                      style={{ padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
                     />
                     <input
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder="Wastage %"
+                      placeholder="Scrap %"
                       value={comp.wastage_percent}
                       onChange={(e) => {
                         const copy = [...bomComponents];
                         copy[idx].wastage_percent = e.target.value;
                         setBomComponents(copy);
                       }}
-                      style={{ padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
                     />
-                    {bomComponents.length > 1 && (
+                    {bomComponents.length > 1 ? (
                       <button
                         type="button"
                         onClick={() => setBomComponents(bomComponents.filter((_, i) => i !== idx))}
-                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer' }}
+                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: 0 }}
                       >
                         <Trash2 size={15} />
                       </button>
-                    )}
+                    ) : <span />}
                   </div>
                 ))}
+
+                {(() => {
+                  const batchOut = Math.max(parseFloat(outputQty) || 1, 0.0001);
+                  const batchRawTotal = bomComponents.reduce((sum, c) => {
+                    const it = items.find((x) => String(x.id) === String(c.raw_item));
+                    const rate = it ? Number(it.standard_rate || 0) : 0;
+                    const qty = parseFloat(c.qty_required) || 0;
+                    const scrap = parseFloat(c.wastage_percent) || 0;
+                    return sum + rate * qty * (1 + scrap / 100);
+                  }, 0);
+                  const rawPerUnit = batchRawTotal / batchOut;
+                  const labourPerUnit = parseFloat(bomLaborCost) || 0;
+                  const overheadPerUnit = parseFloat(bomOverheadCost) || 0;
+                  const totalPerUnit = rawPerUnit + labourPerUnit + overheadPerUnit;
+                  const totalBatchCost = totalPerUnit * batchOut;
+                  return (
+                    <div style={{ marginTop: '12px', padding: '12px 14px', borderRadius: '10px', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#334155', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                        Live Per-Unit Cost Breakdown (1 Nos)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                        <div style={{ background: '#fff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Raw Material / Nos</div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>{symbol}{rawPerUnit.toFixed(2)}</div>
+                          <div style={{ fontSize: '10px', color: '#64748b' }}>Batch: {symbol}{batchRawTotal.toFixed(2)}</div>
+                        </div>
+                        <div style={{ background: '#fff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Labour + Overhead / Nos</div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: '#0369a1', marginTop: '2px' }}>{symbol}{(labourPerUnit + overheadPerUnit).toFixed(2)}</div>
+                          <div style={{ fontSize: '10px', color: '#64748b' }}>{symbol}{labourPerUnit.toFixed(0)} + {symbol}{overheadPerUnit.toFixed(0)}</div>
+                        </div>
+                        <div style={{ background: '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac' }}>
+                          <div style={{ fontSize: '11px', color: '#166534', fontWeight: 600 }}>Total Cost / Nos</div>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: '#15803d', marginTop: '2px' }}>{symbol}{totalPerUnit.toFixed(2)}</div>
+                          <div style={{ fontSize: '10px', color: '#166534' }}>Batch ({batchOut}): {symbol}{totalBatchCost.toFixed(2)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {finishedItemId && bomComponents.some((c) => c.raw_item === finishedItemId) && (
