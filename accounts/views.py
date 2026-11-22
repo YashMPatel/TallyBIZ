@@ -1005,10 +1005,11 @@ class PaymentEntryListCreateAPIView(generics.ListCreateAPIView):
         comp = get_active_company(self.request)
         u = resolve_active_unit(self.request, comp, default_unit_type='HO')
         vno = (self.request.data.get('voucher_no') or '').strip()
-        if not vno or PaymentEntry.objects.filter(company=comp, unit=u, voucher_no=vno).exists():
-            cnt = PaymentEntry.objects.filter(company=comp, unit=u).count() + 1
+        # Voucher numbers are unique per company: payment GL rows are keyed by company + voucher_no.
+        if not vno or PaymentEntry.objects.filter(company=comp, voucher_no=vno).exists():
+            cnt = PaymentEntry.objects.filter(company=comp).count() + 1
             vno = f"PAY-{cnt:04d}"
-            while PaymentEntry.objects.filter(company=comp, unit=u, voucher_no=vno).exists():
+            while PaymentEntry.objects.filter(company=comp, voucher_no=vno).exists():
                 cnt += 1
                 vno = f"PAY-{cnt:04d}"
         serializer.save(company=comp, unit=u, voucher_no=vno)
