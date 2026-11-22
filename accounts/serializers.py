@@ -102,6 +102,11 @@ def _post_payment_gl(payment):
 
     if payment.payment_type == 'Receive':
         matched_invs = _find_matching_invoices(comp, payment) if comp else []
+        PaymentInvoiceAllocation.objects.filter(payment=payment).delete()
+        for inv_obj, alloc_amt in matched_invs:
+            PaymentInvoiceAllocation.objects.create(
+                payment=payment, invoice_type='Sales Invoice', invoice_id=inv_obj.id, allocated_amount=alloc_amt,
+            )
         primary_inv = matched_invs[0][0] if matched_invs else None
         inv_unit = primary_inv.unit if (primary_inv and primary_inv.unit) else unit
         if inv_unit and payment.unit_id != inv_unit.id:
@@ -232,15 +237,17 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
         payment_type = data.get('payment_type', getattr(self.instance, 'payment_type', ''))
         reference_no = (data.get('reference_no', getattr(self.instance, 'reference_no', '')) or '').strip().lstrip('#').strip()
 
+        # Invoice numbers repeat across companies, so every lookup is company-scoped.
+        company = data.get('company', getattr(self.instance, 'company', None))
         if reference_no:
             if payment_type == 'Receive':
-                invoice = SalesInvoice.objects.filter(invoice_number__iexact=reference_no).first()
+                invoice = SalesInvoice.objects.filter(company=company, invoice_number__iexact=reference_no).first()
                 if invoice:
                     if invoice.status != 'Approved':
                         raise serializers.ValidationError({
                             "reference_no": f"Sales Invoice {invoice.invoice_number} is '{invoice.status}'. Payment can only be accepted for 'Approved' invoices."
                         })
-                    existing_payments = PaymentEntry.objects.filter(reference_no__iexact=invoice.invoice_number, payment_type='Receive')
+                    existing_payments = PaymentEntry.objects.filter(company=company, reference_no__iexact=invoice.invoice_number, payment_type='Receive')
                     if self.instance:
                         existing_payments = existing_payments.exclude(pk=self.instance.pk)
                     total_paid_so_far = sum(Decimal(str(p.paid_amount)) for p in existing_payments)
@@ -250,13 +257,13 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
                             "paid_amount": f"Amount exceeds balance due! Maximum payable balance for {invoice.invoice_number} is ₹{balance_due:.2f} (Total: ₹{invoice.grand_total})."
                         })
             elif payment_type == 'Pay':
-                bill = PurchaseInvoice.objects.filter(bill_number__iexact=reference_no).first()
+                bill = PurchaseInvoice.objects.filter(company=company, bill_number__iexact=reference_no).first()
                 if bill:
                     if bill.status != 'Approved':
                         raise serializers.ValidationError({
                             "reference_no": f"Purchase Bill {bill.bill_number} is '{bill.status}'. Payment can only be made for 'Approved' bills."
                         })
-                    existing_bill_payments = PaymentEntry.objects.filter(reference_no__iexact=bill.bill_number, payment_type='Pay')
+                    existing_bill_payments = PaymentEntry.objects.filter(company=company, reference_no__iexact=bill.bill_number, payment_type='Pay')
                     if self.instance:
                         existing_bill_payments = existing_bill_payments.exclude(pk=self.instance.pk)
                     total_paid_so_far = sum(Decimal(str(p.paid_amount)) for p in existing_bill_payments)
