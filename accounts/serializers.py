@@ -6,6 +6,7 @@ from .models import PaymentEntry, JournalEntry, JournalEntryLine, GLEntry, Busin
 from selling.models import SalesInvoice
 from buying.models import PurchaseInvoice
 from stock.models import StockLedgerEntry
+from backend.erp_workflow import auto_trf_regex
 
 
 def _find_matching_invoices(comp, payment):
@@ -24,7 +25,14 @@ def _find_matching_invoices(comp, payment):
     ).order_by('posting_date', 'id')
 
     amt = Decimal(str(payment.paid_amount))
-    exact = cand_qs.filter(grand_total=amt).order_by('-id').first()
+
+    def due_of(inv):
+        prior = PaymentInvoiceAllocation.objects.filter(
+            invoice_type='Sales Invoice', invoice_id=inv.id
+        ).exclude(payment=payment).aggregate(s=Sum('allocated_amount'))['s'] or Decimal('0.00')
+        return Decimal(str(inv.grand_total or 0)) - prior
+
+    exact = next((i for i in cand_qs.filter(grand_total=amt).order_by('-id') if due_of(i) >= amt), None)
     if exact:
         return [(exact, amt)]
 
@@ -33,13 +41,7 @@ def _find_matching_invoices(comp, payment):
     for inv in cand_qs:
         if rem <= 0:
             break
-        prior_paid = (
-            PaymentEntry.objects.filter(
-                company=comp, payment_type='Receive', reference_no__iexact=inv.invoice_number
-            ).exclude(pk=payment.pk).aggregate(s=Sum('paid_amount'))['s']
-            or Decimal('0.00')
-        )
-        due = Decimal(str(inv.grand_total or 0)) - prior_paid
+        due = due_of(inv)
         if due > 0:
             take = min(rem, due)
             allocated.append((inv, take))
@@ -140,7 +142,7 @@ def _post_payment_gl(payment):
                         company=comp,
                         unit=mfg_unit,
                         voucher_type='Stock Transfer',
-                        voucher_no__startswith=f'AUTO-TRF-{inv.invoice_number}',
+                        voucher_no__regex=auto_trf_regex(inv.invoice_number),
                         actual_qty__lt=0,
                     )
                     mfg_supply_val = sum(
@@ -238,7 +240,10 @@ class PaymentEntrySerializer(serializers.ModelSerializer):
         reference_no = (data.get('reference_no', getattr(self.instance, 'reference_no', '')) or '').strip().lstrip('#').strip()
 
         # Invoice numbers repeat across companies, so every lookup is company-scoped.
-        company = data.get('company', getattr(self.instance, 'company', None))
+        company = data.get('company') or getattr(self.instance, 'company', None)
+        if company is None and self.context.get('request') is not None:
+            from accounts.views import get_active_company
+            company = get_active_company(self.context['request'])
         if reference_no:
             if payment_type == 'Receive':
                 invoice = SalesInvoice.objects.filter(company=company, invoice_number__iexact=reference_no).first()
