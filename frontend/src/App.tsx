@@ -461,7 +461,7 @@ function MainERPApp() {
   }, [isAuthenticated, activeCompany?.id, loadData]);
 
   useEffect(() => {
-    if (showInvoiceModal || showPurchaseModal) {
+    if (showInvoiceModal || showPurchaseModal || showItemModal) {
       const compId = activeCompany?.id || localStorage.getItem('active_company_id') || '';
       const compParam = compId ? `company_id=${compId}` : '';
       fetch(`${API_BASE}/stock/items/?${compParam}`)
@@ -472,7 +472,7 @@ function MainERPApp() {
         })
         .catch(() => {});
     }
-  }, [showInvoiceModal, showPurchaseModal, activeCompany]);
+  }, [showInvoiceModal, showPurchaseModal, showItemModal, activeCompany]);
 
   const handleDeleteInvoice = async (id: number, invNo: string) => {
     if (!window.confirm(`Delete Sales Invoice #${invNo}?`)) return;

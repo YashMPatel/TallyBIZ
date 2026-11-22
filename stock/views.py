@@ -42,11 +42,23 @@ class ItemListCreateAPIView(generics.ListCreateAPIView):
         return qs
 
     def perform_create(self, serializer):
+        import re
         from django.utils import timezone
         from decimal import Decimal
         from accounts.models import BusinessUnit, ensure_default_units
         cid = get_request_company_id(self.request)
-        item = serializer.save(company_id=cid)
+        code = str(serializer.validated_data.get('item_code') or '').strip()
+        m = re.match(r'^([A-Za-z]+)-(\d+)$', code)
+        if m and Item.objects.filter(company_id=cid, item_code__iexact=code).exists():
+            prefix = m.group(1).upper()
+            width = len(m.group(2))
+            max_n = 0
+            for existing in Item.objects.filter(company_id=cid, item_code__istartswith=f'{prefix}-').values_list('item_code', flat=True):
+                em = re.match(rf'^{prefix}-(\d+)$', str(existing).strip(), re.I)
+                if em:
+                    max_n = max(max_n, int(em.group(1)))
+            code = f'{prefix}-{str(max_n + 1).zfill(width)}'
+        item = serializer.save(company_id=cid, item_code=code)
         qty = Decimal(str(item.current_stock or 0))
         if qty > 0 and item.company:
             units_map = ensure_default_units(item.company)
