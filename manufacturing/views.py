@@ -378,6 +378,8 @@ class BOMListCreateView(APIView):
         fg = Item.objects.filter(id=finished_id).first()
         if not fg:
             return Response({'error': 'Invalid finished item.'}, status=400)
+        if BillOfMaterial.objects.filter(company=company, finished_item=fg, is_active=True).exists():
+            return Response({'error': f'BOM already exists for "{fg.item_name}". Please Edit the existing BOM to update labour or expense charges.'}, status=400)
         if any(str(c.get('raw_item')) == str(fg.id) for c in comps):
             return Response({'error': 'Finished Product and Raw Material cannot be the same item.'}, status=400)
         code = (data.get('bom_code') or '').strip()
