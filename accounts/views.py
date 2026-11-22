@@ -1,3 +1,4 @@
+import datetime
 from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum, Q
@@ -492,6 +493,12 @@ class GeneralLedgerAPIView(APIView):
         from_date = request.GET.get('from_date')
         to_date = request.GET.get('to_date')
 
+        for d in (from_date, to_date):
+            if d:
+                try:
+                    datetime.date.fromisoformat(d)
+                except ValueError:
+                    return Response({'error': f'Invalid date: {d}'}, status=status.HTTP_400_BAD_REQUEST)
         filters = {'is_cancelled': False}
         if party and party != 'all':
             filters['party'] = party
