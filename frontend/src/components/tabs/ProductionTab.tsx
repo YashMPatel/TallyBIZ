@@ -19,8 +19,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const roleUpper = String(user?.role || '').trim().toUpperCase().replace(/\s+/g, '_');
   const canApprove = roleUpper === 'ADMIN' || roleUpper === 'MANAGER' || Boolean(user?.is_superuser || user?.is_staff);
 
-  const [subTab, setSubTab] = useState<'orders' | 'boms' | 'requests'>('orders');
+  const [subTab, setSubTab] = useState<'orders' | 'boms' | 'requests' | 'jobwork'>('orders');
   const [salesRequests, setSalesRequests] = useState<any[]>([]);
+  const [jobWorkInvoices, setJobWorkInvoices] = useState<any[]>([]);
   const [planReqTarget, setPlanReqTarget] = useState<any | null>(null);
   const [inhouseQtyInput, setInhouseQtyInput] = useState<string>('0');
   const [outsourceQtyInput, setOutsourceQtyInput] = useState<string>('0');
@@ -142,10 +143,11 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     if (!activeCompany?.id) return;
     setLoading(true);
     try {
-      const [bomRes, ordRes, reqRes] = await Promise.all([
+      const [bomRes, ordRes, reqRes, jwRes] = await Promise.all([
         fetch(`${API_BASE}/manufacturing/boms/?company_id=${activeCompany.id}`),
         fetch(`${API_BASE}/manufacturing/orders/?company_id=${activeCompany.id}`),
         fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${activeCompany.id}`),
+        fetch(`${API_BASE}/selling/invoices/?company_id=${activeCompany.id}`),
       ]);
       if (bomRes.ok) {
         const bData = await bomRes.json();
@@ -159,6 +161,11 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
       if (reqRes.ok) {
         const rData = await reqRes.json();
         setSalesRequests(Array.isArray(rData) ? rData : []);
+      }
+      if (jwRes.ok) {
+        const jData = await jwRes.json();
+        const list = Array.isArray(jData) ? jData : (jData.results || []);
+        setJobWorkInvoices(list.filter((inv: any) => inv.invoice_type === 'JOB_WORK'));
       }
     } catch (err) {
       setErrorMsg(getErrorMessage(err));
@@ -605,6 +612,21 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         >
           Incoming Sales Requests ({salesRequests.length}) {salesRequests.filter((r) => r.status === 'PENDING_MFG').length > 0 ? `• ${salesRequests.filter((r) => r.status === 'PENDING_MFG').length} New` : ''}
         </button>
+        <button
+          onClick={() => setSubTab('jobwork')}
+          style={{
+            padding: '7px 14px',
+            borderRadius: '8px',
+            border: 'none',
+            background: subTab === 'jobwork' ? '#0284c7' : '#e0f2fe',
+            color: subTab === 'jobwork' ? '#fff' : '#0369a1',
+            fontWeight: 700,
+            fontSize: '13px',
+            cursor: 'pointer',
+          }}
+        >
+          Job Work Orders — SAC 9988 ({jobWorkInvoices.length + orders.filter((o) => o.order_type === 'JOB_WORK').length})
+        </button>
       </div>
 
       {loading ? (
@@ -828,6 +850,98 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
               );
             })
           )}
+        </div>
+      ) : subTab === 'jobwork' ? (
+        <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #bae6fd', overflowX: 'auto' }}>
+          <div style={{ padding: '14px 18px', background: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <strong style={{ color: '#0c4a6e', fontSize: '14px' }}>Job Work Processing Register (SAC 9988 — Party-Supplied Material)</strong>
+              <div style={{ fontSize: '12px', color: '#0369a1', marginTop: '2px' }}>
+                All Job Work labour orders &amp; invoices — processed without deducting own raw/finished inventory
+              </div>
+            </div>
+            <div style={{ fontWeight: 800, color: '#0284c7', fontSize: '15px' }}>
+              Total Job Work Labour: {symbol} {jobWorkInvoices.reduce((s, j) => s + Number(j.net_total || 0), 0).toFixed(2)}
+            </div>
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#475569' }}>
+                <th style={{ padding: '12px' }}>Voucher / Invoice #</th>
+                <th style={{ padding: '12px' }}>Date</th>
+                <th style={{ padding: '12px' }}>Party Challan #</th>
+                <th style={{ padding: '12px' }}>Customer / Party</th>
+                <th style={{ padding: '12px' }}>Processed Item &amp; Qty</th>
+                <th style={{ padding: '12px', textAlign: 'center' }}>SAC</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>Labour Charges</th>
+                <th style={{ padding: '12px' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobWorkInvoices.length === 0 && orders.filter((o) => o.order_type === 'JOB_WORK').length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+                    No Job Work orders recorded yet.
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  {jobWorkInvoices.map((jw: any) => (
+                    <tr key={`inv-${jw.id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '12px', fontWeight: 700, color: '#0284c7' }}>{jw.invoice_number}</td>
+                      <td style={{ padding: '12px', color: '#475569' }}>{jw.posting_date}</td>
+                      <td style={{ padding: '12px', fontWeight: 600, color: '#334155' }}>{jw.party_challan_no || '-'}</td>
+                      <td style={{ padding: '12px', fontWeight: 600, color: '#0f172a' }}>{jw.customer_name}</td>
+                      <td style={{ padding: '12px', color: '#334155' }}>
+                        {Array.isArray(jw.items) && jw.items.length > 0
+                          ? jw.items.map((it: any) => `${it.item_name || 'Item'} — ${it.quantity} @ ${symbol}${it.rate}`).join(', ')
+                          : 'Job Work Service'}
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>
+                          {(jw.items && jw.items[0]?.hsn_code) || '9988'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700, color: '#0f172a' }}>
+                        {symbol} {Number(jw.net_total || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '12px' }}>
+                        <span style={{
+                          padding: '3px 10px',
+                          borderRadius: '999px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          background: jw.status === 'Approved' ? '#dcfce7' : '#fef3c7',
+                          color: jw.status === 'Approved' ? '#166534' : '#92400e',
+                        }}>
+                          {jw.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {orders.filter((o) => o.order_type === 'JOB_WORK').map((o: any) => (
+                    <tr key={`ord-${o.id}`} style={{ borderBottom: '1px solid #f1f5f9', background: '#fafaf9' }}>
+                      <td style={{ padding: '12px', fontWeight: 700, color: '#0369a1' }}>{o.voucher_no}</td>
+                      <td style={{ padding: '12px', color: '#475569' }}>{o.posting_date}</td>
+                      <td style={{ padding: '12px', fontWeight: 600, color: '#334155' }}>{o.party_challan_no || '-'}</td>
+                      <td style={{ padding: '12px', fontWeight: 600, color: '#0f172a' }}>{o.party_name || '-'}</td>
+                      <td style={{ padding: '12px', color: '#334155' }}>{o.finished_item_name} — {o.actual_qty} {o.unit || 'Nos'}</td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>9988</span>
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>{symbol} {Number(o.labor_cost || 0).toFixed(2)}</td>
+                      <td style={{ padding: '12px' }}>
+                        <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: '#dcfce7', color: '#166534' }}>
+                          {o.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </>
+              )}
+            </tbody>
+          </table>
         </div>
       ) : null}
 
