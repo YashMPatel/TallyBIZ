@@ -210,10 +210,12 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
         u_obj = resolve_active_unit(request, comp, default_unit_type='TRADING')
         inv_no = (data.get('invoice_number') or '').strip()
-        if not inv_no or SalesInvoice.objects.filter(company=comp, unit=u_obj, invoice_number=inv_no).exists():
-            count = SalesInvoice.objects.filter(company=comp, unit=u_obj).count() + 1
+        # GST Rule 46: one serial series per GSTIN, so uniqueness is per company, not per division.
+        # ponytail: single INV- series, add per-FY prefix (e.g. 2627/INV-) if the CA wants yearly reset
+        if not inv_no or SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
+            count = SalesInvoice.objects.filter(company=comp).count() + 1
             inv_no = f"INV-{count:04d}"
-            while SalesInvoice.objects.filter(company=comp, unit=u_obj, invoice_number=inv_no).exists():
+            while SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
                 count += 1
                 inv_no = f"INV-{count:04d}"
 
