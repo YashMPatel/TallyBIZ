@@ -27,7 +27,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [outsourceQtyInput, setOutsourceQtyInput] = useState<string>('0');
   const [planBusy, setPlanBusy] = useState(false);
   const [schedModalReq, setSchedModalReq] = useState<any | null>(null);
-  const [schedRows, setSchedRows] = useState<Array<{ id?: string; date: string; qty: string; dispatch_notes?: string; status?: string; dispatch_no?: string; invoiced?: boolean; invoice_no?: string }>>([]);
+  const [schedRows, setSchedRows] = useState<Array<{ id?: string; date: string; qty: string; challan_no?: string; vehicle_no?: string; dispatch_notes?: string; status?: string; dispatch_no?: string; invoiced?: boolean; invoice_no?: string }>>([]);
   const [reqRmPurchase, setReqRmPurchase] = useState<boolean>(true);
   const [schedBusy, setSchedBusy] = useState<boolean>(false);
   const [dispatchingBatchId, setDispatchingBatchId] = useState<string | null>(null);
@@ -841,8 +841,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                           <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', background: '#fff', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                             <div style={{ fontSize: '13px' }}>
                               <strong>Delivery Date: {b.date}</strong> — Batch Qty: <strong>{b.qty} {r.finished_unit || 'Nos'}</strong>
+                              {b.vehicle_no ? <span style={{ marginLeft: '8px', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}>• Vehicle: {b.vehicle_no}</span> : null}
                               {b.dispatch_notes ? <span style={{ marginLeft: '8px', fontSize: '12px', color: '#475569' }}>• {b.dispatch_notes}</span> : null}
-                              {b.dispatch_no ? <span style={{ marginLeft: '10px', fontSize: '12px', fontWeight: 700, color: '#15803d' }}>Dispatched ({b.dispatch_no})</span> : null}
+                              {b.dispatch_no ? <span style={{ marginLeft: '10px', fontSize: '12px', fontWeight: 700, color: '#15803d' }}>Challan: {b.dispatch_no}</span> : null}
                             </div>
                             <div>
                               {b.status === 'DISPATCHED' ? (
@@ -975,7 +976,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             </p>
             <form onSubmit={handleSaveSchedule} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {schedRows.map((row, idx) => (
-                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.8fr 1.3fr auto', gap: '8px', alignItems: 'center' }}>
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 0.75fr 0.95fr 1fr auto', gap: '8px', alignItems: 'center' }}>
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: 600 }}>Dispatch Date #{idx + 1}</label>
                     <input
@@ -1009,15 +1010,30 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Dispatch Details (Vehicle / Challan)</label>
+                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Challan No (Auto if blank)</label>
                     <input
                       type="text"
                       disabled={row.status === 'DISPATCHED'}
-                      placeholder="e.g. GJ01AB1234 / Outward CH-12"
-                      value={row.dispatch_notes || ''}
+                      placeholder="Auto DSP-0013"
+                      value={row.challan_no || row.dispatch_no || ''}
                       onChange={(e) => {
                         const copy = [...schedRows];
-                        copy[idx] = { ...copy[idx], dispatch_notes: e.target.value };
+                        copy[idx] = { ...copy[idx], challan_no: e.target.value };
+                        setSchedRows(copy);
+                      }}
+                      style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Vehicle No</label>
+                    <input
+                      type="text"
+                      disabled={row.status === 'DISPATCHED'}
+                      placeholder="e.g. GJ-01-AB-1234"
+                      value={row.vehicle_no || ''}
+                      onChange={(e) => {
+                        const copy = [...schedRows];
+                        copy[idx] = { ...copy[idx], vehicle_no: e.target.value.toUpperCase() };
                         setSchedRows(copy);
                       }}
                       style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}

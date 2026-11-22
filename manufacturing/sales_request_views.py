@@ -315,6 +315,9 @@ class ProductionSalesRequestScheduleAPIView(APIView):
                 'id': bid,
                 'date': d_str,
                 'qty': float(q_val),
+                'challan_no': (row.get('challan_no') or prev.get('challan_no') or '').strip(),
+                'vehicle_no': (row.get('vehicle_no') or prev.get('vehicle_no') or '').strip().upper(),
+                'dispatch_notes': (row.get('dispatch_notes') or prev.get('dispatch_notes') or '').strip(),
                 'status': prev.get('status') or 'SCHEDULED',
                 'dispatch_no': prev.get('dispatch_no') or '',
                 'dispatched_at': prev.get('dispatched_at') or '',
@@ -421,7 +424,8 @@ class ProductionSalesRequestDispatchAPIView(APIView):
                 m = re.search(r'(\d+)$', str(b_item.get('dispatch_no') or ''))
                 if m:
                     max_dsp = max(max_dsp, int(m.group(1)))
-        disp_vno = f"DSP-{max_dsp + 1:04d}"
+        custom_challan = (request.data.get('challan_no') or target_batch.get('challan_no') or '').strip()
+        disp_vno = custom_challan if custom_challan else f"DSP-{max_dsp + 1:04d}"
 
         is_job_work = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         raw_info = snap.get('raw_material') or {}
@@ -491,10 +495,14 @@ class ProductionSalesRequestDispatchAPIView(APIView):
             req_obj.finished_item.current_stock = total_item_stock
             req_obj.finished_item.save(update_fields=['current_stock'])
 
+        vehicle_input = (request.data.get('vehicle_no') or target_batch.get('vehicle_no') or '').strip().upper()
         disp_note_input = (request.data.get('dispatch_notes') or target_batch.get('dispatch_notes') or '').strip()
         target_batch['status'] = 'DISPATCHED'
+        target_batch['challan_no'] = disp_vno
         target_batch['dispatch_no'] = disp_vno
         target_batch['dispatched_at'] = str(disp_date)
+        if vehicle_input:
+            target_batch['vehicle_no'] = vehicle_input
         if disp_note_input:
             target_batch['dispatch_notes'] = disp_note_input
 
@@ -505,12 +513,17 @@ class ProductionSalesRequestDispatchAPIView(APIView):
             target_batch['invoice_no'] = existing_inv_no
             inv_obj = SalesInvoice.objects.filter(company=comp, id=existing_inv_id).first() if existing_inv_id else SalesInvoice.objects.filter(company=comp, invoice_number=existing_inv_no).first()
             if inv_obj:
-                if not (inv_obj.party_challan_no or '').strip():
-                    inv_obj.party_challan_no = disp_vno
+                cur_ch = (inv_obj.party_challan_no or '').strip()
+                parts_ch = [x.strip() for x in cur_ch.split(',') if x.strip()]
+                if disp_vno not in parts_ch:
+                    parts_ch.append(disp_vno)
+                    inv_obj.party_challan_no = ', '.join(parts_ch)
                     inv_obj.save(update_fields=['party_challan_no'])
                 first_it = inv_obj.items.first()
                 if first_it:
-                    disp_tag = f" [Dispatched: {disp_vno} on {disp_date}" + (f" | {disp_note_input}]" if disp_note_input else "]")
+                    v_part = f" | Vehicle: {vehicle_input}" if vehicle_input else ""
+                    n_part = f" | {disp_note_input}" if disp_note_input else ""
+                    disp_tag = f"\nDispatch Challan: {disp_vno} | Date: {disp_date} | Qty: {disp_qty}{v_part}{n_part}"
                     if disp_vno not in (first_it.description or ''):
                         first_it.description = ((first_it.description or '') + disp_tag).strip()
                         first_it.save(update_fields=['description'])
