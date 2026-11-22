@@ -219,6 +219,31 @@ def approve_and_post_sales_invoice(invoice):
     invoice.save(update_fields=['status'])
 
 
+def auto_trf_regex(invoice_number):
+    # Exact match: reversing INV-1 must not touch INV-10's transfers.
+    import re
+    return rf'^AUTO-TRF-{re.escape(invoice_number)}-\d+$'
+
+
+def guard_credit_notes(invoice, new_lines=None):
+    """An invoice with credit notes cannot be deleted/rejected, and an edit cannot go below returned quantities."""
+    notes = invoice.credit_notes.all()
+    if not notes.exists():
+        return
+    if new_lines is None:
+        raise ValidationError({'error': f'{invoice.invoice_number} has credit notes. Delete those first.'})
+    returned, kept = {}, {}
+    for n in notes:
+        for l in n.items.all():
+            returned[l.item_id] = returned.get(l.item_id, 0) + l.quantity
+    for row in new_lines:
+        k = int(row.get('item') or row.get('item_id') or 0)
+        kept[k] = kept.get(k, 0) + Decimal(str(row.get('quantity') or 0))
+    short = [i for i, q in returned.items() if kept.get(i, 0) < q]
+    if short:
+        raise ValidationError({'error': f'Quantity cannot go below what credit notes already returned (item ids {short}).'})
+
+
 @transaction.atomic
 def reverse_sales_invoice_on_delete(invoice):
     Item = apps.get_model('stock', 'Item')
@@ -242,7 +267,7 @@ def reverse_sales_invoice_on_delete(invoice):
         StockLedgerEntry.objects.filter(
             company=getattr(invoice, 'company', None),
             voucher_type='Stock Transfer',
-            voucher_no__startswith=f'AUTO-TRF-{invoice.invoice_number}'
+            voucher_no__regex=auto_trf_regex(invoice.invoice_number)
         ).delete()
         sl_qs.delete()
         gl_qs.delete()

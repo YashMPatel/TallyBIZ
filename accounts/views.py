@@ -1206,6 +1206,8 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
                     _stamp_approval_audit(inv)
                     return _ApprovalResponse({'status': 'Approved', 'id': inv.id})
                 elif action == 'reject':
+                    from backend.erp_workflow import guard_credit_notes
+                    guard_credit_notes(inv)
                     reverse_sales_invoice_on_delete(inv)
                     inv.status = 'Rejected'
                     inv.save(update_fields=['status'])

@@ -7,6 +7,7 @@ from backend.erp_workflow import (
     approve_and_post_sales_invoice,
     reverse_sales_invoice_on_delete,
     reverse_return_note,
+    guard_credit_notes,
 )
 from decimal import Decimal
 from datetime import datetime
@@ -111,6 +112,8 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                 ).first()
         if not item_obj:
             raise ValidationError({'error': f'Item not found in this company: {it_val}'})
+        if Decimal(str(it.get('quantity') or it.get('qty') or 0)) <= 0 or Decimal(str(it.get('rate') or 0)) < 0:
+            raise ValidationError({'error': f'{item_obj.item_name}: quantity must be above zero and rate not negative.'})
 
         is_foc = bool(it.get('is_foc', False))
         qty = Decimal(str(it.get('quantity') or it.get('qty', 1) or 1))
@@ -325,15 +328,17 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
                 invoice.save(update_fields=uf)
 
     def perform_destroy(self, instance):
-        reverse_sales_invoice_on_delete(instance)
-        instance.delete()
+        guard_credit_notes(instance)
+        with transaction.atomic():
+            reverse_sales_invoice_on_delete(instance)
+            instance.delete()
 
     queryset = SalesInvoice.objects.all()
     serializer_class = SalesInvoiceSerializer
 
     def update(self, request, *args, **kwargs):
-        comp = get_request_company(request)
         instance = self.get_object()
+        comp = instance.company or get_request_company(request)
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
         with transaction.atomic():
@@ -347,13 +352,16 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
                 instance.invoice_type = 'JOB_WORK' if str(data['invoice_type']).upper() == 'JOB_WORK' else 'SALES'
             if 'party_challan_no' in data:
                 instance.party_challan_no = str(data['party_challan_no'] or '')[:80]
-            items_data = data.get('items', [])
-            if items_data:
-                instance.net_total, instance.tax_amount, instance.grand_total = invoice_totals(items_data, instance.tax_rate, instance.adjustment)
+            # Header-only edits still recompute and re-post, so totals and GL never drift from the lines.
+            items_data = data.get('items') or [
+                {'item': l.item_id, 'quantity': l.quantity, 'rate': l.rate, 'discount_percentage': l.discount_percentage,
+                 'is_foc': l.is_foc, 'hsn_code': l.hsn_code, 'description': l.description}
+                for l in instance.items.all()
+            ]
+            guard_credit_notes(instance, items_data)
+            instance.net_total, instance.tax_amount, instance.grand_total = invoice_totals(items_data, instance.tax_rate, instance.adjustment)
             instance.save()
-
-            if items_data:
-                sync_sales_to_inventory_and_gl(instance, items_data, comp)
+            sync_sales_to_inventory_and_gl(instance, items_data, comp)
 
         serializer = self.get_serializer(instance)
         return Response(serializer.data, status=status.HTTP_200_OK)
