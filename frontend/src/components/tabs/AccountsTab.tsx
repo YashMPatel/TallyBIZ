@@ -155,13 +155,13 @@ export const AccountsTab: FC<AccountsTabProps> = ({
                 setToDate('');
               } else if (val === 'THIS_MONTH') {
                 setFromDate(`${y}-${m}-01`);
-                setToDate(`${y}-${m}-31`);
+                setToDate(`${y}-${m}-${new Date(y, now.getMonth() + 1, 0).getDate()}`);
               } else if (val === 'LAST_MONTH') {
                 const prev = new Date(y, now.getMonth() - 1, 1);
                 const py = prev.getFullYear();
                 const pm = String(prev.getMonth() + 1).padStart(2, '0');
                 setFromDate(`${py}-${pm}-01`);
-                setToDate(`${py}-${pm}-31`);
+                setToDate(`${py}-${pm}-${new Date(py, prev.getMonth() + 1, 0).getDate()}`);
               } else if (val === 'THIS_YEAR') {
                 setFromDate(`${y}-01-01`);
                 setToDate(`${y}-12-31`);

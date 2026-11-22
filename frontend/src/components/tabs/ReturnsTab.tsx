@@ -557,13 +557,13 @@ export default function ReturnsTab({ glEntries = [], onOpenGeneralLedger }: Retu
         let effTo = ledgerToDate;
         if (ledgerPeriodPreset === 'THIS_MONTH') {
           effFrom = `${yyyy}-${mm}-01`;
-          effTo = `${yyyy}-${mm}-31`;
+          effTo = `${yyyy}-${mm}-${new Date(yyyy, now.getMonth() + 1, 0).getDate()}`;
         } else if (ledgerPeriodPreset === 'LAST_MONTH') {
           const prev = new Date(yyyy, now.getMonth() - 1, 1);
           const py = prev.getFullYear();
           const pm = String(prev.getMonth() + 1).padStart(2, '0');
           effFrom = `${py}-${pm}-01`;
-          effTo = `${py}-${pm}-31`;
+          effTo = `${py}-${pm}-${new Date(py, prev.getMonth() + 1, 0).getDate()}`;
         } else if (ledgerPeriodPreset === 'THIS_YEAR') {
           effFrom = `${yyyy}-01-01`;
           effTo = `${yyyy}-12-31`;
