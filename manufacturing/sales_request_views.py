@@ -112,6 +112,11 @@ class ProductionSalesRequestListCreateAPIView(APIView):
                 'mfg_unit_name': r.mfg_unit.name if r.mfg_unit else '',
                 'customer_name': r.customer_name,
                 'sales_ref': r.sales_ref,
+                'order_type': snap.get('order_type', 'OWN'),
+                'party_challan_no': snap.get('party_challan_no', ''),
+                'existing_invoice_id': snap.get('existing_invoice_id'),
+                'existing_invoice_no': snap.get('existing_invoice_no', ''),
+                'line_items_summary': snap.get('line_items_summary', []),
                 'finished_item_id': r.finished_item_id,
                 'finished_item_name': r.finished_item.item_name if r.finished_item else '',
                 'finished_item_code': r.finished_item.item_code if r.finished_item else '',
@@ -258,6 +263,11 @@ class ProductionSalesRequestListCreateAPIView(APIView):
             inhouse_qty=req_qty,
             status='PENDING_MFG',
             mrp_snapshot={
+                'order_type': str(data.get('order_type') or 'OWN').upper(),
+                'party_challan_no': (data.get('party_challan_no') or '').strip(),
+                'existing_invoice_id': data.get('existing_invoice_id'),
+                'existing_invoice_no': (data.get('existing_invoice_no') or '').strip(),
+                'line_items_summary': data.get('line_items_summary') or [],
                 'selling_rate': float(sell_rate or item_obj.selling_rate or 0),
                 'cost_rate': float(cost_rate or item_obj.standard_rate or 0),
                 'raw_material': raw_snapshot,
@@ -402,8 +412,9 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         t_cnt = StockLedgerEntry.objects.filter(company=comp, voucher_type='Stock Transfer').values('voucher_no').distinct().count() + 1
         disp_vno = f"DSP-{t_cnt:04d}"
 
+        is_job_work = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         raw_info = snap.get('raw_material') or {}
-        if req_obj.mfg_unit and raw_info.get('raw_item_id') and float(raw_info.get('raw_qty') or 0) > 0 and req_obj.requested_qty > 0:
+        if not is_job_work and req_obj.mfg_unit and raw_info.get('raw_item_id') and float(raw_info.get('raw_qty') or 0) > 0 and req_obj.requested_qty > 0:
             ratio = disp_qty / Decimal(str(req_obj.requested_qty))
             waste_m = Decimal('1') + (Decimal(str(raw_info.get('raw_wastage') or 0)) / Decimal('100'))
             rm_used = (Decimal(str(raw_info['raw_qty'])) * ratio * waste_m).quantize(Decimal('0.01'))
@@ -426,7 +437,7 @@ class ProductionSalesRequestDispatchAPIView(APIView):
                 rm_item.save(update_fields=['current_stock'])
 
         unit_cost = Decimal(str(snap.get('cost_rate') or req_obj.finished_item.standard_rate or 0))
-        if req_obj.mfg_unit:
+        if not is_job_work and req_obj.mfg_unit:
             mfg_bal = _unit_item_stock(comp, req_obj.mfg_unit, req_obj.finished_item_id)
             StockLedgerEntry.objects.create(
                 company=comp,
@@ -451,26 +462,44 @@ class ProductionSalesRequestDispatchAPIView(APIView):
                 valuation_rate=unit_cost,
             )
 
-        trd_bal = _unit_item_stock(comp, trading_u, req_obj.finished_item_id)
-        StockLedgerEntry.objects.create(
-            company=comp,
-            unit=trading_u,
-            posting_date=disp_date,
-            item=req_obj.finished_item,
-            voucher_type='Stock Transfer',
-            voucher_no=disp_vno,
-            actual_qty=disp_qty,
-            qty_after_transaction=trd_bal + disp_qty,
-            valuation_rate=unit_cost,
-        )
+        if not is_job_work:
+            trd_bal = _unit_item_stock(comp, trading_u, req_obj.finished_item_id)
+            StockLedgerEntry.objects.create(
+                company=comp,
+                unit=trading_u,
+                posting_date=disp_date,
+                item=req_obj.finished_item,
+                voucher_type='Stock Transfer',
+                voucher_no=disp_vno,
+                actual_qty=disp_qty,
+                qty_after_transaction=trd_bal + disp_qty,
+                valuation_rate=unit_cost,
+            )
 
-        total_item_stock = StockLedgerEntry.objects.filter(company=comp, item=req_obj.finished_item).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
-        req_obj.finished_item.current_stock = total_item_stock
-        req_obj.finished_item.save(update_fields=['current_stock'])
+            total_item_stock = StockLedgerEntry.objects.filter(company=comp, item=req_obj.finished_item).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
+            req_obj.finished_item.current_stock = total_item_stock
+            req_obj.finished_item.save(update_fields=['current_stock'])
 
+        disp_note_input = (request.data.get('dispatch_notes') or target_batch.get('dispatch_notes') or '').strip()
         target_batch['status'] = 'DISPATCHED'
         target_batch['dispatch_no'] = disp_vno
         target_batch['dispatched_at'] = str(disp_date)
+        if disp_note_input:
+            target_batch['dispatch_notes'] = disp_note_input
+
+        existing_inv_no = (snap.get('existing_invoice_no') or '').strip()
+        existing_inv_id = snap.get('existing_invoice_id')
+        if existing_inv_no or existing_inv_id:
+            target_batch['invoiced'] = True
+            target_batch['invoice_no'] = existing_inv_no
+            inv_obj = SalesInvoice.objects.filter(company=comp, id=existing_inv_id).first() if existing_inv_id else SalesInvoice.objects.filter(company=comp, invoice_number=existing_inv_no).first()
+            if inv_obj:
+                first_it = inv_obj.items.first()
+                if first_it:
+                    disp_tag = f" [Dispatched: {disp_vno} on {disp_date}" + (f" | {disp_note_input}]" if disp_note_input else "]")
+                    if disp_vno not in (first_it.description or ''):
+                        first_it.description = ((first_it.description or '') + disp_tag).strip()
+                        first_it.save(update_fields=['description'])
 
         snap['delivery_schedule'] = schedule
         req_obj.mrp_snapshot = snap
@@ -538,11 +567,14 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         p_date = timezone.now().date()
         due_date = p_date + timezone.timedelta(days=30)
 
+        is_jw = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         inv = SalesInvoice.objects.create(
             company=comp,
             unit=trading_u,
             customer=cust_obj,
             customer_name=req_obj.customer_name or 'Customer',
+            invoice_type='JOB_WORK' if is_jw else 'SALES',
+            party_challan_no=(snap.get('party_challan_no') or '').strip(),
             invoice_number=inv_no,
             posting_date=p_date,
             due_date=due_date,

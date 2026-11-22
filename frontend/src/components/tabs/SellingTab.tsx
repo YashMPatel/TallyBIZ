@@ -56,9 +56,12 @@ export const SellingTab: FC<SellingTabProps> = ({
   const [allItems, setAllItems] = useState<any[]>([]);
 
   const [fwdMfgUnitId, setFwdMfgUnitId] = useState('');
+  const [fwdOrderType, setFwdOrderType] = useState<'OWN' | 'JOB_WORK'>('OWN');
+  const [fwdPartyChallan, setFwdPartyChallan] = useState('');
   const [fwdSalesRef, setFwdSalesRef] = useState('');
   const [fwdCustomer, setFwdCustomer] = useState('');
   const [fwdNotes, setFwdNotes] = useState('');
+  const [sendingInvId, setSendingInvId] = useState<number | null>(null);
 
   const [fwdFinMode, setFwdFinMode] = useState<'new' | 'existing'>('existing');
   const [fwdItemId, setFwdItemId] = useState('');
@@ -207,6 +210,8 @@ export const SellingTab: FC<SellingTabProps> = ({
       const compId = localStorage.getItem('active_company_id') || '';
       const payload: any = {
         mfg_unit_id: fwdMfgUnitId,
+        order_type: fwdOrderType,
+        party_challan_no: fwdPartyChallan,
         sales_ref: fwdSalesRef,
         customer_name: fwdCustomer,
         requested_qty: fwdQty,
@@ -247,6 +252,54 @@ export const SellingTab: FC<SellingTabProps> = ({
       setFwdErr(getErrorMessage(err));
     } finally {
       setFwdBusy(false);
+    }
+  };
+
+  const handleSendInvoiceToFactory = async (inv: any) => {
+    if (!inv?.id) return;
+    setSendingInvId(inv.id);
+    setFwdErr('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const invType = String(inv.invoice_type || 'SALES').toUpperCase() === 'JOB_WORK' ? 'JOB_WORK' : 'OWN';
+      const itemsList = Array.isArray(inv.items) ? inv.items : [];
+      const firstLine = itemsList[0] || {};
+      const totalQty = itemsList.reduce((s: number, it: any) => s + Number(it.quantity || 0), 0) || 1;
+      const payload = {
+        order_type: invType,
+        party_challan_no: inv.party_challan_no || '',
+        existing_invoice_id: inv.id,
+        existing_invoice_no: inv.invoice_number,
+        sales_ref: inv.invoice_number,
+        posting_date: inv.posting_date,
+        customer_name: inv.customer_name || 'Customer',
+        finished_item_id: firstLine.item || undefined,
+        finished_item_name: firstLine.item_name || firstLine.description || inv.invoice_number,
+        finished_hsn: firstLine.hsn_code || (invType === 'JOB_WORK' ? '9988' : ''),
+        requested_qty: totalQty,
+        selling_rate: Number(firstLine.rate || inv.net_total || 0),
+        line_items_summary: itemsList.map((it: any) => ({
+          item_name: it.item_name || it.description || 'Item',
+          quantity: Number(it.quantity || 0),
+          rate: Number(it.rate || 0),
+          hsn_code: it.hsn_code || '',
+        })),
+        notes: `Pre-generated ${invType === 'JOB_WORK' ? 'Job Work (SAC 9988)' : 'Sales'} Invoice ${inv.invoice_number} — Update dispatch details only (no duplicate invoice).`,
+        created_by: user?.username || 'Sales Team',
+      };
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send invoice to factory');
+      setFwdMsg(`Invoice ${inv.invoice_number} forwarded to Factory (${data.request_no}) for schedule & dispatch tracking!`);
+      loadSalesRequests();
+    } catch (err: any) {
+      setFwdErr(err.message || 'Failed to send invoice to factory');
+    } finally {
+      setSendingInvId(null);
     }
   };
 
@@ -618,6 +671,49 @@ export const SellingTab: FC<SellingTabProps> = ({
                     </td>
                     <td style={{ padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '6px' }}>
+                        {(() => {
+                          const linkedReq = salesRequests.find((r: any) => r.existing_invoice_no === inv.invoice_number || r.sales_ref === inv.invoice_number);
+                          if (linkedReq) {
+                            const dispBatches = (linkedReq.delivery_schedule || []).filter((b: any) => b.status === 'DISPATCHED');
+                            return (
+                              <span
+                                title={`Linked to Factory Request ${linkedReq.request_no} (${linkedReq.status})`}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  background: dispBatches.length > 0 ? '#dcfce7' : '#e0f2fe',
+                                  color: dispBatches.length > 0 ? '#166534' : '#0369a1',
+                                }}
+                              >
+                                {dispBatches.length > 0
+                                  ? `Dispatched (${dispBatches.map((b: any) => b.dispatch_no).join(', ')})`
+                                  : `In Factory (${linkedReq.request_no})`}
+                              </span>
+                            );
+                          }
+                          return (
+                            <button
+                              type="button"
+                              disabled={sendingInvId === inv.id}
+                              onClick={() => handleSendInvoiceToFactory(inv)}
+                              title="Send this invoice order to Factory Unit for Date Schedule & Dispatch tracking (no duplicate invoice)"
+                              style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                border: '1px solid #bae6fd',
+                                background: '#f0f9ff',
+                                color: '#0369a1',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                fontSize: '11px',
+                              }}
+                            >
+                              {sendingInvId === inv.id ? 'Sending...' : 'Send to Factory'}
+                            </button>
+                          );
+                        })()}
                         <button
                           onClick={() => setSelectedInvoiceForPrint(inv)}
                           title="Print GST Invoice"
@@ -686,6 +782,23 @@ export const SellingTab: FC<SellingTabProps> = ({
             <form onSubmit={handleForwardToMfg} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '8px' }}>1. PARTY &amp; ORDER DETAILS</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', background: '#f0f9ff', padding: '10px', borderRadius: '8px', border: '1px solid #bae6fd', marginBottom: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#0369a1' }}>Production / Order Type</label>
+                    <select value={fwdOrderType} onChange={(e) => {
+                      const val = e.target.value as 'OWN' | 'JOB_WORK';
+                      setFwdOrderType(val);
+                      if (val === 'JOB_WORK') setFwdFinHsn('9988');
+                    }} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #7dd3fc', marginTop: '3px', fontWeight: 600 }}>
+                      <option value="OWN">Own Production (Company Material)</option>
+                      <option value="JOB_WORK">Job Work — SAC 9988 (Party Material)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#0369a1' }}>Party Challan / Job Ref #</label>
+                    <input value={fwdPartyChallan} onChange={(e) => setFwdPartyChallan(e.target.value)} placeholder="e.g. CH-402 (for Job Work)" style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #7dd3fc', marginTop: '3px', boxSizing: 'border-box' }} />
+                  </div>
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px' }}>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 600 }}>Party / Customer Name *</label>

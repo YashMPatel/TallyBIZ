@@ -27,7 +27,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [outsourceQtyInput, setOutsourceQtyInput] = useState<string>('0');
   const [planBusy, setPlanBusy] = useState(false);
   const [schedModalReq, setSchedModalReq] = useState<any | null>(null);
-  const [schedRows, setSchedRows] = useState<Array<{ id?: string; date: string; qty: string; status?: string; dispatch_no?: string; invoiced?: boolean; invoice_no?: string }>>([]);
+  const [schedRows, setSchedRows] = useState<Array<{ id?: string; date: string; qty: string; dispatch_notes?: string; status?: string; dispatch_no?: string; invoiced?: boolean; invoice_no?: string }>>([]);
   const [reqRmPurchase, setReqRmPurchase] = useState<boolean>(true);
   const [schedBusy, setSchedBusy] = useState<boolean>(false);
   const [dispatchingBatchId, setDispatchingBatchId] = useState<string | null>(null);
@@ -785,6 +785,24 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 800, color: '#7c3aed', fontSize: '15px' }}>{r.sales_ref || r.request_no}</span>
                         <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>({r.request_no})</span>
+                        <span style={{
+                          padding: '3px 9px',
+                          borderRadius: '999px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          background: r.order_type === 'JOB_WORK' ? '#e0f2fe' : '#f1f5f9',
+                          color: r.order_type === 'JOB_WORK' ? '#0369a1' : '#334155',
+                        }}>
+                          {r.order_type === 'JOB_WORK' ? 'JOB WORK (SAC 9988)' : 'OWN PRODUCTION'}
+                        </span>
+                        {r.party_challan_no ? (
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#0369a1' }}>• Challan: {r.party_challan_no}</span>
+                        ) : null}
+                        {r.existing_invoice_no ? (
+                          <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: '#dcfce7', color: '#166534' }}>
+                            Pre-Invoiced: {r.existing_invoice_no} (Dispatch Only)
+                          </span>
+                        ) : null}
                         <span style={{ fontWeight: 700, color: '#0f172a', fontSize: '14px' }}>• Party: {r.customer_name || 'Customer'}</span>
                         <span style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: r.status === 'COMPLETED' ? '#dcfce7' : r.status === 'PENDING_MFG' ? '#fef3c7' : '#e0f2fe', color: r.status === 'COMPLETED' ? '#166534' : r.status === 'PENDING_MFG' ? '#92400e' : '#0369a1' }}>
                           {r.status}
@@ -823,6 +841,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                           <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', background: '#fff', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                             <div style={{ fontSize: '13px' }}>
                               <strong>Delivery Date: {b.date}</strong> — Batch Qty: <strong>{b.qty} {r.finished_unit || 'Nos'}</strong>
+                              {b.dispatch_notes ? <span style={{ marginLeft: '8px', fontSize: '12px', color: '#475569' }}>• {b.dispatch_notes}</span> : null}
                               {b.dispatch_no ? <span style={{ marginLeft: '10px', fontSize: '12px', fontWeight: 700, color: '#15803d' }}>Dispatched ({b.dispatch_no})</span> : null}
                             </div>
                             <div>
@@ -956,7 +975,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             </p>
             <form onSubmit={handleSaveSchedule} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {schedRows.map((row, idx) => (
-                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr auto', gap: '8px', alignItems: 'center' }}>
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.8fr 1.3fr auto', gap: '8px', alignItems: 'center' }}>
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: 600 }}>Dispatch Date #{idx + 1}</label>
                     <input
@@ -984,6 +1003,21 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       onChange={(e) => {
                         const copy = [...schedRows];
                         copy[idx] = { ...copy[idx], qty: e.target.value };
+                        setSchedRows(copy);
+                      }}
+                      style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600 }}>Dispatch Details (Vehicle / Challan)</label>
+                    <input
+                      type="text"
+                      disabled={row.status === 'DISPATCHED'}
+                      placeholder="e.g. GJ01AB1234 / Outward CH-12"
+                      value={row.dispatch_notes || ''}
+                      onChange={(e) => {
+                        const copy = [...schedRows];
+                        copy[idx] = { ...copy[idx], dispatch_notes: e.target.value };
                         setSchedRows(copy);
                       }}
                       style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '2px', boxSizing: 'border-box' }}
