@@ -147,7 +147,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         fetch(`${API_BASE}/manufacturing/boms/?company_id=${activeCompany.id}`),
         fetch(`${API_BASE}/manufacturing/orders/?company_id=${activeCompany.id}`),
         fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${activeCompany.id}`),
-        fetch(`${API_BASE}/selling/invoices/?company_id=${activeCompany.id}`),
+        fetch(`${API_BASE}/selling/invoices/?company_id=${activeCompany.id}&unit_id=all`, { headers: { 'X-Unit-Id': 'all' } }),
       ]);
       if (bomRes.ok) {
         const bData = await bomRes.json();

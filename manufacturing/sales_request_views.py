@@ -409,8 +409,19 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         disp_date = timezone.now().date()
         trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
 
-        t_cnt = StockLedgerEntry.objects.filter(company=comp, voucher_type='Stock Transfer').values('voucher_no').distinct().count() + 1
-        disp_vno = f"DSP-{t_cnt:04d}"
+        import re
+        max_dsp = 0
+        for vno_str in StockLedgerEntry.objects.filter(company=comp, voucher_no__startswith='DSP-').values_list('voucher_no', flat=True).distinct():
+            m = re.search(r'(\d+)$', str(vno_str))
+            if m:
+                max_dsp = max(max_dsp, int(m.group(1)))
+        for psr in ProductionSalesRequest.objects.filter(company=comp):
+            psnap = psr.mrp_snapshot or {}
+            for b_item in (psnap.get('delivery_schedule') or []):
+                m = re.search(r'(\d+)$', str(b_item.get('dispatch_no') or ''))
+                if m:
+                    max_dsp = max(max_dsp, int(m.group(1)))
+        disp_vno = f"DSP-{max_dsp + 1:04d}"
 
         is_job_work = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         raw_info = snap.get('raw_material') or {}
@@ -494,6 +505,9 @@ class ProductionSalesRequestDispatchAPIView(APIView):
             target_batch['invoice_no'] = existing_inv_no
             inv_obj = SalesInvoice.objects.filter(company=comp, id=existing_inv_id).first() if existing_inv_id else SalesInvoice.objects.filter(company=comp, invoice_number=existing_inv_no).first()
             if inv_obj:
+                if not (inv_obj.party_challan_no or '').strip():
+                    inv_obj.party_challan_no = disp_vno
+                    inv_obj.save(update_fields=['party_challan_no'])
                 first_it = inv_obj.items.first()
                 if first_it:
                     disp_tag = f" [Dispatched: {disp_vno} on {disp_date}" + (f" | {disp_note_input}]" if disp_note_input else "]")
