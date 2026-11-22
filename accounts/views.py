@@ -233,8 +233,9 @@ class FinancialStatementsAPIView(APIView):
                 has_unit_filter = False
 
         is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
-        base_sales_qs = SalesInvoice.objects.filter(company=company)
-        base_pur_qs = PurchaseInvoice.objects.filter(company=company)
+        # Books show only approved documents; drafts awaiting the checker are not income or GST yet.
+        base_sales_qs = SalesInvoice.objects.filter(company=company, status__iexact='Approved')
+        base_pur_qs = PurchaseInvoice.objects.filter(company=company, status__iexact='Approved')
         items_qs = Item.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else Item.objects.filter(company=company)
 
         base_gl_entries = GLEntry.objects.filter(is_cancelled=False)
@@ -251,8 +252,11 @@ class FinancialStatementsAPIView(APIView):
             pur_qs = base_pur_qs
             gl_entries = base_gl_entries
 
-        ext_sales = sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
-        ext_purchases = pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        # ponytail: returns are netted only when linked to an invoice; unlinked notes need a unit field
+        cn = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=sales_qs).aggregate(n=Sum('net_total'), t=Sum('tax_amount'))
+        dn = DebitNote.objects.filter(status__iexact='Approved', purchase_invoice__in=pur_qs).aggregate(n=Sum('net_total'), t=Sum('tax_amount'))
+        ext_sales = (sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (cn['n'] or Decimal('0.00'))
+        ext_purchases = (pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (dn['n'] or Decimal('0.00'))
 
         # Inter-Division Supply Income & Cost (Shown in individual division, eliminated in Consolidated!)
         inter_inc = (gl_entries.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) if has_unit_filter else Decimal('0.00')
@@ -261,8 +265,8 @@ class FinancialStatementsAPIView(APIView):
         net_sales = ext_sales + inter_inc
         total_purchases = ext_purchases + inter_cost
 
-        output_gst = sales_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
-        input_gst = pur_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')
+        output_gst = (sales_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')) - (cn['t'] or Decimal('0.00'))
+        input_gst = (pur_qs.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0.00')) - (dn['t'] or Decimal('0.00'))
         net_gst = output_gst - input_gst
 
         gst_payable = max(net_gst, Decimal('0.00'))
@@ -286,8 +290,6 @@ class FinancialStatementsAPIView(APIView):
             cogs = gl_cogs
         else:
             cogs = max(Decimal('0.00'), total_purchases - closing_stock_val)
-            if cogs <= Decimal('0.00') and net_sales > Decimal('0.00'):
-                cogs = net_sales * Decimal('0.80')
 
         gross_profit = net_sales - cogs
 
@@ -356,11 +358,11 @@ class FinancialStatementsAPIView(APIView):
             ensure_default_units(company)
             for u in BusinessUnit.objects.filter(company=company, is_active=True).order_by('id'):
                 u_gl = base_gl_entries.filter(unit=u)
-                u_ext_sales = base_sales_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_ext_sales = (base_sales_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=base_sales_qs.filter(unit=u)).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00'))
                 u_inter_inc = u_gl.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
                 u_sales = u_ext_sales + u_inter_inc
 
-                u_ext_pur = base_pur_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_ext_pur = (base_pur_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (DebitNote.objects.filter(status__iexact='Approved', purchase_invoice__in=base_pur_qs.filter(unit=u)).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00'))
                 u_inter_cost = u_gl.filter(account='Inter-Division Stock Cost').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
                 u_pur = u_ext_pur + u_inter_cost
 
@@ -378,8 +380,6 @@ class FinancialStatementsAPIView(APIView):
                     u_cogs = Decimal('0.00')
                 else:
                     u_cogs = max(Decimal('0.00'), u_pur - u_stock_val)
-                    if u_cogs <= Decimal('0.00'):
-                        u_cogs = u_sales * Decimal('0.80')
                 u_gp = u_sales - u_cogs
                 u_adj_qs = u_gl.filter(account='Freight & Adjustments')
                 u_adj = (u_adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (u_adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
@@ -659,7 +659,7 @@ class GSTReturnSummaryAPIView(APIView):
         # 1. Sales Invoices (GSTR-1 Outward Supplies)
         s_qs = (
             SalesInvoice.objects.filter(company=company)
-            .exclude(status__iexact='Rejected')
+            .filter(status__iexact='Approved')
             .select_related('customer')
             .prefetch_related('items__item')
             .order_by('-posting_date', '-id')
@@ -750,7 +750,7 @@ class GSTReturnSummaryAPIView(APIView):
                 hrec['total_value'] += (line_val + line_tax)
 
         # 2. Credit Notes (Reduces Outward Sales & Output GST)
-        for cn in CreditNote.objects.filter(company=company).exclude(status__iexact='Rejected').select_related('customer'):
+        for cn in CreditNote.objects.filter(company=company).filter(status__iexact='Approved').select_related('customer'):
             p_date = getattr(cn, 'posting_date', None)
             if not p_date:
                 continue
@@ -782,7 +782,7 @@ class GSTReturnSummaryAPIView(APIView):
         # 3. Purchase Invoices (GSTR-2B / 3B Eligible ITC)
         p_qs = (
             PurchaseInvoice.objects.filter(company=company)
-            .exclude(status__iexact='Rejected')
+            .filter(status__iexact='Approved')
             .select_related('supplier')
             .order_by('-posting_date', '-id')
         )
@@ -824,7 +824,7 @@ class GSTReturnSummaryAPIView(APIView):
             })
 
         # 4. Debit Notes (Reduces Inward Purchases & ITC)
-        for dn in DebitNote.objects.filter(company=company).exclude(status__iexact='Rejected').select_related('supplier'):
+        for dn in DebitNote.objects.filter(company=company).filter(status__iexact='Approved').select_related('supplier'):
             p_date = getattr(dn, 'posting_date', None)
             if not p_date:
                 continue
