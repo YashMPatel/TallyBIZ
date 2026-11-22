@@ -279,9 +279,15 @@ class FinancialStatementsAPIView(APIView):
             r = Decimal(str(itm.standard_rate or 0))
             closing_stock_val += (q * r)
 
-        cogs = max(Decimal('0.00'), total_purchases - closing_stock_val)
-        if cogs <= Decimal('0.00') and net_sales > Decimal('0.00'):
-            cogs = net_sales * Decimal('0.80')
+        gl_cogs_dr = gl_entries.filter(account='Cost of Goods Sold').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+        gl_cogs_cr = gl_entries.filter(account='Cost of Goods Sold').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+        gl_cogs = max(Decimal('0.00'), gl_cogs_dr - gl_cogs_cr)
+        if gl_cogs > Decimal('0.00'):
+            cogs = gl_cogs
+        else:
+            cogs = max(Decimal('0.00'), total_purchases - closing_stock_val)
+            if cogs <= Decimal('0.00') and net_sales > Decimal('0.00'):
+                cogs = net_sales * Decimal('0.80')
 
         gross_profit = net_sales - cogs
 
@@ -363,9 +369,17 @@ class FinancialStatementsAPIView(APIView):
                     uq = StockLedgerEntry.objects.filter(company=company, unit=u, item=itm).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
                     if uq > 0:
                         u_stock_val += uq * Decimal(str(itm.standard_rate or 0))
-                u_cogs = max(Decimal('0.00'), u_pur - u_stock_val)
-                if u_cogs <= Decimal('0.00') and u_sales > Decimal('0.00'):
-                    u_cogs = u_sales * Decimal('0.80')
+                u_gl_cogs_dr = u_gl.filter(account='Cost of Goods Sold').aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
+                u_gl_cogs_cr = u_gl.filter(account='Cost of Goods Sold').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
+                u_gl_cogs = max(Decimal('0.00'), u_gl_cogs_dr - u_gl_cogs_cr)
+                if u_gl_cogs > Decimal('0.00'):
+                    u_cogs = u_gl_cogs
+                elif u_sales <= Decimal('0.00'):
+                    u_cogs = Decimal('0.00')
+                else:
+                    u_cogs = max(Decimal('0.00'), u_pur - u_stock_val)
+                    if u_cogs <= Decimal('0.00'):
+                        u_cogs = u_sales * Decimal('0.80')
                 u_gp = u_sales - u_cogs
                 u_adj_qs = u_gl.filter(account='Freight & Adjustments')
                 u_adj = (u_adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (u_adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))

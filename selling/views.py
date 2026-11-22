@@ -75,7 +75,7 @@ def get_request_company(request):
 
 def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     # Strictly scope deletion by company
-    GLEntry.objects.filter(company=comp, unit=getattr(invoice, 'unit', None), voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
+    GLEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
     prev_sles = list(StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number))
     for ps in prev_sles:
         if ps.batch_id and ps.actual_qty < 0:
@@ -87,6 +87,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     invoice.items.all().delete()
 
     affected_items = set()
+    total_cogs = Decimal('0.00')
 
     # 2. Re-create line items and stock deduction
     for it in items_data:
@@ -138,6 +139,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                 else:
                     batches_to_use = list(batch_qs)
 
+                default_cost = Decimal(str(getattr(item_obj, 'standard_rate', 0) or 0))
                 for b_obj in batches_to_use:
                     if rem_to_deduct <= Decimal('0.00'):
                         break
@@ -145,6 +147,8 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                     b_obj.remaining_qty -= take
                     b_obj.save(update_fields=['remaining_qty'])
                     rem_to_deduct -= take
+                    b_cost = Decimal(str(getattr(b_obj, 'purchase_rate', 0) or 0)) or default_cost
+                    total_cogs += (take * b_cost)
                     StockLedgerEntry.objects.create(
                         company=comp,
                         unit=getattr(invoice, 'unit', None),
@@ -154,12 +158,13 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                         voucher_no=invoice.invoice_number,
                         actual_qty=-take,
                         qty_after_transaction=0,
-                        valuation_rate=rate,
+                        valuation_rate=b_cost,
                         batch=b_obj,
                         batch_no=b_obj.batch_no
                     )
 
                 if rem_to_deduct > Decimal('0.00'):
+                    total_cogs += (rem_to_deduct * default_cost)
                     StockLedgerEntry.objects.create(
                         company=comp,
                         unit=getattr(invoice, 'unit', None),
@@ -169,7 +174,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                         voucher_no=invoice.invoice_number,
                         actual_qty=-rem_to_deduct,
                         qty_after_transaction=0,
-                        valuation_rate=rate,
+                        valuation_rate=default_cost,
                         batch_no='UNBATCHED'
                     )
                 affected_items.add(item_obj)
@@ -187,6 +192,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     # 4. Financial General Ledger Entries
     GLEntry.objects.create(
         company=comp,
+        unit=getattr(invoice, 'unit', None),
         posting_date=invoice.posting_date,
         account='Debtors',
         party_type='Customer',
@@ -200,6 +206,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     )
     GLEntry.objects.create(
         company=comp,
+        unit=getattr(invoice, 'unit', None),
         posting_date=invoice.posting_date,
         account='Sales Income',
         party_type='Customer',
@@ -214,6 +221,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
     if invoice.tax_amount > Decimal('0.00'):
         GLEntry.objects.create(
             company=comp,
+            unit=getattr(invoice, 'unit', None),
             posting_date=invoice.posting_date,
             account='Output GST',
             party_type='Customer',
@@ -224,6 +232,37 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
             debit=Decimal('0.00'),
             credit=invoice.tax_amount,
             remarks=f"Tax on #{invoice.invoice_number}"
+        )
+
+    total_cogs = total_cogs.quantize(Decimal('0.01'))
+    if total_cogs > Decimal('0.00'):
+        GLEntry.objects.create(
+            company=comp,
+            unit=getattr(invoice, 'unit', None),
+            posting_date=invoice.posting_date,
+            account='Cost of Goods Sold',
+            party_type='Customer',
+            party=invoice.customer_name,
+            voucher_type='Sales Invoice',
+            voucher_no=invoice.invoice_number,
+            against='Finished Goods Inventory',
+            debit=total_cogs,
+            credit=Decimal('0.00'),
+            remarks=f"COGS for #{invoice.invoice_number}"
+        )
+        GLEntry.objects.create(
+            company=comp,
+            unit=getattr(invoice, 'unit', None),
+            posting_date=invoice.posting_date,
+            account='Finished Goods Inventory',
+            party_type='Customer',
+            party=invoice.customer_name,
+            voucher_type='Sales Invoice',
+            voucher_no=invoice.invoice_number,
+            against='Cost of Goods Sold',
+            debit=Decimal('0.00'),
+            credit=total_cogs,
+            remarks=f"Inventory reduction #{invoice.invoice_number}"
         )
 
 
