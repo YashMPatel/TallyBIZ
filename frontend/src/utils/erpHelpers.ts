@@ -216,7 +216,7 @@ export function getNextItemCode(items: Array<{ item_code?: string }>, category: 
     'General': 'ITM',
   };
   const prefix = prefixMap[category] || 'ITM';
-  const regex = new RegExp(`^${prefix}-(\d+)$`, 'i');
+  const regex = new RegExp(`^${prefix}-(\\d+)$`, 'i');
   let maxNum = 0;
   for (const it of items || []) {
     const code = String(it?.item_code || '').trim();
