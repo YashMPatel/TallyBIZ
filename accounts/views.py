@@ -232,15 +232,14 @@ class FinancialStatementsAPIView(APIView):
             if u_check and u_check.unit_type == 'HO':
                 has_unit_filter = False
 
-        is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
         # Books show only approved documents; drafts awaiting the checker are not income or GST yet.
         base_sales_qs = SalesInvoice.objects.filter(company=company, status__iexact='Approved')
         base_pur_qs = PurchaseInvoice.objects.filter(company=company, status__iexact='Approved')
-        items_qs = Item.objects.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else Item.objects.filter(company=company)
+        items_qs = Item.objects.filter(company=company)
 
         base_gl_entries = GLEntry.objects.filter(is_cancelled=False)
         if company:
-            base_gl_entries = base_gl_entries.filter(Q(company=company) | Q(company__isnull=True)) if is_c1 else base_gl_entries.filter(company=company)
+            base_gl_entries = base_gl_entries.filter(company=company)
 
         if has_unit_filter:
             u_int = int(unit_id)
@@ -513,7 +512,6 @@ class GeneralLedgerAPIView(APIView):
                     Q(unit_id=ho_unit_filter) |
                     Q(voucher_type__in=['Counter Receipt', 'Cash Received Voucher'])
                 )
-            is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
             if company:
                 entries = entries.filter(company=company)
 
@@ -584,7 +582,6 @@ class DashboardSummaryAPIView(APIView):
     def get(self, request):
         company = get_active_company(request)
         try:
-            is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
             sales_qs = SalesInvoice.objects.filter(company=company)
             pur_qs = PurchaseInvoice.objects.filter(company=company)
             active_u = resolve_active_unit(request, company)
@@ -947,7 +944,6 @@ class GSTReturnSummaryAPIView(APIView):
 class PartyOutstandingAPIView(APIView):
     def get(self, request):
         company = get_active_company(request)
-        is_c1 = bool(company and (company.id == 1 or "tallybiz" in company.name.lower()))
         try:
             debtor_entries = GLEntry.objects.filter(account="Debtors", is_cancelled=False)
             creditor_entries = GLEntry.objects.filter(account="Creditors", is_cancelled=False)
@@ -992,10 +988,7 @@ class PaymentEntryListCreateAPIView(generics.ListCreateAPIView):
         comp = get_active_company(self.request)
         qs = PaymentEntry.objects.all().order_by('-id')
         if comp:
-            if comp.id == 1 or "tallybiz" in comp.name.lower():
-                qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
-            else:
-                qs = qs.filter(company=comp)
+            qs = qs.filter(company=comp)
         u = resolve_active_unit(self.request, comp)
         if u and u.unit_type != 'HO':
             qs = qs.filter(unit=u)

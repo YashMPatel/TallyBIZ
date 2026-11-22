@@ -195,10 +195,7 @@ class SupplierListCreateAPIView(generics.ListCreateAPIView):
         comp = get_request_company(self.request)
         qs = Supplier.objects.all().order_by('-id')
         if comp:
-            if comp.id == 1 or "tallybiz" in comp.name.lower():
-                qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
-            else:
-                qs = qs.filter(company=comp)
+            qs = qs.filter(company=comp)
         return qs
 
     def perform_create(self, serializer):
@@ -218,10 +215,7 @@ class DebitNoteListCreateAPIView(generics.ListCreateAPIView):
         comp = get_request_company(self.request)
         qs = DebitNote.objects.all().order_by('-id')
         if comp:
-            if comp.id == 1 or "tallybiz" in comp.name.lower():
-                qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
-            else:
-                qs = qs.filter(company=comp)
+            qs = qs.filter(company=comp)
         return qs
 
     def perform_create(self, serializer):
@@ -246,10 +240,7 @@ class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):
         comp = get_request_company(self.request)
         qs = PurchaseInvoice.objects.all().order_by('-posting_date', '-id')
         if comp:
-            if comp.id == 1 or "tallybiz" in comp.name.lower():
-                qs = qs.filter(Q(company=comp) | Q(company__isnull=True))
-            else:
-                qs = qs.filter(company=comp)
+            qs = qs.filter(company=comp)
         u = resolve_active_unit(self.request, comp)
         if u and u.unit_type != 'HO':
             qs = qs.filter(unit=u)
