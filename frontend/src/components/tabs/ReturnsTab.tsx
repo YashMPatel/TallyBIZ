@@ -178,7 +178,12 @@ function getReferenceInvoice(
   return invoice && number ? { number, date: invoice.posting_date } : undefined;
 }
 
-export default function ReturnsTab() {
+interface ReturnsTabProps {
+  glEntries?: any[];
+  onOpenGeneralLedger?: (partyOrAcc: string, fromDate?: string, toDate?: string) => void;
+}
+
+export default function ReturnsTab({ glEntries = [], onOpenGeneralLedger }: ReturnsTabProps) {
   const { user } = useAuth();
   const isSalesUser = String(user?.role || '').trim().toUpperCase().replace(/\s+/g, '_') === 'SALES_USER';
 
@@ -202,6 +207,12 @@ export default function ReturnsTab() {
   const [creditNotes, setCreditNotes] = useState<NoteRecord[]>([]);
   const [debitNotes, setDebitNotes] = useState<NoteRecord[]>([]);
   const [noteListType, setNoteListType] = useState<NoteType>('Credit');
+  const [viewMode, setViewMode] = useState<'NOTES' | 'LEDGER'>('NOTES');
+  const [ledgerEntityFilter, setLedgerEntityFilter] = useState<string>('all');
+  const [ledgerSearch, setLedgerSearch] = useState<string>('');
+  const [ledgerPeriodPreset, setLedgerPeriodPreset] = useState<'ALL' | 'THIS_MONTH' | 'LAST_MONTH' | 'THIS_YEAR' | 'CUSTOM'>('ALL');
+  const [ledgerFromDate, setLedgerFromDate] = useState<string>('');
+  const [ledgerToDate, setLedgerToDate] = useState<string>('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedNote, setSelectedNote] = useState<{ note: NoteRecord; type: NoteType } | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
@@ -508,24 +519,240 @@ export default function ReturnsTab() {
         </p>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {(isSalesUser ? (['Credit'] as const) : (['Credit', 'Debit'] as const)).map((type) => (
             <button
               key={type}
               type="button"
-              onClick={() => setNoteListType(type)}
+              onClick={() => { setViewMode('NOTES'); setNoteListType(type); }}
               style={{
-                ...actionButtonStyle(activeListType === type ? '#0284c7' : '#fff', activeListType !== type),
-                color: activeListType === type ? '#fff' : '#334155',
-                border: activeListType === type ? '1px solid #0284c7' : '1px solid #cbd5e1',
+                ...actionButtonStyle(viewMode === 'NOTES' && activeListType === type ? '#0284c7' : '#fff', !(viewMode === 'NOTES' && activeListType === type)),
+                color: viewMode === 'NOTES' && activeListType === type ? '#fff' : '#334155',
+                border: viewMode === 'NOTES' && activeListType === type ? '1px solid #0284c7' : '1px solid #cbd5e1',
               }}
             >
               {type} Notes ({type === 'Credit' ? creditNotes.length : debitNotes.length})
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setViewMode('LEDGER')}
+            style={{
+              ...actionButtonStyle(viewMode === 'LEDGER' ? '#7c3aed' : '#fff', viewMode !== 'LEDGER'),
+              color: viewMode === 'LEDGER' ? '#fff' : '#6d28d9',
+              border: viewMode === 'LEDGER' ? '1px solid #7c3aed' : '1px solid #c4b5fd',
+            }}
+          >
+            Party / Partner Ledger &amp; Outstanding ({glEntries.length})
+          </button>
         </div>
       </div>
+
+      {viewMode === 'LEDGER' ? (() => {
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        let effFrom = ledgerFromDate;
+        let effTo = ledgerToDate;
+        if (ledgerPeriodPreset === 'THIS_MONTH') {
+          effFrom = `${yyyy}-${mm}-01`;
+          effTo = `${yyyy}-${mm}-31`;
+        } else if (ledgerPeriodPreset === 'LAST_MONTH') {
+          const prev = new Date(yyyy, now.getMonth() - 1, 1);
+          const py = prev.getFullYear();
+          const pm = String(prev.getMonth() + 1).padStart(2, '0');
+          effFrom = `${py}-${pm}-01`;
+          effTo = `${py}-${pm}-31`;
+        } else if (ledgerPeriodPreset === 'THIS_YEAR') {
+          effFrom = `${yyyy}-01-01`;
+          effTo = `${yyyy}-12-31`;
+        }
+
+        const entitySet = new Set<string>();
+        customers.forEach((c) => { if (c.customer_name) entitySet.add(c.customer_name); });
+        suppliers.forEach((s) => { if (s.supplier_name) entitySet.add(s.supplier_name); });
+        glEntries.forEach((g: any) => {
+          if (g.party && g.party !== '-') entitySet.add(String(g.party));
+          if (g.account) entitySet.add(String(g.account));
+        });
+        const allEntities = Array.from(entitySet).sort();
+
+        const q = ledgerSearch.trim().toLowerCase();
+        const filteredGL = glEntries.filter((g: any) => {
+          if (ledgerEntityFilter !== 'all') {
+            const matchParty = String(g.party || '') === ledgerEntityFilter;
+            const matchAcc = String(g.account || '') === ledgerEntityFilter;
+            if (!matchParty && !matchAcc) return false;
+          }
+          if (effFrom && String(g.posting_date || '') < effFrom) return false;
+          if (effTo && String(g.posting_date || '') > effTo) return false;
+          if (q) {
+            const hay = `${g.posting_date} ${g.voucher_type} ${g.voucher_no} ${g.account} ${g.party || ''}`.toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+
+        let running = 0;
+        let sumDr = 0;
+        let sumCr = 0;
+        const rowsWithRun = filteredGL.map((g: any, i: number) => {
+          const dr = parseFloat(String(g.debit || 0)) || 0;
+          const cr = parseFloat(String(g.credit || 0)) || 0;
+          sumDr += dr;
+          sumCr += cr;
+          running += (dr - cr);
+          return { ...g, _idx: i, _dr: dr, _cr: cr, _run: running };
+        });
+
+        return (
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 18, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, color: '#0f172a' }}>
+                  Party, Partner &amp; General Ledger Statement ({ledgerEntityFilter === 'all' ? 'All Accounts & Parties' : ledgerEntityFilter})
+                </h3>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>
+                  Date-wise Jama (Credit), Udhar (Debit) &amp; Total Outstanding balance
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {onOpenGeneralLedger && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenGeneralLedger(ledgerEntityFilter, effFrom, effTo)}
+                    style={actionButtonStyle('#0f766e')}
+                  >
+                    Open in General Ledger
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={actionButtonStyle('#0284c7')}
+                >
+                  <Printer size={15} /> Print Ledger Statement
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', marginBottom: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Select Party / Partner / Account</label>
+                <select
+                  value={ledgerEntityFilter}
+                  onChange={(e) => setLedgerEntityFilter(e.target.value)}
+                  style={{ width: '100%', padding: 7, borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 3 }}
+                >
+                  <option value="all">All Parties, Partners &amp; Accounts</option>
+                  {allEntities.map((ent) => (
+                    <option key={ent} value={ent}>{ent}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Search Voucher / Party / Partner</label>
+                <input
+                  type="text"
+                  placeholder="Search name, INV, PMT, JV..."
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  style={{ width: '100%', padding: 7, borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 3, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Month / Year Filter</label>
+                <select
+                  value={ledgerPeriodPreset}
+                  onChange={(e) => setLedgerPeriodPreset(e.target.value as any)}
+                  style={{ width: '100%', padding: 7, borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 3 }}
+                >
+                  <option value="ALL">All Time (Complete History)</option>
+                  <option value="THIS_MONTH">This Month ({mm}/{yyyy})</option>
+                  <option value="LAST_MONTH">Last Month</option>
+                  <option value="THIS_YEAR">Full Year ({yyyy})</option>
+                  <option value="CUSTOM">Custom Date Range</option>
+                </select>
+              </div>
+              {ledgerPeriodPreset === 'CUSTOM' && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>From Date</label>
+                    <input type="date" value={ledgerFromDate} onChange={(e) => setLedgerFromDate(e.target.value)} style={{ width: '100%', padding: 7, borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 3 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>To Date</label>
+                    <input type="date" value={ledgerToDate} onChange={(e) => setLedgerToDate(e.target.value)} style={{ width: '100%', padding: 7, borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 3 }} />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>TOTAL DEBIT (ઉધાર / BILLED)</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', marginTop: 4 }}>{symbol} {sumDr.toFixed(2)}</div>
+              </div>
+              <div style={{ background: '#f0fdf4', padding: 12, borderRadius: 8, border: '1px solid #bbf7d0' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#166534' }}>TOTAL CREDIT (જમા / RECEIVED)</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#15803d', marginTop: 4 }}>{symbol} {sumCr.toFixed(2)}</div>
+              </div>
+              <div style={{ background: running >= 0 ? '#eff6ff' : '#fef2f2', padding: 12, borderRadius: 8, border: `1px solid ${running >= 0 ? '#bfdbfe' : '#fecaca'}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: running >= 0 ? '#1d4ed8' : '#b91c1c' }}>TOTAL OUTSTANDING (કુલ બાકી)</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: running >= 0 ? '#1e40af' : '#b91c1c', marginTop: 4 }}>
+                  {symbol} {Math.abs(running).toFixed(2)} {running >= 0 ? 'Dr' : 'Cr'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1', textAlign: 'left' }}>
+                    <th style={{ padding: '9px 10px' }}>Date</th>
+                    <th style={{ padding: '9px 10px' }}>Voucher #</th>
+                    <th style={{ padding: '9px 10px' }}>Type</th>
+                    <th style={{ padding: '9px 10px' }}>Account</th>
+                    <th style={{ padding: '9px 10px' }}>Party / Partner</th>
+                    <th style={{ padding: '9px 10px', textAlign: 'right' }}>Debit ({symbol})</th>
+                    <th style={{ padding: '9px 10px', textAlign: 'right' }}>Credit ({symbol})</th>
+                    <th style={{ padding: '9px 10px', textAlign: 'right' }}>Balance ({symbol})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rowsWithRun.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>
+                        No ledger transactions found for selected filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    rowsWithRun.map((r: any) => (
+                      <tr key={r._idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{r.posting_date}</td>
+                        <td style={{ padding: '8px 10px', fontWeight: 700, color: '#0369a1' }}>{r.voucher_no}</td>
+                        <td style={{ padding: '8px 10px' }}>{r.voucher_type}</td>
+                        <td style={{ padding: '8px 10px' }}>{r.account}</td>
+                        <td style={{ padding: '8px 10px', fontWeight: 600 }}>{r.party || '-'}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: r._dr > 0 ? 700 : 400 }}>
+                          {r._dr > 0 ? r._dr.toFixed(2) : '-'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#15803d', fontWeight: r._cr > 0 ? 700 : 400 }}>
+                          {r._cr > 0 ? r._cr.toFixed(2) : '-'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: r._run >= 0 ? '#1e40af' : '#b91c1c' }}>
+                          {Math.abs(r._run).toFixed(2)} {r._run >= 0 ? 'Dr' : 'Cr'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })() : (
 
       <DataTable<NoteListRow>
         columns={[
@@ -576,6 +803,7 @@ export default function ReturnsTab() {
         data={noteList}
         emptyMessage={`No ${activeListType.toLowerCase()} notes yet.`}
       />
+      )}
 
       {isFormOpen && (
         <div style={modalBackdropStyle}>

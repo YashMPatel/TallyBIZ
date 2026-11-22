@@ -1168,7 +1168,28 @@ function MainERPApp() {
             />
           )}
 
-          {activeTab === 'ReturnsTab' && <ReturnsTab />}
+          {activeTab === 'ReturnsTab' && (
+            <ReturnsTab
+              glEntries={glEntries}
+              onOpenGeneralLedger={(partyOrAcc: string, fDate?: string, tDate?: string) => {
+                if (partyOrAcc && partyOrAcc !== 'all') {
+                  if (allPartyNames.includes(partyOrAcc)) {
+                    setGlPartyFilter(partyOrAcc);
+                    setGlAccountFilter('all');
+                  } else {
+                    setGlAccountFilter(partyOrAcc);
+                    setGlPartyFilter('all');
+                  }
+                } else {
+                  setGlPartyFilter('all');
+                  setGlAccountFilter('all');
+                }
+                if (fDate !== undefined) setFromDate(fDate);
+                if (tDate !== undefined) setToDate(tDate);
+                setActiveTab('accounts');
+              }}
+            />
+          )}
 
           {activeTab === 'approvals' && (
             <ApprovalsTab invoices={invoices} purchases={purchases} onRefresh={() => void loadData()} />
