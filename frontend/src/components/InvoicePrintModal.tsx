@@ -396,6 +396,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                               Code: {masterItem?.item_code || '-'} | {(invoice as any).invoice_type === 'JOB_WORK' ? 'SAC' : 'HSN'}: {(itemRow as any).hsn_code || ((invoice as any).invoice_type === 'JOB_WORK' ? '9988' : (masterItem as any)?.hsn_code || '-')} | Unit:{' '}
                               {masterItem?.unit || 'Nos'}
                             </div>
+                            {(itemRow as any).description && String((itemRow as any).description).includes('Dispatch') ? (
+                              <div style={{ fontSize: '10px', color: '#0369a1', fontWeight: 600, marginTop: '4px', whiteSpace: 'pre-line', background: '#f0f9ff', padding: '4px 6px', borderRadius: '4px', borderLeft: '2px solid #0284c7' }}>
+                                {String((itemRow as any).description)
+                                  .split('\n')
+                                  .filter((ln: string) => ln.includes('Dispatch'))
+                                  .join('\n')}
+                              </div>
+                            ) : null}
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
                             {itemRow.quantity}
