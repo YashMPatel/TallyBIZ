@@ -188,7 +188,8 @@ export const ReportsTab: FC<ReportsTabProps> = ({
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', textAlign: 'left', color: '#334155' }}>
                   <th style={{ padding: '10px 12px' }}>Division / Unit</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Sales / Revenue</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Goods Sales</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>Job Work (9988)</th>
                   <th style={{ padding: '10px 12px', textAlign: 'right' }}>Purchases</th>
                   <th style={{ padding: '10px 12px', textAlign: 'right' }}>Closing Stock</th>
                   <th style={{ padding: '10px 12px', textAlign: 'right' }}>COGS</th>
@@ -207,6 +208,7 @@ export const ReportsTab: FC<ReportsTabProps> = ({
                         {u.name} <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>({u.code})</span>
                       </td>
                       <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.sales || 0).toFixed(2)}</td>
+                      <td style={{ padding: '11px 12px', textAlign: 'right', color: '#0369a1', fontWeight: 600 }}>{symbol} {Number(u.job_work || 0).toFixed(2)}</td>
                       <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.purchases || 0).toFixed(2)}</td>
                       <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.closing_stock || 0).toFixed(2)}</td>
                       <td style={{ padding: '11px 12px', textAlign: 'right' }}>{symbol} {Number(u.cogs || 0).toFixed(2)}</td>
@@ -235,6 +237,71 @@ export const ReportsTab: FC<ReportsTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Job Work Income Register & Summary (SAC 9988) */}
+      <div style={{ marginTop: '24px', background: '#fff', borderRadius: '10px', border: '1px solid #bae6fd', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #0284c7', paddingBottom: '10px' }}>
+          <div>
+            <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#0c4a6e' }}>
+              Job Work Income Register &amp; Summary (SAC 9988)
+            </h2>
+            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#0369a1' }}>
+              Service &amp; labour revenue earned on party-supplied material (zero inventory stock deduction)
+            </p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>TOTAL JOB WORK REVENUE</div>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: '#0284c7' }}>
+              {symbol} {((finance?.income as any)?.job_work ?? 0).toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ background: '#f0f9ff', borderBottom: '2px solid #bae6fd', textAlign: 'left', color: '#0c4a6e' }}>
+                <th style={{ padding: '10px 12px' }}>Invoice #</th>
+                <th style={{ padding: '10px 12px' }}>Date</th>
+                <th style={{ padding: '10px 12px' }}>Party Challan #</th>
+                <th style={{ padding: '10px 12px' }}>Customer</th>
+                <th style={{ padding: '10px 12px' }}>Service / Item</th>
+                <th style={{ padding: '10px 12px', textAlign: 'center' }}>SAC</th>
+                <th style={{ padding: '10px 12px', textAlign: 'right' }}>Labour Value</th>
+                <th style={{ padding: '10px 12px', textAlign: 'right' }}>GST</th>
+                <th style={{ padding: '10px 12px', textAlign: 'right' }}>Grand Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.isArray((finance as any)?.job_work_register) && (finance as any).job_work_register.length > 0 ? (
+                (finance as any).job_work_register.map((jw: any) => (
+                  <tr key={jw.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px 12px', fontWeight: 700, color: '#0284c7' }}>{jw.invoice_number}</td>
+                    <td style={{ padding: '10px 12px', color: '#475569' }}>{jw.posting_date}</td>
+                    <td style={{ padding: '10px 12px', color: '#475569' }}>{jw.party_challan_no}</td>
+                    <td style={{ padding: '10px 12px', fontWeight: 600, color: '#0f172a' }}>{jw.customer_name}</td>
+                    <td style={{ padding: '10px 12px', color: '#334155' }}>{jw.service_desc}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                      <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700 }}>
+                        {jw.sac_code}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>{symbol} {Number(jw.net_total || 0).toFixed(2)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b' }}>{symbol} {Number(jw.tax_amount || 0).toFixed(2)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#0f172a' }}>{symbol} {Number(jw.grand_total || 0).toFixed(2)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={9} style={{ padding: '18px', textAlign: 'center', color: '#64748b' }}>
+                    No Job Work invoices recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
 </div>
   );

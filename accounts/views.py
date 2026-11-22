@@ -362,7 +362,10 @@ class FinancialStatementsAPIView(APIView):
             ensure_default_units(company)
             for u in BusinessUnit.objects.filter(company=company, is_active=True).order_by('id'):
                 u_gl = base_gl_entries.filter(unit=u)
-                u_ext_sales = (base_sales_qs.filter(unit=u).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=base_sales_qs.filter(unit=u)).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00'))
+                u_cn_deduct = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=base_sales_qs.filter(unit=u)).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_goods_sales = (base_sales_qs.filter(unit=u).exclude(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - u_cn_deduct
+                u_job_work = base_sales_qs.filter(unit=u, invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_ext_sales = u_goods_sales + u_job_work
                 u_inter_inc = u_gl.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
                 u_sales = u_ext_sales + u_inter_inc
 
@@ -406,7 +409,9 @@ class FinancialStatementsAPIView(APIView):
                     'code': u.code,
                     'name': u.name,
                     'unit_type': u.unit_type,
-                    'sales': float(u_sales),
+                    'sales': float(u_goods_sales + u_inter_inc),
+                    'job_work': float(u_job_work),
+                    'total_revenue': float(u_sales),
                     'purchases': float(u_pur),
                     'closing_stock': float(u_stock_val),
                     'cogs': float(u_cogs),
@@ -458,6 +463,23 @@ class FinancialStatementsAPIView(APIView):
                 },
             },
             "unit_bifurcation": unit_bifurcation,
+            "job_work_register": [
+                {
+                    "id": jw.id,
+                    "invoice_number": jw.invoice_number,
+                    "posting_date": str(jw.posting_date),
+                    "party_challan_no": getattr(jw, "party_challan_no", "") or "-",
+                    "customer_name": jw.customer_name,
+                    "unit_name": jw.unit.name if getattr(jw, "unit", None) else "Trading Division",
+                    "sac_code": (jw.items.first().hsn_code if jw.items.exists() and jw.items.first().hsn_code else "9988"),
+                    "service_desc": ", ".join([f"{it.item.item_name} ({it.quantity})" for it in jw.items.all()]) or "Job Work Processing",
+                    "net_total": float(jw.net_total or 0),
+                    "tax_amount": float(jw.tax_amount or 0),
+                    "grand_total": float(jw.grand_total or 0),
+                    "status": jw.status,
+                }
+                for jw in sales_qs.filter(invoice_type='JOB_WORK').order_by('-posting_date', '-id')
+            ],
         })
 
 class GeneralLedgerAPIView(APIView):
