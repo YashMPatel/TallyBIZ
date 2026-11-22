@@ -1,4 +1,4 @@
-import type { FC } from 'react';
+import { useState, type FC } from 'react';
 import { Download, Plus, Printer } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { GLEntryRow } from '../../types/erp';
@@ -40,6 +40,27 @@ export const AccountsTab: FC<AccountsTabProps> = ({
   onNewJournalEntry,
 }) => {
   const symbol = localStorage.getItem('active_company_symbol') || '₹';
+  const [glSearchText, setGlSearchText] = useState('');
+  const [periodPreset, setPeriodPreset] = useState<'ALL' | 'THIS_MONTH' | 'LAST_MONTH' | 'THIS_YEAR'>('ALL');
+
+  const dynamicAccounts = Array.from(new Set([
+    'Sales Income',
+    'Cost of Goods Sold',
+    'Debtors',
+    'Creditors',
+    'Bank Account',
+    'Cash Account',
+    'Output GST',
+    'Input GST',
+    'Freight & Adjustments',
+    ...glEntries.map((g) => g.account).filter(Boolean),
+  ]));
+
+  const displayedGlEntries = glEntries.filter((g) => {
+    const q = glSearchText.trim().toLowerCase();
+    if (!q) return true;
+    return `${g.posting_date} ${g.voucher_type} ${g.voucher_no} ${g.account} ${g.party || ''}`.toLowerCase().includes(q);
+  });
 
   return (
     <div>
@@ -90,16 +111,10 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             onChange={(e) => setGlAccountFilter(e.target.value)}
             style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}
           >
-            <option value="all">All Accounts (Complete Ledger)</option>
-            <option value="Sales Income">Sales Income</option>
-            <option value="Cost of Goods Sold">Cost of Goods Sold</option>
-            <option value="Debtors">Debtors (Customer Receivables)</option>
-            <option value="Creditors">Creditors (Supplier Payables)</option>
-            <option value="Bank Account">Bank Account</option>
-            <option value="Cash Account">Cash Account</option>
-            <option value="Output GST">Output GST</option>
-            <option value="Input GST">Input GST</option>
-                <option value="Freight & Adjustments">Freight & Adjustments</option>
+            <option value="all">All Accounts &amp; Partners (Complete Ledger)</option>
+            {dynamicAccounts.map((acc) => (
+              <option key={acc} value={acc}>{acc}</option>
+            ))}
           </select>
         </div>
         <div>
@@ -113,6 +128,51 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             {allPartyNames.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Search Voucher / Party / Partner</label>
+          <input
+            type="text"
+            placeholder="Search name, INV, PMT, JV..."
+            value={glSearchText}
+            onChange={(e) => setGlSearchText(e.target.value)}
+            style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Month / Year Quick Filter</label>
+          <select
+            value={periodPreset}
+            onChange={(e) => {
+              const val = e.target.value as 'ALL' | 'THIS_MONTH' | 'LAST_MONTH' | 'THIS_YEAR';
+              setPeriodPreset(val);
+              const now = new Date();
+              const y = now.getFullYear();
+              const m = String(now.getMonth() + 1).padStart(2, '0');
+              if (val === 'ALL') {
+                setFromDate('');
+                setToDate('');
+              } else if (val === 'THIS_MONTH') {
+                setFromDate(`${y}-${m}-01`);
+                setToDate(`${y}-${m}-31`);
+              } else if (val === 'LAST_MONTH') {
+                const prev = new Date(y, now.getMonth() - 1, 1);
+                const py = prev.getFullYear();
+                const pm = String(prev.getMonth() + 1).padStart(2, '0');
+                setFromDate(`${py}-${pm}-01`);
+                setToDate(`${py}-${pm}-31`);
+              } else if (val === 'THIS_YEAR') {
+                setFromDate(`${y}-01-01`);
+                setToDate(`${y}-12-31`);
+              }
+            }}
+            style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+          >
+            <option value="ALL">All Time</option>
+            <option value="THIS_MONTH">This Month</option>
+            <option value="LAST_MONTH">Last Month</option>
+            <option value="THIS_YEAR">Full Year ({new Date().getFullYear()})</option>
           </select>
         </div>
         <div>
@@ -197,7 +257,7 @@ export const AccountsTab: FC<AccountsTabProps> = ({
             },
           },
         ]}
-        data={glEntries}
+        data={displayedGlEntries}
         emptyMessage="No ledger entries match the selected filters."
       />
     </div>
