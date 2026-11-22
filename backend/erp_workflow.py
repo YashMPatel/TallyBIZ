@@ -367,6 +367,8 @@ def post_return_note(note, kind):
     StockLedgerEntry = apps.get_model('stock', 'StockLedgerEntry')
     GLEntry = apps.get_model('accounts', 'GLEntry')
     inv = getattr(note, cfg['invoice'])
+    if inv is not None and (inv.company_id != note.company_id or str(inv.status).lower() != 'approved'):
+        raise ValidationError({cfg['invoice']: ['Link only to an approved invoice of this company.']})
     job_work = str(getattr(inv, 'invoice_type', '')).upper() == 'JOB_WORK'
     unit = getattr(inv, 'unit', None)
     vno = getattr(note, cfg['number'])

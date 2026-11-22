@@ -172,6 +172,7 @@ class MultiLineInvoiceTests(APITestCase):
     def test_credit_note_posts_balanced_gst_reversal(self):
         invoice = SalesInvoice.objects.create(
             invoice_number='INV-CN-9001',
+            status='Approved',
             customer=self.customer,
             customer_name=self.customer.customer_name,
             posting_date='2026-01-04',
@@ -238,6 +239,7 @@ class MultiLineInvoiceTests(APITestCase):
     def test_credit_note_cannot_exceed_invoice_quantity_across_returns(self):
         invoice = SalesInvoice.objects.create(
             invoice_number='INV-CN-LIMIT',
+            status='Approved',
             customer=self.customer,
             customer_name=self.customer.customer_name,
             posting_date='2026-01-04',

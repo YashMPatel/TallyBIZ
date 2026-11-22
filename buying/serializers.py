@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from backend.erp_workflow import ReturnNoteSerializerMixin
 from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem, DebitNote, DebitNoteItem
@@ -52,6 +53,8 @@ class DebitNoteItemSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'debit_note': {'required': False, 'read_only': True},
             'amount': {'required': False},
+            'quantity': {'min_value': Decimal('0.01')},
+            'rate': {'min_value': Decimal('0.00')},
         }
 
 

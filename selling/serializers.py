@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from backend.erp_workflow import ReturnNoteSerializerMixin
 from .models import Customer, SalesInvoice, SalesInvoiceItem, CreditNote, CreditNoteItem
@@ -79,6 +80,8 @@ class CreditNoteItemSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'credit_note': {'required': False, 'read_only': True},
             'amount': {'required': False},
+            'quantity': {'min_value': Decimal('0.01')},
+            'rate': {'min_value': Decimal('0.00')},
         }
 
 
