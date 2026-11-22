@@ -1,5 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from backend.erp_workflow import (
     validate_sales_invoice_stock,
@@ -73,199 +74,63 @@ def get_request_company(request):
     return Company.objects.first()
 
 
+def invoice_totals(items_data, tax_rate, adjustment):
+    """Server-side totals, same rule as the invoice form: FOC lines are free, discount is per line."""
+    net = Decimal('0.00')
+    for it in items_data or []:
+        if it.get('is_foc'):
+            continue
+        base = Decimal(str(it.get('quantity') or 0)) * Decimal(str(it.get('rate') or 0))
+        disc = Decimal(str(it.get('discount_percentage') or 0))
+        net += max(Decimal('0.00'), base - base * disc / 100)
+    net = net.quantize(Decimal('0.01'))
+    tax = (net * tax_rate / 100).quantize(Decimal('0.01'))
+    return net, tax, net + tax + adjustment
+
+
 def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
-    # Strictly scope deletion by company
-    GLEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
-    prev_sles = list(StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number))
-    for ps in prev_sles:
-        if ps.batch_id and ps.actual_qty < 0:
-            b_restore = StockBatch.objects.filter(id=ps.batch_id).first()
-            if b_restore:
-                b_restore.remaining_qty = (b_restore.remaining_qty or Decimal('0.00')) + abs(ps.actual_qty)
-                b_restore.save(update_fields=['remaining_qty'])
-    StockLedgerEntry.objects.filter(company=comp, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number).delete()
+    """Replace the invoice lines. Approved invoices are reversed and re-posted through the one approval path."""
+    approved = str(getattr(invoice, 'status', '')).strip().lower() == 'approved'
+    if approved:
+        reverse_sales_invoice_on_delete(invoice)
     invoice.items.all().delete()
 
-    affected_items = set()
-    total_cogs = Decimal('0.00')
-
-    # 2. Re-create line items and stock deduction
+    is_job_work = str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK'
     for it in items_data:
         it_val = it.get('item') or it.get('item_id')
         item_obj = None
         if it_val:
             try:
-                item_obj = Item.objects.filter(id=int(it_val)).first()
+                item_obj = Item.objects.filter(id=int(it_val), company=comp).first()
             except (ValueError, TypeError):
                 clean_code = str(it_val).split('(')[-1].replace(')', '').strip()
                 item_obj = Item.objects.filter(
-                    Q(item_code__iexact=clean_code) |
-                    Q(item_code__iexact=str(it_val)) |
-                    Q(item_name__iexact=str(it_val)),
+                    Q(item_code__iexact=clean_code) | Q(item_code__iexact=str(it_val)) | Q(item_name__iexact=str(it_val)),
                     company=comp
                 ).first()
-
         if not item_obj:
-            item_obj = Item.objects.filter(company=comp).first() or Item.objects.first()
+            raise ValidationError({'error': f'Item not found in this company: {it_val}'})
 
-        qty = Decimal(str(it.get('quantity') or it.get('qty', 1) or 1))
-        rate = Decimal(str(it.get('rate') or it.get('standard_rate', 0) or 0))
-        amount = Decimal(str(it.get('amount') or (qty * rate) or 0))
-        disc_pct = Decimal(str(it.get('discount_percentage') or it.get('disc_percentage', 0) or 0))
-        disc_amt = Decimal(str(it.get('discount_amount', 0) or 0))
         is_foc = bool(it.get('is_foc', False))
-
-        if item_obj:
-            SalesInvoiceItem.objects.create(
-                invoice=invoice,
-                item=item_obj,
-                description=it.get('description') or item_obj.item_name,
-                quantity=qty,
-                rate=rate,
-                amount=amount,
-                discount_percentage=disc_pct,
-                discount_amount=disc_amt,
-                is_foc=is_foc
-            )
-
-            is_job_work_inv = (str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK')
-            if str(getattr(invoice, 'status', '')).strip().lower() == 'approved' and not is_job_work_inv:
-                rem_to_deduct = qty
-                req_batch_id = it.get('batch_id') or it.get('batch')
-                batch_qs = StockBatch.objects.filter(company=comp, item=item_obj, remaining_qty__gt=0).order_by('received_date', 'id')
-                if req_batch_id and str(req_batch_id).isdigit():
-                    chosen = batch_qs.filter(id=int(req_batch_id))
-                    others = batch_qs.exclude(id=int(req_batch_id))
-                    batches_to_use = list(chosen) + list(others)
-                else:
-                    batches_to_use = list(batch_qs)
-
-                default_cost = Decimal(str(getattr(item_obj, 'standard_rate', 0) or 0))
-                for b_obj in batches_to_use:
-                    if rem_to_deduct <= Decimal('0.00'):
-                        break
-                    take = min(rem_to_deduct, b_obj.remaining_qty)
-                    b_obj.remaining_qty -= take
-                    b_obj.save(update_fields=['remaining_qty'])
-                    rem_to_deduct -= take
-                    b_cost = Decimal(str(getattr(b_obj, 'purchase_rate', 0) or 0)) or default_cost
-                    total_cogs += (take * b_cost)
-                    StockLedgerEntry.objects.create(
-                        company=comp,
-                        unit=getattr(invoice, 'unit', None),
-                        posting_date=invoice.posting_date,
-                        item=item_obj,
-                    hsn_code=(row.get('hsn_code') or ('9988' if str(data.get('invoice_type', '')).upper() == 'JOB_WORK' else getattr(item_obj, 'hsn_code', ''))),
-                        voucher_type='Sales Invoice',
-                        voucher_no=invoice.invoice_number,
-                        actual_qty=-take,
-                        qty_after_transaction=0,
-                        valuation_rate=b_cost,
-                        batch=b_obj,
-                        batch_no=b_obj.batch_no
-                    )
-
-                if rem_to_deduct > Decimal('0.00'):
-                    total_cogs += (rem_to_deduct * default_cost)
-                    StockLedgerEntry.objects.create(
-                        company=comp,
-                        unit=getattr(invoice, 'unit', None),
-                        posting_date=invoice.posting_date,
-                        item=item_obj,
-                        voucher_type='Sales Invoice',
-                        voucher_no=invoice.invoice_number,
-                        actual_qty=-rem_to_deduct,
-                        qty_after_transaction=0,
-                        valuation_rate=default_cost,
-                        batch_no='UNBATCHED'
-                    )
-                affected_items.add(item_obj)
-
-    if str(getattr(invoice, 'status', '')).strip().lower() != 'approved':
-        return
-
-    # 3. Recalculate true stock balance from all ledger entries
-    for itm in affected_items:
-        tot = StockLedgerEntry.objects.filter(item=itm).aggregate(s=Sum('actual_qty'))['s'] or Decimal('0.00')
-        itm.current_stock = tot
-        itm.company = comp
-        itm.save()
-
-    # 4. Financial General Ledger Entries
-    GLEntry.objects.create(
-        company=comp,
-        unit=getattr(invoice, 'unit', None),
-        posting_date=invoice.posting_date,
-        account='Debtors',
-        party_type='Customer',
-        party=invoice.customer_name,
-        voucher_type='Sales Invoice',
-        voucher_no=invoice.invoice_number,
-        against='Sales Income',
-        debit=invoice.grand_total,
-        credit=Decimal('0.00'),
-        remarks=f"Receivable for #{invoice.invoice_number}"
-    )
-    GLEntry.objects.create(
-        company=comp,
-        unit=getattr(invoice, 'unit', None),
-        posting_date=invoice.posting_date,
-        account=('Job Work Income' if str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK' else 'Sales Income'),
-        party_type='Customer',
-        party=invoice.customer_name,
-        voucher_type='Sales Invoice',
-        voucher_no=invoice.invoice_number,
-        against='Debtors',
-        debit=Decimal('0.00'),
-        credit=invoice.net_total,
-        remarks=f"{'Job Work Labour' if str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK' else 'Sales Income'} #{invoice.invoice_number}"
-    )
-    if invoice.tax_amount > Decimal('0.00'):
-        GLEntry.objects.create(
-            company=comp,
-            unit=getattr(invoice, 'unit', None),
-            posting_date=invoice.posting_date,
-            account='Output GST',
-            party_type='Customer',
-            party=invoice.customer_name,
-            voucher_type='Sales Invoice',
-            voucher_no=invoice.invoice_number,
-            against='Debtors',
-            debit=Decimal('0.00'),
-            credit=invoice.tax_amount,
-            remarks=f"Tax on #{invoice.invoice_number}"
+        qty = Decimal(str(it.get('quantity') or it.get('qty', 1) or 1))
+        rate = Decimal('0.00') if is_foc else Decimal(str(it.get('rate') or 0))
+        disc_pct = Decimal('0.00') if is_foc else Decimal(str(it.get('discount_percentage') or 0))
+        disc_amt = (qty * rate * disc_pct / 100).quantize(Decimal('0.01'))
+        SalesInvoiceItem.objects.create(
+            invoice=invoice,
+            item=item_obj,
+            hsn_code=(it.get('hsn_code') or ('9988' if is_job_work else item_obj.hsn_code) or '')[:20],
+            description=it.get('description') or item_obj.item_name,
+            quantity=qty,
+            rate=rate,
+            amount=qty * rate - disc_amt,
+            discount_percentage=disc_pct,
+            discount_amount=disc_amt,
+            is_foc=is_foc
         )
 
-    total_cogs = total_cogs.quantize(Decimal('0.01'))
-    if total_cogs > Decimal('0.00'):
-        GLEntry.objects.create(
-            company=comp,
-            unit=getattr(invoice, 'unit', None),
-            posting_date=invoice.posting_date,
-            account='Cost of Goods Sold',
-            party_type='Customer',
-            party=invoice.customer_name,
-            voucher_type='Sales Invoice',
-            voucher_no=invoice.invoice_number,
-            against='Finished Goods Inventory',
-            debit=total_cogs,
-            credit=Decimal('0.00'),
-            remarks=f"COGS for #{invoice.invoice_number}"
-        )
-        GLEntry.objects.create(
-            company=comp,
-            unit=getattr(invoice, 'unit', None),
-            posting_date=invoice.posting_date,
-            account='Finished Goods Inventory',
-            party_type='Customer',
-            party=invoice.customer_name,
-            voucher_type='Sales Invoice',
-            voucher_no=invoice.invoice_number,
-            against='Cost of Goods Sold',
-            debit=Decimal('0.00'),
-            credit=total_cogs,
-            remarks=f"Inventory reduction #{invoice.invoice_number}"
-        )
+    if approved:
+        approve_and_post_sales_invoice(invoice)
 
 
 class CustomerListCreateAPIView(generics.ListCreateAPIView):
@@ -366,23 +231,22 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
         posting_date = parse_date_safe(data.get('posting_date'))
         due_date = parse_date_safe(data.get('due_date'))
-        net_total = Decimal(str(data.get('net_total', 0) or 0))
-        tax_rate = Decimal(str(data.get('tax_rate', 18) or 18))
-        tax_amount = Decimal(str(data.get('tax_amount', 0) or 0))
+        tax_rate = Decimal(str(data.get('tax_rate', 18) or 0))
         adjustment = Decimal(str(data.get('adjustment', 0) or 0))
-        grand_total = Decimal(str(data.get('grand_total', 0) or 0))
-        if grand_total == 0 and net_total > 0:
-            grand_total = net_total + tax_amount + adjustment
+        net_total, tax_amount, grand_total = invoice_totals(data.get('items', []), tax_rate, adjustment)
+        invoice_type = 'JOB_WORK' if str(data.get('invoice_type', 'SALES')).upper() == 'JOB_WORK' else 'SALES'
 
         user = _resolve_request_user(request)
 
-        if str(data.get('invoice_type', 'SALES')).upper() != 'JOB_WORK':
+        if invoice_type != 'JOB_WORK':
             validate_sales_invoice_stock(data.get('items', []), comp.id if comp else None)
 
         with transaction.atomic():
             invoice = SalesInvoice.objects.create(
                 company=comp,
                 unit=u_obj,
+                invoice_type=invoice_type,
+                party_challan_no=str(data.get('party_challan_no') or '')[:80],
                 customer=cust_obj,
                 customer_name=customer_name,
                 invoice_number=inv_no,
@@ -392,7 +256,7 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
                 net_total=net_total,
                 tax_amount=tax_amount,
                 adjustment=adjustment,
-            grand_total=grand_total,
+                grand_total=grand_total,
                 status='Draft',
                 created_by=user,
                 approved_by=None
@@ -467,17 +331,19 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
         with transaction.atomic():
             instance.posting_date = parse_date_safe(data.get('posting_date', instance.posting_date))
             instance.due_date = parse_date_safe(data.get('due_date', instance.due_date))
-            if 'net_total' in data:
-                instance.net_total = Decimal(str(data['net_total']))
             if 'tax_rate' in data:
-                instance.tax_rate = Decimal(str(data['tax_rate']))
-            if 'tax_amount' in data:
-                instance.tax_amount = Decimal(str(data['tax_amount']))
-            if 'grand_total' in data:
-                instance.grand_total = Decimal(str(data['grand_total']))
+                instance.tax_rate = Decimal(str(data['tax_rate'] or 0))
+            if 'adjustment' in data:
+                instance.adjustment = Decimal(str(data['adjustment'] or 0))
+            if 'invoice_type' in data:
+                instance.invoice_type = 'JOB_WORK' if str(data['invoice_type']).upper() == 'JOB_WORK' else 'SALES'
+            if 'party_challan_no' in data:
+                instance.party_challan_no = str(data['party_challan_no'] or '')[:80]
+            items_data = data.get('items', [])
+            if items_data:
+                instance.net_total, instance.tax_amount, instance.grand_total = invoice_totals(items_data, instance.tax_rate, instance.adjustment)
             instance.save()
 
-            items_data = data.get('items', [])
             if items_data:
                 sync_sales_to_inventory_and_gl(instance, items_data, comp)
 

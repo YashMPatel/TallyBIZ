@@ -228,14 +228,16 @@ def reverse_sales_invoice_on_delete(invoice):
     sl_qs = _scope_qs(StockLedgerEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=invoice.invoice_number), StockLedgerEntry, invoice)
     gl_qs = _scope_qs(GLEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=invoice.invoice_number), GLEntry, invoice)
 
-    was_approved = str(getattr(invoice, 'status', '')).strip().lower() == 'approved'
-    if was_approved or sl_qs.exists() or gl_qs.exists():
-        for line in _get_lines(invoice):
-            item_obj = Item.objects.select_for_update().filter(id=line.item_id).first()
+    if sl_qs.exists() or gl_qs.exists():
+        # Restore exactly what the ledger deducted (job work invoices deduct nothing).
+        for sle in sl_qs:
+            item_obj = Item.objects.select_for_update().filter(id=sle.item_id).first()
             if item_obj:
-                qty = Decimal(str(line.quantity or 0))
-                item_obj.current_stock = Decimal(str(item_obj.current_stock or 0)) + qty
+                item_obj.current_stock = Decimal(str(item_obj.current_stock or 0)) - Decimal(str(sle.actual_qty or 0))
                 item_obj.save(update_fields=['current_stock'])
+            if sle.batch_id and sle.actual_qty < 0:
+                StockBatch = apps.get_model('stock', 'StockBatch')
+                StockBatch.objects.filter(id=sle.batch_id).update(remaining_qty=models.F('remaining_qty') - sle.actual_qty)
 
         StockLedgerEntry.objects.filter(
             company=getattr(invoice, 'company', None),
