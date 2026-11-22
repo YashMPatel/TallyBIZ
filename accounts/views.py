@@ -362,9 +362,11 @@ class FinancialStatementsAPIView(APIView):
             ensure_default_units(company)
             for u in BusinessUnit.objects.filter(company=company, is_active=True).order_by('id'):
                 u_gl = base_gl_entries.filter(unit=u)
-                u_cn_deduct = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=base_sales_qs.filter(unit=u)).aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
-                u_goods_sales = (base_sales_qs.filter(unit=u).exclude(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - u_cn_deduct
-                u_job_work = base_sales_qs.filter(unit=u, invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_cn = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=base_sales_qs.filter(unit=u))
+                u_cn_jw = u_cn.filter(sales_invoice__invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_cn_goods = u_cn.exclude(sales_invoice__invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+                u_goods_sales = (base_sales_qs.filter(unit=u).exclude(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - u_cn_goods
+                u_job_work = (base_sales_qs.filter(unit=u, invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - u_cn_jw
                 u_ext_sales = u_goods_sales + u_job_work
                 u_inter_inc = u_gl.filter(account='Inter-Division Supply Income').aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
                 u_sales = u_ext_sales + u_inter_inc
