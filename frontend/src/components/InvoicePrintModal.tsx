@@ -122,6 +122,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
   const companyStateCode = branding.gstin ? branding.gstin.substring(0, 2) : '24';
   const isInterState = customer?.gstin && !customer.gstin.startsWith(companyStateCode);
+  // Rule 46: print the invoice's own rate, place of supply and reverse-charge status.
+  const taxRate = parseFloat(String((invoice as any).tax_rate ?? 18)) || 0;
+  const placeOfSupply = (customer?.gstin || '').trim().substring(0, 2) || companyStateCode;
 
   const customerGstCategory = customer?.gst_category
     ? customer.gst_category
@@ -302,6 +305,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
               <br />
               <strong>GSTIN / Tax ID:</strong> {customer?.gstin || 'Unregistered'} |{' '}
               <strong>Category:</strong> {customerGstCategory}
+              <br />
+              <strong>Place of Supply:</strong> State Code {placeOfSupply} |{' '}
+              <strong>Reverse Charge:</strong> No
+              {(invoice as any).party_challan_no ? (
+                <>
+                  {' '}| <strong>Party Challan No:</strong> {(invoice as any).party_challan_no}
+                </>
+              ) : null}
             </p>
           </div>
         <div
@@ -531,7 +542,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                       </tr>
                       {isInterState ? (
                         <tr>
-                          <td style={{ padding: '4px 0', color: '#475569' }}>IGST (18.00%):</td>
+                          <td style={{ padding: '4px 0', color: '#475569' }}>IGST ({taxRate.toFixed(2)}%):</td>
                           <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
                             {sym} {taxTotal.toFixed(2)}
                           </td>
@@ -539,13 +550,13 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                       ) : (
                         <>
                           <tr>
-                            <td style={{ padding: '4px 0', color: '#475569' }}>CGST (9.00%):</td>
+                            <td style={{ padding: '4px 0', color: '#475569' }}>CGST ({(taxRate / 2).toFixed(2)}%):</td>
                             <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
                               {sym} {halfTax.toFixed(2)}
                             </td>
                           </tr>
                           <tr>
-                            <td style={{ padding: '4px 0', color: '#475569' }}>SGST (9.00%):</td>
+                            <td style={{ padding: '4px 0', color: '#475569' }}>SGST ({(taxRate / 2).toFixed(2)}%):</td>
                             <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: '600' }}>
                               {sym} {halfTax.toFixed(2)}
                             </td>
@@ -554,7 +565,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                       )}
                       <tr>
                         <td style={{ padding: '4px 0', color: '#0369a1', fontWeight: 'bold' }}>
-                          Total Tax (18.00%):
+                          Total Tax ({taxRate.toFixed(2)}%):
                         </td>
                         <td style={{ padding: '4px 0', textAlign: 'right', color: '#0369a1', fontWeight: 'bold' }}>
                           {sym} {taxTotal.toFixed(2)}
