@@ -743,14 +743,14 @@ class GSTReturnSummaryAPIView(APIView):
             is_inter = igst > Decimal('0.00')
             for line in inv.items.all():
                 itm = line.item
-                hsn = (getattr(itm, 'hsn_code', '') or '').strip()
+                hsn = (line.hsn_code or getattr(itm, 'hsn_code', '') or '').strip()
                 if not hsn and line.description:
                     hm = _re.search(r'HSN[:\s-]*([A-Za-z0-9]+)', line.description, _re.I)
                     if hm:
                         hsn = hm.group(1)
                 if not hsn:
                     hsn = getattr(itm, 'item_code', 'N/A') or 'N/A'
-                rate_pct = Decimal(str(getattr(itm, 'gst_rate', None) or inv.tax_rate or 0))
+                rate_pct = Decimal(str(inv.tax_rate if inv.tax_rate is not None else (getattr(itm, 'gst_rate', None) or 0)))
                 line_val = Decimal(str(line.amount or 0))
                 line_qty = Decimal(str(line.quantity or 0))
                 line_tax = (line_val * rate_pct / Decimal('100.00')).quantize(Decimal('0.01'))
