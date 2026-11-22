@@ -581,7 +581,7 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             customer=cust_obj,
             customer_name=req_obj.customer_name or 'Customer',
             invoice_type='JOB_WORK' if is_jw else 'SALES',
-            party_challan_no=(snap.get('party_challan_no') or '').strip(),
+            party_challan_no=(snap.get('party_challan_no') or '').strip()[:80],
             invoice_number=inv_no,
             posting_date=p_date,
             due_date=due_date,
@@ -602,6 +602,7 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             discount_amount=Decimal('0.00'),
             is_foc=False,
             amount=net_total,
+            hsn_code='9988' if is_jw else (req_obj.finished_item.hsn_code or ''),
         )
 
         target_batch['invoiced'] = True
