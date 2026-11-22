@@ -620,6 +620,15 @@ function MainERPApp() {
         throw new Error(msg);
       }
 
+      try {
+        const savedItem = await res.json();
+        if (savedItem && savedItem.id) {
+          setItems(prev => {
+            const exists = prev.some(x => x.id === savedItem.id);
+            return exists ? prev.map(x => (x.id === savedItem.id ? savedItem : x)) : [...prev, savedItem];
+          });
+        }
+      } catch {}
       setShowItemModal(false);
       setEditingId(null);
       void loadData();
