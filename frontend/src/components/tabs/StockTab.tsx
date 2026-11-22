@@ -287,7 +287,7 @@ export const StockTab: FC<StockTabProps> = ({
             onClick={() => {
               setEditingId(null);
               setItemForm({
-                item_code: getNextItemCode(items, 'General'),
+                item_code: getNextItemCode(divisionItems.length > 0 ? divisionItems : items, 'General'),
                 item_name: '',
                 category: 'General',
                 unit: 'Nos',
