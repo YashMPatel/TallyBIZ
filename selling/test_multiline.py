@@ -39,13 +39,14 @@ class MultiLineInvoiceTests(APITestCase):
 
         inv = SalesInvoice.objects.get(invoice_number='INV-9001')
         self.assertEqual(inv.items.count(), 2, 'both lines must be created')
+        self.assertFalse(GLEntry.objects.filter(voucher_no='INV-9001').exists(), 'drafts post nothing (maker-checker)')
+        self.assertEqual(self.client.post(f'/api/selling/invoices/{inv.id}/approve/').status_code, 200)
         self.assertEqual(StockLedgerEntry.objects.filter(voucher_no='INV-9001').count(), 2)
-        self.assertEqual(GLEntry.objects.filter(voucher_no='INV-9001').count(), 4)  # Debtors, Sales, CGST, SGST
+        self.assertEqual(GLEntry.objects.filter(voucher_no='INV-9001').count(), 3)  # Debtors, Sales, Output GST
 
         # Edit: change quantities AND rates. The old frontend only ever sent
         # items[0], which silently dropped every other line on save.
         update = dict(payload)
-        update['status'] = 'Paid'
         update['items'] = [
             {'item': self.item_a.id, 'quantity': 5, 'rate': 110, 'amount': '550.00'},
             {'item': self.item_b.id, 'quantity': 3, 'rate': 60, 'amount': '180.00'},
@@ -58,7 +59,9 @@ class MultiLineInvoiceTests(APITestCase):
 
         inv.refresh_from_db()
         self.assertEqual(inv.items.count(), 2, 'no line may be dropped on edit')
-        self.assertEqual(inv.status, 'Paid', 'status must survive an edit')
+        self.assertEqual(inv.status, 'Approved', 'status must survive an edit')
+        self.assertEqual(str(inv.grand_total), '861.40', 'totals are recomputed server-side')
+        self.assertEqual(Item.objects.get(pk=self.item_a.id).current_stock, 495, 'edit re-deducts, not double-deducts')
         lines = sorted(inv.items.values_list('item_id', 'quantity', 'rate'), key=lambda t: t[0])
         self.assertEqual(lines[0][0], self.item_a.id)
         self.assertEqual(float(lines[0][1]), 5.0)
@@ -114,9 +117,10 @@ class MultiLineInvoiceTests(APITestCase):
         self.assertTrue(GLEntry.objects.filter(voucher_no='PAY-9001', account='Creditors').exists())
 
     def test_output_gst_is_not_zero(self):
-        GLEntry.objects.create(posting_date='2026-01-05', account='Output GST',
-                               voucher_type='Sales Invoice', voucher_no='INV-GST',
-                               credit=1000, debit=0)
+        SalesInvoice.objects.create(invoice_number='INV-GST', customer_name='x', posting_date='2026-01-05',
+                                    net_total=10000, tax_amount=1000, grand_total=11000, status='Approved')
+        SalesInvoice.objects.create(invoice_number='INV-DRAFT', customer_name='x', posting_date='2026-01-05',
+                                    net_total=500, tax_amount=90, grand_total=590, status='Draft')
         res = self.client.get('/api/accounts/financial-statements/')
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['gst']['output_liability'], 1000.0)
@@ -135,6 +139,7 @@ class MultiLineInvoiceTests(APITestCase):
 
         self.assertEqual(response.status_code, 201, response.content)
         invoice = SalesInvoice.objects.get(invoice_number='INV-5PCT')
+        self.client.post(f'/api/selling/invoices/{invoice.id}/approve/')
         self.assertEqual(invoice.tax_rate, 5)
         self.assertEqual(invoice.tax_amount, 5)
         self.assertEqual(invoice.grand_total, 105)
@@ -172,7 +177,7 @@ class MultiLineInvoiceTests(APITestCase):
             posting_date='2026-01-04',
         )
         SalesInvoiceItem.objects.create(
-            invoice=invoice, item=self.item_a, quantity=1, rate=20000
+            invoice=invoice, item=self.item_a, quantity=1, rate=20000, amount=20000
         )
         response = self.client.post('/api/selling/credit-notes/', {
             'credit_note_number': 'CN-9001',
@@ -238,7 +243,7 @@ class MultiLineInvoiceTests(APITestCase):
             posting_date='2026-01-04',
         )
         SalesInvoiceItem.objects.create(
-            invoice=invoice, item=self.item_a, quantity=10, rate=100
+            invoice=invoice, item=self.item_a, quantity=10, rate=100, amount=1000
         )
         base_payload = {
             'customer': self.customer.id,
