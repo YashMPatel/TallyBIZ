@@ -253,9 +253,13 @@ class FinancialStatementsAPIView(APIView):
             gl_entries = base_gl_entries
 
         # ponytail: returns are netted only when linked to an invoice; unlinked notes need a unit field
-        cn = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=sales_qs).aggregate(n=Sum('net_total'), t=Sum('tax_amount'))
+        cn_qs = CreditNote.objects.filter(status__iexact='Approved', sales_invoice__in=sales_qs)
+        cn = cn_qs.aggregate(n=Sum('net_total'), t=Sum('tax_amount'))
         dn = DebitNote.objects.filter(status__iexact='Approved', purchase_invoice__in=pur_qs).aggregate(n=Sum('net_total'), t=Sum('tax_amount'))
-        ext_sales = (sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (cn['n'] or Decimal('0.00'))
+        cn_jw = cn_qs.filter(sales_invoice__invoice_type='JOB_WORK').aggregate(n=Sum('net_total'))['n'] or Decimal('0.00')
+        job_work_income = (sales_qs.filter(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - cn_jw
+        regular_sales = (sales_qs.exclude(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - ((cn['n'] or Decimal('0.00')) - cn_jw)
+        ext_sales = regular_sales + job_work_income
         ext_purchases = (pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')) - (dn['n'] or Decimal('0.00'))
 
         # Inter-Division Supply Income & Cost (Shown in individual division, eliminated in Consolidated!)
@@ -416,7 +420,8 @@ class FinancialStatementsAPIView(APIView):
             "currency_symbol": symbol,
             "business_type": getattr(company, 'business_type', 'HYBRID') if company else 'HYBRID',
             "income": {
-                "sales": float(net_sales),
+                "sales": float(regular_sales + inter_inc),
+                "job_work": float(job_work_income),
                 "freight_adjustments": float(freight_adj),
                 "total_income": float(net_sales + freight_adj),
             },
@@ -523,7 +528,7 @@ class GeneralLedgerAPIView(APIView):
         for row in entries:
             net_change = row.debit - row.credit
             if is_filtered:
-                if row.account in ['Creditors', 'Output GST', 'Sales Income']:
+                if row.account in ['Creditors', 'Output GST', 'Sales Income', 'Job Work Income']:
                     running_balance += (row.credit - row.debit)
                 else:
                     running_balance += (row.debit - row.credit)

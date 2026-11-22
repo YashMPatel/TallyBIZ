@@ -628,17 +628,26 @@ export const SellingTab: FC<SellingTabProps> = ({
                         <button
                           onClick={() => {
                             setEditingId(inv.id ?? null);
-                            const lines = inv.items && inv.items.length > 0 ? inv.items.map(lineFromItem) : [newLine()];
+                            const invType = (inv as any).invoice_type || 'SALES';
+                            const lines = inv.items && inv.items.length > 0
+                              ? inv.items.map((it: any) => ({
+                                  ...lineFromItem(it),
+                                  hsn_code: it.hsn_code || (invType === 'JOB_WORK' ? '9988' : ''),
+                                }))
+                              : [newLine()];
                             const inferredTax = inferTaxRate(inv.net_total, inv.tax_amount);
                             setInvoiceForm({
+                              invoice_type: invType,
+                              party_challan_no: (inv as any).party_challan_no || '',
                               invoice_number: inv.invoice_number,
                               customer_id: String(inv.customer || ''),
                               posting_date: inv.posting_date,
                               due_date: inv.due_date || new Date(new Date(inv.posting_date).getTime() + 30 * 86400000).toISOString().split('T')[0],
                               tax_rate: inferredTax,
+                              adjustment: String((inv as any).adjustment ?? '0'),
                               status: inv.status,
                               lines,
-                            });
+                            } as any);
                             setShowInvoiceModal(true);
                           }}
                           style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}

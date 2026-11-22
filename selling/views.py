@@ -342,6 +342,11 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
         with transaction.atomic():
+            if 'customer' in data and data['customer']:
+                cust = Customer.objects.filter(id=int(data['customer']), company=comp).first()
+                if cust:
+                    instance.customer = cust
+                    instance.customer_name = cust.customer_name
             instance.posting_date = parse_date_safe(data.get('posting_date', instance.posting_date))
             instance.due_date = parse_date_safe(data.get('due_date', instance.due_date))
             if 'tax_rate' in data:
@@ -353,6 +358,7 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
             if 'party_challan_no' in data:
                 instance.party_challan_no = str(data['party_challan_no'] or '')[:80]
             # Header-only edits still recompute and re-post, so totals and GL never drift from the lines.
+            # Stock is checked by the approval path after the old deduction is reversed.
             items_data = data.get('items') or [
                 {'item': l.item_id, 'quantity': l.quantity, 'rate': l.rate, 'discount_percentage': l.discount_percentage,
                  'is_foc': l.is_foc, 'hsn_code': l.hsn_code, 'description': l.description}
