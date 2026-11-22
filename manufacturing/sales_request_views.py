@@ -413,19 +413,14 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
 
         import re
-        max_dsp = 0
-        for vno_str in StockLedgerEntry.objects.filter(company=comp, voucher_no__startswith='DSP-').values_list('voucher_no', flat=True).distinct():
-            m = re.search(r'(\d+)$', str(vno_str))
-            if m:
-                max_dsp = max(max_dsp, int(m.group(1)))
+        used = set(StockLedgerEntry.objects.filter(company=comp, voucher_type='Stock Transfer').values_list('voucher_no', flat=True))
         for psr in ProductionSalesRequest.objects.filter(company=comp):
-            psnap = psr.mrp_snapshot or {}
-            for b_item in (psnap.get('delivery_schedule') or []):
-                m = re.search(r'(\d+)$', str(b_item.get('dispatch_no') or ''))
-                if m:
-                    max_dsp = max(max_dsp, int(m.group(1)))
-        custom_challan = (request.data.get('challan_no') or target_batch.get('challan_no') or '').strip()
-        disp_vno = custom_challan if custom_challan else f"DSP-{max_dsp + 1:04d}"
+            used.update(str(b.get('dispatch_no') or '') for b in ((psr.mrp_snapshot or {}).get('delivery_schedule') or []))
+        max_dsp = max([int(m.group(1)) for v in used if (m := re.match(r'^DSP-(\d+)$', v))] or [0])
+        custom_challan = (request.data.get('challan_no') or target_batch.get('challan_no') or '').strip()[:40]
+        if custom_challan and custom_challan.upper() in {u.upper() for u in used}:
+            return Response({'error': f'Challan No {custom_challan} is already used. Enter a different number or leave blank for auto.'}, status=status.HTTP_400_BAD_REQUEST)
+        disp_vno = custom_challan or f"DSP-{max_dsp + 1:04d}"
 
         is_job_work = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         raw_info = snap.get('raw_material') or {}
@@ -511,22 +506,7 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         if existing_inv_no or existing_inv_id:
             target_batch['invoiced'] = True
             target_batch['invoice_no'] = existing_inv_no
-            inv_obj = SalesInvoice.objects.filter(company=comp, id=existing_inv_id).first() if existing_inv_id else SalesInvoice.objects.filter(company=comp, invoice_number=existing_inv_no).first()
-            if inv_obj:
-                cur_ch = (inv_obj.party_challan_no or '').strip()
-                parts_ch = [x.strip() for x in cur_ch.split(',') if x.strip()]
-                if disp_vno not in parts_ch:
-                    parts_ch.append(disp_vno)
-                    inv_obj.party_challan_no = ', '.join(parts_ch)
-                    inv_obj.save(update_fields=['party_challan_no'])
-                first_it = inv_obj.items.first()
-                if first_it:
-                    v_part = f" | Vehicle: {vehicle_input}" if vehicle_input else ""
-                    n_part = f" | {disp_note_input}" if disp_note_input else ""
-                    disp_tag = f"\nDispatch Challan: {disp_vno} | Date: {disp_date} | Qty: {disp_qty}{v_part}{n_part}"
-                    if disp_vno not in (first_it.description or ''):
-                        first_it.description = ((first_it.description or '') + disp_tag).strip()
-                        first_it.save(update_fields=['description'])
+            # Rule 55(5): each lot's challan references the invoice; the issued invoice itself is never edited.
 
         snap['delivery_schedule'] = schedule
         req_obj.mrp_snapshot = snap
