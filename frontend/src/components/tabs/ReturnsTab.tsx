@@ -178,6 +178,8 @@ function getReferenceInvoice(
   return invoice && number ? { number, date: invoice.posting_date } : undefined;
 }
 
+const PERSONAL_ACCOUNT_RE = /^(Debtors|Creditors|Partner Capital|Loan Payable|Inter-Division (Receivable|Payable))/;
+
 interface ReturnsTabProps {
   glEntries?: any[];
   onOpenGeneralLedger?: (partyOrAcc: string, fromDate?: string, toDate?: string) => void;
@@ -581,7 +583,8 @@ export default function ReturnsTab({ glEntries = [], onOpenGeneralLedger }: Retu
         const q = ledgerSearch.trim().toLowerCase();
         const filteredGL = glEntries.filter((g: any) => {
           if (ledgerEntityFilter !== 'all') {
-            const matchParty = String(g.party || '') === ledgerEntityFilter;
+            // GL tags the party on income/GST/purchase rows too; only personal accounts carry the outstanding.
+            const matchParty = String(g.party || '') === ledgerEntityFilter && PERSONAL_ACCOUNT_RE.test(String(g.account || ''));
             const matchAcc = String(g.account || '') === ledgerEntityFilter;
             if (!matchParty && !matchAcc) return false;
           }
@@ -594,6 +597,7 @@ export default function ReturnsTab({ glEntries = [], onOpenGeneralLedger }: Retu
           return true;
         });
 
+        filteredGL.sort((a: any, b: any) => String(a.posting_date).localeCompare(String(b.posting_date)) || (a.id - b.id));
         let running = 0;
         let sumDr = 0;
         let sumCr = 0;
