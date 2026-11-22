@@ -66,6 +66,12 @@ export const ReportsTab: FC<ReportsTabProps> = ({
                 </span>
                 <strong>{symbol} {(finance?.income?.sales ?? 0).toFixed(2)}</strong>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '14px' }}>
+                <span onClick={() => onDrillDown('Job Work Income')} style={{ color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                  Job Work Income (SAC 9988)
+                </span>
+                <strong>{symbol} {((finance?.income as any)?.job_work ?? 0).toFixed(2)}</strong>
+              </div>
             </div>
 
             <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>

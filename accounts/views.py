@@ -251,7 +251,9 @@ class FinancialStatementsAPIView(APIView):
             pur_qs = base_pur_qs
             gl_entries = base_gl_entries
 
-        ext_sales = sales_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        regular_sales = sales_qs.exclude(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        job_work_income = sales_qs.filter(invoice_type='JOB_WORK').aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
+        ext_sales = regular_sales + job_work_income
         ext_purchases = pur_qs.aggregate(s=Sum('net_total'))['s'] or Decimal('0.00')
 
         # Inter-Division Supply Income & Cost (Shown in individual division, eliminated in Consolidated!)
@@ -416,7 +418,8 @@ class FinancialStatementsAPIView(APIView):
             "currency_symbol": symbol,
             "business_type": getattr(company, 'business_type', 'HYBRID') if company else 'HYBRID',
             "income": {
-                "sales": float(net_sales),
+                "sales": float(regular_sales + inter_inc),
+                "job_work": float(job_work_income),
                 "freight_adjustments": float(freight_adj),
                 "total_income": float(net_sales + freight_adj),
             },
@@ -523,7 +526,7 @@ class GeneralLedgerAPIView(APIView):
         for row in entries:
             net_change = row.debit - row.credit
             if is_filtered:
-                if row.account in ['Creditors', 'Output GST', 'Sales Income']:
+                if row.account in ['Creditors', 'Output GST', 'Sales Income', 'Job Work Income']:
                     running_balance += (row.credit - row.debit)
                 else:
                     running_balance += (row.debit - row.credit)

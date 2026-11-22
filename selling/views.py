@@ -464,22 +464,65 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
         instance = self.get_object()
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
+        inv_type = str(data.get('invoice_type', getattr(instance, 'invoice_type', 'SALES'))).upper()
+        items_data = data.get('items', [])
+        if items_data and inv_type != 'JOB_WORK':
+            validate_sales_invoice_stock(items_data, comp.id if comp else getattr(instance, 'company_id', None))
+
         with transaction.atomic():
+            if 'invoice_type' in data and hasattr(instance, 'invoice_type'):
+                instance.invoice_type = inv_type
+            if 'party_challan_no' in data and hasattr(instance, 'party_challan_no'):
+                instance.party_challan_no = data.get('party_challan_no') or ''
+            if 'customer' in data and data['customer']:
+                cust = Customer.objects.filter(id=int(data['customer'])).first()
+                if cust:
+                    instance.customer = cust
+                    instance.customer_name = cust.customer_name
             instance.posting_date = parse_date_safe(data.get('posting_date', instance.posting_date))
             instance.due_date = parse_date_safe(data.get('due_date', instance.due_date))
             if 'net_total' in data:
                 instance.net_total = Decimal(str(data['net_total']))
-            if 'tax_rate' in data:
+            if 'tax_rate' in data and hasattr(instance, 'tax_rate'):
                 instance.tax_rate = Decimal(str(data['tax_rate']))
             if 'tax_amount' in data:
                 instance.tax_amount = Decimal(str(data['tax_amount']))
+            if 'adjustment' in data and hasattr(instance, 'adjustment'):
+                instance.adjustment = Decimal(str(data['adjustment'] or 0))
             if 'grand_total' in data:
                 instance.grand_total = Decimal(str(data['grand_total']))
             instance.save()
 
-            items_data = data.get('items', [])
             if items_data:
-                sync_sales_to_inventory_and_gl(instance, items_data, comp)
+                instance.items.all().delete()
+                for row in items_data:
+                    item_id = row.get('item')
+                    item_obj = Item.objects.filter(id=int(item_id)).first() if item_id else None
+                    if not item_obj:
+                        continue
+                    qty = Decimal(str(row.get('quantity') or 0))
+                    rate = Decimal(str(row.get('rate') or 0))
+                    disc_pct = Decimal(str(row.get('discount_percentage') or 0))
+                    is_foc = bool(row.get('is_foc', False))
+                    base = Decimal('0.00') if is_foc else (qty * rate)
+                    disc_amt = (base * disc_pct / Decimal('100')).quantize(Decimal('0.01'))
+                    amt = max(Decimal('0.00'), base - disc_amt).quantize(Decimal('0.01'))
+                    hsn_val = row.get('hsn_code') or ('9988' if inv_type == 'JOB_WORK' else getattr(item_obj, 'hsn_code', ''))
+                    SalesInvoiceItem.objects.create(
+                        invoice=instance,
+                        item=item_obj,
+                        hsn_code=hsn_val,
+                        quantity=qty,
+                        rate=Decimal('0.00') if is_foc else rate,
+                        discount_percentage=disc_pct,
+                        discount_amount=disc_amt,
+                        is_foc=is_foc,
+                        amount=amt,
+                    )
+
+            if str(getattr(instance, 'status', '')).strip().lower() == 'approved':
+                reverse_sales_invoice_on_delete(instance)
+                approve_and_post_sales_invoice(instance)
 
         serializer = self.get_serializer(instance)
         return Response(serializer.data, status=status.HTTP_200_OK)
