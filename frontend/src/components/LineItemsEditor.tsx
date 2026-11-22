@@ -95,8 +95,14 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     ))}
                   </select>
                 </td>
-                <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}>
-                  {(selectedItem as any)?.hsn_code || '-'}
+                <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="HSN/SAC"
+                    value={(line as any).hsn_code !== undefined ? (line as any).hsn_code : ((selectedItem as any)?.hsn_code || '')}
+                    onChange={(e) => handleLineChange(idx, 'hsn_code' as any, e.target.value)}
+                    style={{ width: '74px', padding: '5px', borderRadius: '4px', border: '1px solid #cbd5e1', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}
+                  />
                 </td>
                 <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: '12px', color: '#475569' }}>
                   {selectedItem?.unit || '-'}

@@ -382,7 +382,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                               {masterItem ? masterItem.item_name : `Item #${itemRow.item}`}
                             </strong>
                             <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
-                              Code: {masterItem?.item_code || '-'} | HSN: {(masterItem as any)?.hsn_code || '-'} | Unit:{' '}
+                              Code: {masterItem?.item_code || '-'} | {(invoice as any).invoice_type === 'JOB_WORK' ? 'SAC' : 'HSN'}: {(itemRow as any).hsn_code || ((invoice as any).invoice_type === 'JOB_WORK' ? '9988' : (masterItem as any)?.hsn_code || '-')} | Unit:{' '}
                               {masterItem?.unit || 'Nos'}
                             </div>
                           </td>

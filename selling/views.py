@@ -128,7 +128,8 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                 is_foc=is_foc
             )
 
-            if str(getattr(invoice, 'status', '')).strip().lower() == 'approved':
+            is_job_work_inv = (str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK')
+            if str(getattr(invoice, 'status', '')).strip().lower() == 'approved' and not is_job_work_inv:
                 rem_to_deduct = qty
                 req_batch_id = it.get('batch_id') or it.get('batch')
                 batch_qs = StockBatch.objects.filter(company=comp, item=item_obj, remaining_qty__gt=0).order_by('received_date', 'id')
@@ -154,6 +155,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
                         unit=getattr(invoice, 'unit', None),
                         posting_date=invoice.posting_date,
                         item=item_obj,
+                    hsn_code=(row.get('hsn_code') or ('9988' if str(data.get('invoice_type', '')).upper() == 'JOB_WORK' else getattr(item_obj, 'hsn_code', ''))),
                         voucher_type='Sales Invoice',
                         voucher_no=invoice.invoice_number,
                         actual_qty=-take,
@@ -208,7 +210,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
         company=comp,
         unit=getattr(invoice, 'unit', None),
         posting_date=invoice.posting_date,
-        account='Sales Income',
+        account=('Job Work Income' if str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK' else 'Sales Income'),
         party_type='Customer',
         party=invoice.customer_name,
         voucher_type='Sales Invoice',
@@ -216,7 +218,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
         against='Debtors',
         debit=Decimal('0.00'),
         credit=invoice.net_total,
-        remarks=f"Sales Income #{invoice.invoice_number}"
+        remarks=f"{'Job Work Labour' if str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK' else 'Sales Income'} #{invoice.invoice_number}"
     )
     if invoice.tax_amount > Decimal('0.00'):
         GLEntry.objects.create(
@@ -318,7 +320,8 @@ class CreditNoteRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIVi
 class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
-        validate_sales_invoice_stock(self.request.data.get('items', []), self.request.data.get('company'))
+        if str(self.request.data.get('invoice_type', 'SALES')).upper() != 'JOB_WORK':
+            validate_sales_invoice_stock(self.request.data.get('items', []), self.request.data.get('company'))
         serializer.save(status='Draft')
 
     serializer_class = SalesInvoiceSerializer
@@ -373,7 +376,8 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
         user = _resolve_request_user(request)
 
-        validate_sales_invoice_stock(data.get('items', []), comp.id if comp else None)
+        if str(data.get('invoice_type', 'SALES')).upper() != 'JOB_WORK':
+            validate_sales_invoice_stock(data.get('items', []), comp.id if comp else None)
 
         with transaction.atomic():
             invoice = SalesInvoice.objects.create(

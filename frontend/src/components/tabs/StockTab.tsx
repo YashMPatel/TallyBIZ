@@ -45,6 +45,7 @@ export const StockTab: FC<StockTabProps> = ({
   const [newBatchQty, setNewBatchQty] = useState('');
   const [newBatchRate, setNewBatchRate] = useState('');
   const [newBatchSupplier, setNewBatchSupplier] = useState('');
+  const [newBatchJobWork, setNewBatchJobWork] = useState(false);
   const [batchSaving, setBatchSaving] = useState(false);
   const [batchErr, setBatchErr] = useState<string | null>(null);
 
@@ -224,8 +225,9 @@ export const StockTab: FC<StockTabProps> = ({
           item_id: batchModalItem.id,
           batch_no: newBatchNo.trim(),
           initial_qty: newBatchQty,
-          purchase_rate: newBatchRate || batchModalItem.standard_rate || 0,
-          party_name: newBatchSupplier.trim() || 'Direct Lot Inward',
+          purchase_rate: newBatchJobWork ? 0 : (newBatchRate || batchModalItem.standard_rate || 0),
+          source_type: newBatchJobWork ? 'Job Work Inward' : 'Manual Batch Inward',
+          party_name: newBatchSupplier.trim() || (newBatchJobWork ? 'Job Work Party' : 'Direct Lot Inward'),
         }),
       });
       const data = await res.json();
@@ -710,6 +712,20 @@ export const StockTab: FC<StockTabProps> = ({
                 + Add New Inward Batch / Lot Manually
               </div>
               {batchErr && <div style={{ color: '#b91c1c', fontSize: '12px', marginBottom: '8px' }}>{batchErr}</div>}
+              <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px', background: '#fef3c7', padding: '6px 10px', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                <input
+                  id="jw-batch-chk"
+                  type="checkbox"
+                  checked={newBatchJobWork}
+                  onChange={(e) => {
+                    setNewBatchJobWork(e.target.checked);
+                    if (e.target.checked) setNewBatchRate('0');
+                  }}
+                />
+                <label htmlFor="jw-batch-chk" style={{ fontSize: '12px', fontWeight: 700, color: '#92400e', cursor: 'pointer' }}>
+                  Party Job Work Material (₹0 Valuation — Customer-Owned Stock, No Asset/Purchase Impact)
+                </label>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.3fr auto', gap: '8px', alignItems: 'end' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>Batch / Lot # (Optional)</label>

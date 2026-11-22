@@ -95,8 +95,10 @@ def approve_and_post_sales_invoice(invoice):
     StockLedgerEntry = apps.get_model('stock', 'StockLedgerEntry')
     GLEntry = apps.get_model('accounts', 'GLEntry')
 
+    is_job_work = (str(getattr(invoice, 'invoice_type', 'SALES')).upper() == 'JOB_WORK')
     lines = _get_lines(invoice)
-    validate_sales_invoice_stock(lines, getattr(invoice, 'company_id', None))
+    if not is_job_work:
+        validate_sales_invoice_stock(lines, getattr(invoice, 'company_id', None))
 
     existing_gl = _scope_qs(GLEntry.objects.filter(voucher_type='Sales Invoice', voucher_no=invoice.invoice_number), GLEntry, invoice)
     if existing_gl.exists():
@@ -122,7 +124,7 @@ def approve_and_post_sales_invoice(invoice):
     inter_div_supply_total = Decimal('0.00')
     mfg_donor_unit = None
 
-    for line_idx, line in enumerate(lines, start=1):
+    for line_idx, line in enumerate(lines if not is_job_work else [], start=1):
         item_obj = Item.objects.select_for_update().get(id=line.item_id)
         qty = Decimal(str(line.quantity or 0))
         curr_total = Decimal(str(item_obj.current_stock or 0))
@@ -195,7 +197,8 @@ def approve_and_post_sales_invoice(invoice):
     if grand_total > 0:
         _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Debtors', against='Sales Income, Output GST', party_type='Customer', party=party_name, debit=grand_total, credit=Decimal('0.00'), remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if net_total > 0:
-        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Sales Income', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=net_total, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
+        inc_acc = 'Job Work Income' if is_job_work else 'Sales Income'
+        _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account=inc_acc, against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=net_total, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if tax_amount > 0:
         _safe_create(GLEntry, posting_date=p_date, voucher_type='Sales Invoice', voucher_no=invoice.invoice_number, account='Output GST', against=party_name or 'Debtors', party_type='Customer', party=party_name, debit=Decimal('0.00'), credit=tax_amount, remarks=rem, company=comp, unit=getattr(invoice, 'unit', None))
     if adjustment != 0:

@@ -639,7 +639,7 @@ function MainERPApp() {
       const netAmount = Math.max(0, base - discAmt);
 
       return {
-        item: parseInt(l.item_id, 10),
+        item: parseInt(l.item_id, 10), ...((l as any).hsn_code ? { hsn_code: (l as any).hsn_code } : {}),
         quantity,
         rate,
         discount_percentage: discPct,
@@ -697,6 +697,8 @@ function MainERPApp() {
     const grand = net + tax + adj;
 
     const payload = {
+      invoice_type: (invoiceForm as any).invoice_type || 'SALES',
+      party_challan_no: (invoiceForm as any).party_challan_no || '',
       invoice_number: invoiceForm.invoice_number,
       customer: parseInt(invoiceForm.customer_id, 10),
       customer_name: customerName,
@@ -1919,6 +1921,37 @@ function MainERPApp() {
               <button onClick={() => setShowInvoiceModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <form onSubmit={handleSaveInvoice} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '10px', background: ((invoiceForm as any).invoice_type === 'JOB_WORK') ? '#fef3c7' : '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ flex: 1.4 }}>
+                  <label style={{ fontSize: '12px', fontWeight: '700', color: '#334155' }}>Invoice Type</label>
+                  <select
+                    style={fieldStyle}
+                    value={(invoiceForm as any).invoice_type || 'SALES'}
+                    onChange={e => {
+                      const val = e.target.value;
+                      const updatedLines = invoiceForm.lines.map((ln: any) => ({
+                        ...ln,
+                        hsn_code: val === 'JOB_WORK' ? (ln.hsn_code || '9988') : ''
+                      }));
+                      setInvoiceForm({ ...invoiceForm, invoice_type: val, lines: updatedLines } as any);
+                    }}
+                  >
+                    <option value="SALES">Regular Sales Invoice (Goods — Deducts Stock &amp; COGS)</option>
+                    <option value="JOB_WORK">Job Work Invoice (Labour Charges — SAC 9988, No Stock Deduction)</option>
+                  </select>
+                </div>
+                {((invoiceForm as any).invoice_type === 'JOB_WORK') && (
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', color: '#92400e' }}>Party Challan / Job Ref #</label>
+                    <input
+                      placeholder="e.g. CH-101 / MFG-0005"
+                      style={fieldStyle}
+                      value={(invoiceForm as any).party_challan_no || ''}
+                      onChange={e => setInvoiceForm({ ...invoiceForm, party_challan_no: e.target.value } as any)}
+                    />
+                  </div>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Invoice #</label><input required disabled={!!editingId} style={{ ...fieldStyle, background: editingId ? '#f1f5f9' : '#fff' }} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></div>
                 <div style={{ flex: 1 }}><label style={{ fontSize: '12px', fontWeight: '600' }}>Date</label><input type="date" required style={fieldStyle} value={invoiceForm.posting_date} onChange={e => setInvoiceForm({ ...invoiceForm, posting_date: e.target.value })} /></div>

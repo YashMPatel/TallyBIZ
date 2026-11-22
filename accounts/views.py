@@ -326,7 +326,7 @@ class FinancialStatementsAPIView(APIView):
         freight_adj = adj_cr - adj_dr
 
         excluded_accs = {
-            'Sales Income', 'Cost of Goods Sold', 'Purchases',
+            'Sales Income', 'Job Work Income', 'Cost of Goods Sold', 'Purchases',
             'Debtors', 'Debtors (Customer Receivables)',
             'Creditors', 'Creditors (Supplier Payables)',
             'Bank Account', 'Cash Account', 'Output GST', 'Input GST',
@@ -338,7 +338,7 @@ class FinancialStatementsAPIView(APIView):
         }
         other_exp_qs = (
             gl_entries.exclude(account__in=excluded_accs)
-            .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
+            .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|job work income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
             .values('account')
             .annotate(dr=Sum('debit'), cr=Sum('credit'))
         )
@@ -385,7 +385,7 @@ class FinancialStatementsAPIView(APIView):
                 u_adj = (u_adj_qs.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (u_adj_qs.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
                 u_exp_qs = (
                     u_gl.exclude(account__in=excluded_accs)
-                    .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
+                    .exclude(account__regex=r'(?i)^(bank|cash|debtors|creditors|output gst|input gst|sales income|job work income|cost of goods|inter-division|partner capital|loan payable|fixed asset|unit petty cash)')
                     .values('account')
                     .annotate(dr=Sum('debit'), cr=Sum('credit'))
                 )

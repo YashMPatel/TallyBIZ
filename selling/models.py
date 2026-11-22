@@ -36,6 +36,9 @@ class SalesInvoice(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='sales_invoices')
     unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_invoices')
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True, related_name='invoices')
+    INVOICE_TYPE_CHOICES = [('SALES', 'Sales Invoice'), ('JOB_WORK', 'Job Work Invoice')]
+    invoice_type = models.CharField(max_length=20, choices=INVOICE_TYPE_CHOICES, default='SALES')
+    party_challan_no = models.CharField(max_length=80, blank=True, default='')
     invoice_number = models.CharField(max_length=50)
     customer_name = models.CharField(max_length=150)
     posting_date = models.DateField()
@@ -58,6 +61,7 @@ class SalesInvoice(models.Model):
 class SalesInvoiceItem(models.Model):
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.CASCADE, related_name='items')
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    hsn_code = models.CharField(max_length=20, blank=True, default='')
     description = models.CharField(max_length=255, blank=True, null=True)
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
     rate = models.DecimalField(max_digits=12, decimal_places=2)

@@ -157,6 +157,9 @@ def _serialize_order(order, include_vouchers=True):
         'total_raw_cost': float(order.total_raw_cost),
         'net_production_cost': float(order.net_production_cost),
         'unit_cost': float(order.unit_cost),
+        'order_type': getattr(order, 'order_type', 'OWN'),
+        'party_name': getattr(order, 'party_name', ''),
+        'party_challan_no': getattr(order, 'party_challan_no', ''),
         'status': order.status,
         'remarks': order.remarks,
         'created_by': order.created_by,
@@ -210,38 +213,69 @@ def _post_production(order, approver):
             valuation_rate=sc_rate,
         )
     fg = Item.objects.get(pk=order.finished_item_id)
-    old_stock = Decimal(fg.current_stock or 0)
-    old_rate = Decimal(fg.standard_rate or 0)
-    new_qty = old_stock + Decimal(order.actual_qty)
-    if new_qty > 0 and Decimal(order.net_production_cost) > 0:
-        old_val = max(Decimal('0.00'), old_stock) * old_rate
-        fg.standard_rate = ((old_val + Decimal(order.net_production_cost)) / new_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    fg.current_stock = new_qty
-    fg.save(update_fields=['current_stock', 'standard_rate'])
-    StockLedgerEntry.objects.create(
-        company=order.company,
-        unit=getattr(order, 'unit', None),
-        posting_date=order.posting_date,
-        item=fg,
-        voucher_type='Manufacturing Output',
-        voucher_no=order.voucher_no,
-        actual_qty=Decimal(order.actual_qty),
-        qty_after_transaction=fg.current_stock,
-        valuation_rate=order.unit_cost,
-    )
-    raw_net = Decimal(order.total_raw_cost) - Decimal(order.scrap_value)
-    if raw_net > 0:
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=raw_net, credit=Decimal('0.00'), remarks=f'Production {order.voucher_no} - {fg.item_name}')
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=raw_net, remarks=f'Raw Material Consumed - {order.voucher_no}')
-    if Decimal(order.scrap_value) > 0:
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Scrap Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=order.scrap_value, credit=Decimal('0.00'), remarks=f'Scrap Recovered - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Scrap Inventory', debit=Decimal('0.00'), credit=order.scrap_value, remarks=f'Scrap Credit - {order.voucher_no}')
-    if Decimal(order.labor_cost) > 0:
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Direct Labour Payable', debit=order.labor_cost, credit=Decimal('0.00'), remarks=f'Direct Labour - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Direct Labour Payable', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.labor_cost, remarks=f'Direct Labour - {order.voucher_no}')
-    if Decimal(order.overhead_cost) > 0:
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Manufacturing Overheads', debit=order.overhead_cost, credit=Decimal('0.00'), remarks=f'Factory Overheads - {order.voucher_no}')
-        GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Manufacturing Overheads', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.overhead_cost, remarks=f'Factory Overheads - {order.voucher_no}')
+    is_job_work = (str(getattr(order, 'order_type', 'OWN')).upper() == 'JOB_WORK')
+    if is_job_work:
+        StockLedgerEntry.objects.create(
+            company=order.company,
+            unit=getattr(order, 'unit', None),
+            posting_date=order.posting_date,
+            item=fg,
+            voucher_type='Job Work Output',
+            voucher_no=order.voucher_no,
+            actual_qty=Decimal(order.actual_qty),
+            qty_after_transaction=Decimal(fg.current_stock or 0) + Decimal(order.actual_qty),
+            valuation_rate=Decimal('0.00'),
+        )
+        StockLedgerEntry.objects.create(
+            company=order.company,
+            unit=getattr(order, 'unit', None),
+            posting_date=order.posting_date,
+            item=fg,
+            voucher_type='Job Work Dispatch',
+            voucher_no=order.voucher_no,
+            actual_qty=-Decimal(order.actual_qty),
+            qty_after_transaction=Decimal(fg.current_stock or 0),
+            valuation_rate=Decimal('0.00'),
+        )
+        if Decimal(order.labor_cost) > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Job Work Direct Expense', party_type='Customer', party=order.party_name, voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Direct Labour Payable', debit=order.labor_cost, credit=Decimal('0.00'), remarks=f'Job Work Labour ({order.party_name}) - {order.voucher_no}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Direct Labour Payable', party_type='Customer', party=order.party_name, voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Job Work Direct Expense', debit=Decimal('0.00'), credit=order.labor_cost, remarks=f'Job Work Labour - {order.voucher_no}')
+        if Decimal(order.overhead_cost) > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Job Work Direct Expense', party_type='Customer', party=order.party_name, voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Manufacturing Overheads', debit=order.overhead_cost, credit=Decimal('0.00'), remarks=f'Job Work Overheads ({order.party_name}) - {order.voucher_no}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Manufacturing Overheads', party_type='Customer', party=order.party_name, voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Job Work Direct Expense', debit=Decimal('0.00'), credit=order.overhead_cost, remarks=f'Job Work Overheads - {order.voucher_no}')
+    else:
+        old_stock = Decimal(fg.current_stock or 0)
+        old_rate = Decimal(fg.standard_rate or 0)
+        new_qty = old_stock + Decimal(order.actual_qty)
+        if new_qty > 0 and Decimal(order.net_production_cost) > 0:
+            old_val = max(Decimal('0.00'), old_stock) * old_rate
+            fg.standard_rate = ((old_val + Decimal(order.net_production_cost)) / new_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        fg.current_stock = new_qty
+        fg.save(update_fields=['current_stock', 'standard_rate'])
+        StockLedgerEntry.objects.create(
+            company=order.company,
+            unit=getattr(order, 'unit', None),
+            posting_date=order.posting_date,
+            item=fg,
+            voucher_type='Manufacturing Output',
+            voucher_no=order.voucher_no,
+            actual_qty=Decimal(order.actual_qty),
+            qty_after_transaction=fg.current_stock,
+            valuation_rate=order.unit_cost,
+        )
+        raw_net = Decimal(order.total_raw_cost) - Decimal(order.scrap_value)
+        if raw_net > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=raw_net, credit=Decimal('0.00'), remarks=f'Production {order.voucher_no} - {fg.item_name}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=raw_net, remarks=f'Raw Material Consumed - {order.voucher_no}')
+        if Decimal(order.scrap_value) > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Scrap Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Raw Material Inventory', debit=order.scrap_value, credit=Decimal('0.00'), remarks=f'Scrap Recovered - {order.voucher_no}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Raw Material Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Scrap Inventory', debit=Decimal('0.00'), credit=order.scrap_value, remarks=f'Scrap Credit - {order.voucher_no}')
+        if Decimal(order.labor_cost) > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Direct Labour Payable', debit=order.labor_cost, credit=Decimal('0.00'), remarks=f'Direct Labour - {order.voucher_no}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Direct Labour Payable', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.labor_cost, remarks=f'Direct Labour - {order.voucher_no}')
+        if Decimal(order.overhead_cost) > 0:
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Finished Goods Inventory', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Manufacturing Overheads', debit=order.overhead_cost, credit=Decimal('0.00'), remarks=f'Factory Overheads - {order.voucher_no}')
+            GLEntry.objects.create(company=order.company, unit=getattr(order, 'unit', None), posting_date=order.posting_date, account='Manufacturing Overheads', voucher_type='Manufacturing', voucher_no=order.voucher_no, against='Finished Goods Inventory', debit=Decimal('0.00'), credit=order.overhead_cost, remarks=f'Factory Overheads - {order.voucher_no}')
     order.status = 'APPROVED'
     order.approved_by = approver
     order.save(update_fields=['status', 'approved_by'])
@@ -258,9 +292,11 @@ def _reverse_production(order):
         sc.current_stock = max(Decimal('0.00'), Decimal(sc.current_stock or 0) - Decimal(order.scrap_qty))
         sc.save(update_fields=['current_stock'])
     fg = Item.objects.get(pk=order.finished_item_id)
-    fg.current_stock = max(Decimal('0.00'), Decimal(fg.current_stock or 0) - Decimal(order.actual_qty))
-    fg.save(update_fields=['current_stock'])
+    if str(getattr(order, 'order_type', 'OWN')).upper() != 'JOB_WORK':
+        fg.current_stock = max(Decimal('0.00'), Decimal(fg.current_stock or 0) - Decimal(order.actual_qty))
+        fg.save(update_fields=['current_stock'])
     StockLedgerEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type__startswith='Manufacturing').delete()
+    StockLedgerEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type__startswith='Job Work').delete()
     GLEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type='Manufacturing').delete()
     order.status = 'PENDING'
     order.approved_by = ''
@@ -290,6 +326,7 @@ def _apply_order_lines(order, bom, data):
     mult = actual_qty / out_qty
     order.consumptions.all().delete()
     custom_cons = data.get('consumptions')
+    is_jw = (str(getattr(order, 'order_type', 'OWN')).upper() == 'JOB_WORK')
     raw_total = Decimal('0.00')
     if isinstance(custom_cons, list) and len(custom_cons) > 0:
         for cl in custom_cons:
@@ -297,7 +334,7 @@ def _apply_order_lines(order, bom, data):
             aq = _to_dec(cl.get('actual_qty') or 0, '0.001')
             pq = _to_dec(cl.get('planned_qty') or aq, '0.001')
             if rit and aq > 0:
-                rt = Decimal(rit.standard_rate or 0)
+                rt = Decimal('0.00') if is_jw else Decimal(rit.standard_rate or 0)
                 amt = (aq * rt).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 raw_total += amt
                 ProductionConsumption.objects.create(production_order=order, raw_item=rit, planned_qty=pq, actual_qty=aq, rate=rt, amount=amt)
@@ -305,7 +342,7 @@ def _apply_order_lines(order, bom, data):
         for c in bom.components.all():
             w_mult = Decimal('1.00') + (Decimal(c.wastage_percent) / Decimal('100'))
             aq = (Decimal(c.qty_required) * w_mult * mult).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
-            rt = Decimal(c.raw_item.standard_rate or 0)
+            rt = Decimal('0.00') if is_jw else Decimal(c.raw_item.standard_rate or 0)
             amt = (aq * rt).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             raw_total += amt
             ProductionConsumption.objects.create(production_order=order, raw_item=c.raw_item, planned_qty=aq, actual_qty=aq, rate=rt, amount=amt)
@@ -541,9 +578,15 @@ class ProductionOrderListCreateView(APIView):
         try:
             with transaction.atomic():
                 u_obj = resolve_active_unit(request, company, default_unit_type='MANUFACTURING')
+                otype = str(data.get('order_type') or 'OWN').upper()
+                if otype not in ('OWN', 'JOB_WORK'):
+                    otype = 'OWN'
                 order = ProductionOrder.objects.create(
                     company=company,
                     unit=u_obj,
+                    order_type=otype,
+                    party_name=(data.get('party_name') or '').strip(),
+                    party_challan_no=(data.get('party_challan_no') or '').strip(),
                     voucher_no=vno,
                     posting_date=pdate,
                     bom=bom,
@@ -613,6 +656,13 @@ class ProductionOrderDetailView(APIView):
             order.scrap_item = scrap_it
             order.scrap_qty = _to_dec(data.get('scrap_qty') or 0, '0.01') if scrap_it else Decimal('0.00')
             order.scrap_value = _to_dec(data.get('scrap_value') or 0, '0.01') if scrap_it else Decimal('0.00')
+        if 'order_type' in data:
+            ot = str(data.get('order_type') or 'OWN').upper()
+            order.order_type = ot if ot in ('OWN', 'JOB_WORK') else 'OWN'
+        if 'party_name' in data:
+            order.party_name = (data.get('party_name') or '').strip()
+        if 'party_challan_no' in data:
+            order.party_challan_no = (data.get('party_challan_no') or '').strip()
         if 'remarks' in data:
             order.remarks = (data.get('remarks') or '').strip()
         order.status = 'PENDING'

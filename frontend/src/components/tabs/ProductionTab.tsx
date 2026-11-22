@@ -125,6 +125,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [scrapItemId, setScrapItemId] = useState<string>('');
   const [scrapQty, setScrapQty] = useState<string>('0');
   const [scrapValue, setScrapValue] = useState<string>('0');
+  const [orderType, setOrderType] = useState<'OWN' | 'JOB_WORK'>('OWN');
+  const [orderPartyName, setOrderPartyName] = useState('');
+  const [orderPartyChallan, setOrderPartyChallan] = useState('');
   const [orderRemarks, setOrderRemarks] = useState('');
   const [orderConsumptions, setOrderConsumptions] = useState<Array<{ raw_item: number; raw_item_name: string; unit: string; available_stock: number; rate: number; planned_qty: number; actual_qty: string }>>([]);
 
@@ -401,6 +404,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         headers: buildHeaders(),
         body: JSON.stringify({
           company_id: activeCompany?.id,
+          order_type: orderType,
+          party_name: orderType === 'JOB_WORK' ? orderPartyName : '',
+          party_challan_no: orderType === 'JOB_WORK' ? orderPartyChallan : '',
           bom: Number(selectedBomId),
           voucher_no: voucherNo,
           posting_date: postingDate,
@@ -1145,6 +1151,49 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
               </button>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); submitProductionOrder(false); }}>
+              <div style={{ background: orderType === 'JOB_WORK' ? '#fef3c7' : '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px', marginBottom: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: orderType === 'JOB_WORK' ? '1fr 1.2fr 1fr' : '1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>Production Mode *</label>
+                    <select
+                      value={orderType}
+                      onChange={(e) => setOrderType(e.target.value as 'OWN' | 'JOB_WORK')}
+                      style={{ width: '100%', padding: '7px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600 }}
+                    >
+                      <option value="OWN">Own Production (Company Stock)</option>
+                      <option value="JOB_WORK">Job Work (Party Material — Labour Only)</option>
+                    </select>
+                  </div>
+                  {orderType === 'JOB_WORK' && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 700, color: '#92400e', display: 'block', marginBottom: '4px' }}>Party / Customer Name *</label>
+                        <input
+                          required
+                          placeholder="e.g. Shreeji Polymers"
+                          value={orderPartyName}
+                          onChange={(e) => setOrderPartyName(e.target.value)}
+                          style={{ width: '100%', padding: '7px 8px', borderRadius: '6px', border: '1px solid #f59e0b', fontSize: '13px', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 700, color: '#92400e', display: 'block', marginBottom: '4px' }}>Party Challan #</label>
+                        <input
+                          placeholder="e.g. CH-101"
+                          value={orderPartyChallan}
+                          onChange={(e) => setOrderPartyChallan(e.target.value)}
+                          style={{ width: '100%', padding: '7px 8px', borderRadius: '6px', border: '1px solid #f59e0b', fontSize: '13px', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+                {orderType === 'JOB_WORK' && (
+                  <div style={{ fontSize: '11px', color: '#92400e', marginTop: '6px', fontWeight: 600 }}>
+                    Job Work Mode: Consumes ₹0 party material, books Labour/Overheads to Job Work Direct Expense, and dispatches output without inflating Finished Goods Asset.
+                  </div>
+                )}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>

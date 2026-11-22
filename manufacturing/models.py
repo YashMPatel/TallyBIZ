@@ -27,6 +27,10 @@ class BOMComponent(models.Model):
 
 class ProductionOrder(models.Model):
     STATUS_CHOICES = [('DRAFT', 'Draft'), ('PENDING', 'Pending Approval'), ('APPROVED', 'Approved'), ('CANCELLED', 'Cancelled')]
+    ORDER_TYPE_CHOICES = [('OWN', 'Own Production'), ('JOB_WORK', 'Job Work (Party Material)')]
+    order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, default='OWN')
+    party_name = models.CharField(max_length=150, blank=True, default='')
+    party_challan_no = models.CharField(max_length=80, blank=True, default='')
     company = models.ForeignKey('accounts.Company', on_delete=models.CASCADE, related_name='production_orders')
     unit = models.ForeignKey('accounts.BusinessUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_orders')
     voucher_no = models.CharField(max_length=50)

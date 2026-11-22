@@ -309,7 +309,8 @@ class StockBatchListCreateAPIView(APIView):
         qty = Decimal(str(data.get('initial_qty') or data.get('qty') or 0))
         if qty <= 0:
             return Response({'error': 'Batch quantity must be greater than 0.'}, status=status.HTTP_400_BAD_REQUEST)
-        rate = Decimal(str(data.get('purchase_rate') or itm.standard_rate or 0))
+        raw_pr = data.get('purchase_rate')
+        rate = Decimal(str(raw_pr)) if (raw_pr is not None and str(raw_pr).strip() != '') else Decimal(str(itm.standard_rate or 0))
         b_no = (data.get('batch_no') or '').strip() or f"LOT-{itm.item_code}-{StockBatch.objects.filter(item=itm).count() + 1:02d}"
         units_map = ensure_default_units(comp) if comp else {}
         uid = data.get('unit_id') or request.headers.get('X-Unit-Id') or request.GET.get('unit_id')
@@ -325,7 +326,7 @@ class StockBatchListCreateAPIView(APIView):
         new_tot = (StockLedgerEntry.objects.filter(item=itm, company=comp).aggregate(s=Sum('actual_qty'))['s'] or Decimal('0.00')) + qty
         StockLedgerEntry.objects.create(
             company=comp, unit=target_u, posting_date=r_date, item=itm,
-            voucher_type='Batch Inward', voucher_no=b_no,
+            voucher_type=('Job Work Material Inward' if 'job work' in str(data.get('source_type', '')).lower() else 'Batch Inward'), voucher_no=(data.get('source_voucher') or b_no),
             actual_qty=qty, qty_after_transaction=new_tot, valuation_rate=rate,
             batch=batch, batch_no=batch.batch_no
         )
