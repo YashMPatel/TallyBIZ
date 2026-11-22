@@ -22,7 +22,7 @@ import { JournalEntryModal } from './components/JournalEntryModal';
 import { PaymentReconciliationModal } from './components/PaymentReconciliationModal';
 import type { Customer, Supplier, Item, GLEntryRow, SalesInvoice, PurchaseInvoice, PaymentEntry, StockLedgerRow, FinancialStatements, JournalEntryPayload } from './types/erp';
 import { X, RefreshCw } from 'lucide-react';
-import { API_BASE, GST_SLABS, getErrorMessage, newLine } from './utils/erpHelpers';
+import { API_BASE, GST_SLABS, getErrorMessage, newLine, getNextItemCode } from './utils/erpHelpers';
 import { fieldStyle, getSalesPaymentStatusMap, getPurchasePaymentStatusMap, type DashboardSummary, type LineForm } from './utils/erpHelpers';
 import ReturnsTab from './components/tabs/ReturnsTab';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -1806,8 +1806,10 @@ function MainERPApp() {
                   <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#fff' }} value={itemForm.category} onChange={e => {
                     const cat = e.target.value;
                     const sug = suggestHsnFromNameOrCategory(itemForm.item_name, cat);
+                    const autoCode = !editingId ? getNextItemCode(items, cat) : itemForm.item_code;
                     setItemForm({
                       ...itemForm,
+                      item_code: autoCode,
                       category: cat,
                       hsn_code: (!(itemForm as any).hsn_code && sug) ? sug.hsn : ((itemForm as any).hsn_code || ''),
                       gst_rate: sug ? sug.gst : ((itemForm as any).gst_rate || '18'),

@@ -204,3 +204,27 @@ export const exportToCSV = (data: Record<string, any>[], filename: string) => {
   link.click();
   document.body.removeChild(link);
 };
+
+export function getNextItemCode(items: Array<{ item_code?: string }>, category: string): string {
+  const prefixMap: Record<string, string> = {
+    'Raw Material': 'RM',
+    'Finished Goods': 'FG',
+    'Chemicals': 'CHM',
+    'Textiles': 'TXT',
+    'Hardware': 'HRD',
+    'Packaging': 'PKG',
+    'General': 'ITM',
+  };
+  const prefix = prefixMap[category] || 'ITM';
+  const regex = new RegExp(`^${prefix}-(\d+)$`, 'i');
+  let maxNum = 0;
+  for (const it of items || []) {
+    const code = String(it?.item_code || '').trim();
+    const m = code.match(regex);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxNum) maxNum = n;
+    }
+  }
+  return `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
+}

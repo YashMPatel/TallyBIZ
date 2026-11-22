@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, type FC } from 'react';
 import { Plus, Download, Search, Edit2, ArrowLeftRight, X, ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { Item } from '../../types/erp';
-import { API_BASE, exportToCSV } from '../../utils/erpHelpers';
+import { API_BASE, exportToCSV , getNextItemCode } from '../../utils/erpHelpers';
 
 interface StockTabProps {
   items: Item[];
@@ -287,7 +287,7 @@ export const StockTab: FC<StockTabProps> = ({
             onClick={() => {
               setEditingId(null);
               setItemForm({
-                item_code: '',
+                item_code: getNextItemCode(items, 'General'),
                 item_name: '',
                 category: 'General',
                 unit: 'Nos',
