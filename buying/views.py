@@ -11,6 +11,7 @@ from .serializers import SupplierSerializer, PurchaseInvoiceSerializer, DebitNot
 from stock.models import Item, StockLedgerEntry, StockBatch
 from accounts.models import GLEntry, PaymentInvoiceAllocation, Company
 from accounts.views import resolve_active_unit
+from backend.erp_workflow import reverse_return_note
 
 
 def parse_date_safe(val):
@@ -231,6 +232,11 @@ class DebitNoteListCreateAPIView(generics.ListCreateAPIView):
 class DebitNoteRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = DebitNote.objects.all()
     serializer_class = DebitNoteSerializer
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            reverse_return_note(instance, 'debit')
+            instance.delete()
 
 
 class PurchaseInvoiceListCreateAPIView(generics.ListCreateAPIView):

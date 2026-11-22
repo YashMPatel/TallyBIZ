@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from backend.erp_workflow import ReturnNoteSerializerMixin
 from .models import Supplier, PurchaseInvoice, PurchaseInvoiceItem, DebitNote, DebitNoteItem
 
 
@@ -49,31 +50,15 @@ class DebitNoteItemSerializer(serializers.ModelSerializer):
         model = DebitNoteItem
         fields = '__all__'
         extra_kwargs = {
-            'debit_note': {'required': False, 'read_only': True}
+            'debit_note': {'required': False, 'read_only': True},
+            'amount': {'required': False},
         }
 
 
-class DebitNoteSerializer(serializers.ModelSerializer):
-    items = DebitNoteItemSerializer(many=True, required=False)
+class DebitNoteSerializer(ReturnNoteSerializerMixin, serializers.ModelSerializer):
+    note_kind, line_fk = 'debit', 'debit_note'
+    items = DebitNoteItemSerializer(many=True)
 
     class Meta:
         model = DebitNote
         fields = '__all__'
-
-    def create(self, validated_data):
-        items_data = validated_data.pop('items', [])
-        debit_note = DebitNote.objects.create(**validated_data)
-        for item_data in items_data:
-            DebitNoteItem.objects.create(debit_note=debit_note, **item_data)
-        return debit_note
-
-    def update(self, instance, validated_data):
-        items_data = validated_data.pop('items', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-        if items_data is not None:
-            instance.items.all().delete()
-            for item_data in items_data:
-                DebitNoteItem.objects.create(debit_note=instance, **item_data)
-        return instance

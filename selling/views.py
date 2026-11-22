@@ -6,6 +6,7 @@ from backend.erp_workflow import (
     validate_sales_invoice_stock,
     approve_and_post_sales_invoice,
     reverse_sales_invoice_on_delete,
+    reverse_return_note,
 )
 from decimal import Decimal
 from datetime import datetime
@@ -180,6 +181,11 @@ class CreditNoteListCreateAPIView(generics.ListCreateAPIView):
 class CreditNoteRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = CreditNote.objects.all()
     serializer_class = CreditNoteSerializer
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            reverse_return_note(instance, 'credit')
+            instance.delete()
 
 
 class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):

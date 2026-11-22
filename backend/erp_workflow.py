@@ -334,3 +334,143 @@ def reverse_purchase_invoice_on_delete(bill):
 
         sl_qs.delete()
         gl_qs.delete()
+
+
+# ---- Credit / Debit notes (GST Rule 53). Posted on save; reversal undoes exactly what was posted. ----
+_NOTES = {
+    'credit': dict(number='credit_note_number', invoice='sales_invoice', party='customer_name', party_type='Customer',
+                   vtype='Credit Note', stock_sign=1, tax_acc='Output GST', party_acc='Debtors', income_side='dr'),
+    'debit': dict(number='debit_note_number', invoice='purchase_invoice', party='supplier_name', party_type='Supplier',
+                  vtype='Debit Note', stock_sign=-1, tax_acc='Input GST', party_acc='Creditors', income_side='cr'),
+}
+
+
+def _note_scope(model, note, cfg):
+    return model.objects.filter(company=note.company, voucher_type=cfg['vtype'], voucher_no=getattr(note, cfg['number']))
+
+
+@transaction.atomic
+def reverse_return_note(note, kind):
+    cfg = _NOTES[kind]
+    Item = apps.get_model('stock', 'Item')
+    sl = _note_scope(apps.get_model('stock', 'StockLedgerEntry'), note, cfg)
+    for sle in sl:
+        Item.objects.filter(id=sle.item_id).update(current_stock=models.F('current_stock') - sle.actual_qty)
+    sl.delete()
+    _note_scope(apps.get_model('accounts', 'GLEntry'), note, cfg).delete()
+
+
+@transaction.atomic
+def post_return_note(note, kind):
+    cfg = _NOTES[kind]
+    Item = apps.get_model('stock', 'Item')
+    StockLedgerEntry = apps.get_model('stock', 'StockLedgerEntry')
+    GLEntry = apps.get_model('accounts', 'GLEntry')
+    inv = getattr(note, cfg['invoice'])
+    job_work = str(getattr(inv, 'invoice_type', '')).upper() == 'JOB_WORK'
+    unit = getattr(inv, 'unit', None)
+    vno = getattr(note, cfg['number'])
+
+    net = tax = Decimal('0.00')
+    for line in note.items.select_related('item'):
+        if line.item.company_id not in (None, note.company_id):
+            raise ValidationError({'items': [f'{line.item.item_name} belongs to another company.']})
+        line.amount = (Decimal(str(line.quantity)) * Decimal(str(line.rate))).quantize(Decimal('0.01'))
+        line.save(update_fields=['amount'])
+        # Tax follows the original invoice rate; unlinked notes fall back to the item's GST rate.
+        rate = Decimal(str(inv.tax_rate if inv else (line.item.gst_rate or 0)))
+        net += line.amount
+        tax += (line.amount * rate / 100).quantize(Decimal('0.01'))
+        if job_work:
+            continue  # service credit: party material never entered own stock
+        qty = Decimal(str(line.quantity)) * cfg['stock_sign']
+        item_obj = Item.objects.select_for_update().get(id=line.item_id)
+        if item_obj.current_stock + qty < 0:
+            raise ValidationError({'error': f'Insufficient Stock for {item_obj.item_name}: Available {item_obj.current_stock}, Requested {abs(qty)}.'})
+        item_obj.current_stock += qty
+        item_obj.save(update_fields=['current_stock'])
+        _create_sl_entry(StockLedgerEntry, item_obj, note.company, note.posting_date, cfg['vtype'], vno,
+                         max(qty, 0), max(-qty, 0), qty, item_obj.current_stock, item_obj.standard_rate or 0, unit)
+
+    note.net_total, note.tax_amount, note.grand_total = net, tax, net + tax
+    note.status = 'Approved'
+    note.save(update_fields=['net_total', 'tax_amount', 'grand_total', 'status'])
+
+    income_acc = ('Job Work Income' if job_work else 'Sales Income') if kind == 'credit' else 'Purchases'
+    party = getattr(note, cfg['party'])
+    common = dict(company=note.company, unit=unit, posting_date=note.posting_date, voucher_type=cfg['vtype'],
+                  voucher_no=vno, party_type=cfg['party_type'], party=party, remarks=f"{cfg['vtype']} {vno} - {note.reason or ''}"[:250])
+    dr, cr = (lambda a: (a, Decimal('0.00'))), (lambda a: (Decimal('0.00'), a))
+    side = dr if cfg['income_side'] == 'dr' else cr
+    other = cr if side is dr else dr
+    rows = [(income_acc, *side(net)), (cfg['tax_acc'], *side(tax)), (cfg['party_acc'], *other(net + tax))]
+    for acc, d, c in rows:
+        if d or c:
+            _safe_create(GLEntry, account=acc, against=cfg['party_acc'] if acc != cfg['party_acc'] else income_acc, debit=d, credit=c, **common)
+
+
+def validate_return_quantities(attrs, instance, kind):
+    """A note may not return more of an item than the linked invoice still has unreturned."""
+    cfg = _NOTES[kind]
+    inv = attrs.get(cfg['invoice'], getattr(instance, cfg['invoice'], None) if instance else None)
+    items = attrs.get('items')
+    if items is None or inv is None:
+        return
+    note_model = instance.__class__ if instance else apps.get_model('selling', 'CreditNote') if kind == 'credit' else apps.get_model('buying', 'DebitNote')
+    others = note_model.objects.filter(**{cfg['invoice']: inv}).exclude(pk=getattr(instance, 'pk', None))
+    sold, done, want = {}, {}, {}
+    for l in inv.items.all():
+        sold[l.item_id] = sold.get(l.item_id, 0) + l.quantity
+    for n in others:
+        for l in n.items.all():
+            done[l.item_id] = done.get(l.item_id, 0) + l.quantity
+    for row in items:
+        want[row['item'].id] = want.get(row['item'].id, 0) + row['quantity']
+    errors = [f'Item {i}: return {q} exceeds remaining invoice quantity {sold.get(i, 0) - done.get(i, 0)}.'
+              for i, q in want.items() if q > sold.get(i, 0) - done.get(i, 0)]
+    if errors:
+        raise ValidationError({'items': errors})
+
+
+class ReturnNoteSerializerMixin:
+    """Nested line save + posting for CreditNoteSerializer / DebitNoteSerializer. Set note_kind and line_fk."""
+    note_kind = line_fk = None
+
+    def validate(self, attrs):
+        validate_return_quantities(attrs, self.instance, self.note_kind)
+        return attrs
+
+    def _save_lines(self, note, items):
+        line_model = note.items.model
+        for row in items:
+            line_model.objects.create(**{self.line_fk: note}, item=row['item'], quantity=row['quantity'], rate=row['rate'], amount=0)
+
+    def _check_number(self, data, pk=None):
+        field = _NOTES[self.note_kind]['number']
+        num = data.get(field, getattr(self.instance, field, None))
+        company = data.get('company', getattr(self.instance, 'company', None))
+        if self.Meta.model.objects.filter(company=company, **{field: num}).exclude(pk=pk).exists():
+            raise ValidationError({field: [f'{num} is already used in this company.']})
+
+    def create(self, validated_data):
+        items = validated_data.pop('items', [])
+        self._check_number(validated_data)
+        with transaction.atomic():
+            note = self.Meta.model.objects.create(**validated_data)
+            self._save_lines(note, items)
+            post_return_note(note, self.note_kind)
+        return note
+
+    def update(self, instance, validated_data):
+        items = validated_data.pop('items', None)
+        self._check_number(validated_data, instance.pk)
+        with transaction.atomic():
+            reverse_return_note(instance, self.note_kind)
+            for k, v in validated_data.items():
+                setattr(instance, k, v)
+            instance.save()
+            if items is not None:
+                instance.items.all().delete()
+                self._save_lines(instance, items)
+            post_return_note(instance, self.note_kind)
+        return instance

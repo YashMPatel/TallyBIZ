@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from backend.erp_workflow import ReturnNoteSerializerMixin
 from .models import Customer, SalesInvoice, SalesInvoiceItem, CreditNote, CreditNoteItem
 
 
@@ -76,12 +77,14 @@ class CreditNoteItemSerializer(serializers.ModelSerializer):
         model = CreditNoteItem
         fields = '__all__'
         extra_kwargs = {
-            'credit_note': {'required': False, 'read_only': True}
+            'credit_note': {'required': False, 'read_only': True},
+            'amount': {'required': False},
         }
 
 
-class CreditNoteSerializer(serializers.ModelSerializer):
-    items = CreditNoteItemSerializer(many=True, required=False)
+class CreditNoteSerializer(ReturnNoteSerializerMixin, serializers.ModelSerializer):
+    note_kind, line_fk = 'credit', 'credit_note'
+    items = CreditNoteItemSerializer(many=True)
 
     class Meta:
         model = CreditNote
