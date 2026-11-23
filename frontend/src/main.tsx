@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import axios from 'axios'
 
 let isRedirectingToLogin = false;
 
@@ -62,6 +63,17 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     return originalFetch(input, init);
   }
 };
+
+// axios bypasses the fetch wrapper above; give it the same token and expiry handling.
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+  if (token && !config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+axios.interceptors.response.use(undefined, (error) => {
+  if (error?.response?.status === 401) handleSessionExpired();
+  return Promise.reject(error);
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
