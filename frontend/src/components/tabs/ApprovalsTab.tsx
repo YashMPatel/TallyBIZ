@@ -51,7 +51,7 @@ export const ApprovalsTab: React.FC<ApprovalsTabProps> = ({ invoices, purchases,
 
   // Approved  Rejected 
 
-  const pendingSales = invoices.filter(inv => inv.status !== 'Approved' && inv.status !== 'Rejected');
+  const pendingSales = invoices.filter(inv => inv.status !== 'Approved' && inv.status !== 'Rejected' && !String(inv.invoice_number || '').toUpperCase().startsWith('PI-'));
   const pendingPurchases = purchases.filter(pur => pur.status !== 'Approved' && pur.status !== 'Rejected');
 
   const handleApprove = async (docType: 'sales-invoice' | 'purchase-invoice', id: number) => {

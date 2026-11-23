@@ -247,6 +247,22 @@ def _post_production(order, approver):
             fg.standard_rate = ((old_val + Decimal(order.net_production_cost)) / new_qty).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         fg.current_stock = new_qty
         fg.save(update_fields=['current_stock', 'standard_rate'])
+        from stock.models import StockBatch
+        bom_label = f"{order.bom.bom_code} ({order.bom.name})" if getattr(order, 'bom', None) else 'Production'
+        lot_code = f"LOT-{order.voucher_no}"
+        mfg_batch = StockBatch.objects.create(
+            company=order.company,
+            unit=getattr(order, 'unit', None),
+            item=fg,
+            batch_no=lot_code,
+            source_type='Manufacturing Output',
+            source_voucher=order.voucher_no,
+            party_name=bom_label[:150],
+            received_date=order.posting_date,
+            initial_qty=Decimal(order.actual_qty),
+            remaining_qty=Decimal(order.actual_qty),
+            purchase_rate=Decimal(order.unit_cost or 0),
+        )
         StockLedgerEntry.objects.create(
             company=order.company,
             unit=getattr(order, 'unit', None),
@@ -257,6 +273,8 @@ def _post_production(order, approver):
             actual_qty=Decimal(order.actual_qty),
             qty_after_transaction=fg.current_stock,
             valuation_rate=order.unit_cost,
+            batch=mfg_batch,
+            batch_no=lot_code,
         )
         raw_net = Decimal(order.total_raw_cost) - Decimal(order.scrap_value)
         if raw_net > 0:
@@ -290,6 +308,8 @@ def _reverse_production(order):
     if str(getattr(order, 'order_type', 'OWN')).upper() != 'JOB_WORK':
         fg.current_stock = max(Decimal('0.00'), Decimal(fg.current_stock or 0) - Decimal(order.actual_qty))
         fg.save(update_fields=['current_stock'])
+    from stock.models import StockBatch
+    StockBatch.objects.filter(company=order.company, source_voucher=order.voucher_no, source_type='Manufacturing Output').delete()
     StockLedgerEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type__startswith='Manufacturing').delete()
     StockLedgerEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type__startswith='Job Work').delete()
     GLEntry.objects.filter(company=order.company, voucher_no=order.voucher_no, voucher_type='Manufacturing').delete()

@@ -306,7 +306,9 @@ class StockBatchListCreateAPIView(APIView):
             from accounts.models import BusinessUnit
             u_obj = BusinessUnit.objects.filter(id=int(uid)).first()
             if u_obj and u_obj.unit_type != 'HO':
-                qs = qs.filter(Q(unit_id=int(uid)) | Q(unit__isnull=True))
+                unit_qs = qs.filter(Q(unit_id=int(uid)) | Q(unit__isnull=True))
+                if unit_qs.exists():
+                    qs = unit_qs
         return Response(StockBatchSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):

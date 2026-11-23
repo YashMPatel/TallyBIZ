@@ -35,7 +35,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   onClose,
 }) => {
   const [isProforma, setIsProforma] = useState<boolean>(
-    invoice ? invoice.status !== 'Approved' : false
+    invoice ? (String(invoice.invoice_number || '').toUpperCase().startsWith('PI-') || invoice.status !== 'Approved') : false
   );
   const [copyMode, setCopyMode] = useState<CopyMode>('ORIGINAL');
 
@@ -63,7 +63,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
   useEffect(() => {
     if (invoice) {
-      setIsProforma(invoice.status !== 'Approved');
+      setIsProforma(String(invoice.invoice_number || '').toUpperCase().startsWith('PI-') || invoice.status !== 'Approved');
       setCopyMode('ORIGINAL');
     }
   }, [invoice]);

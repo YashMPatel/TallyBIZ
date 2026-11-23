@@ -409,13 +409,25 @@ export const StockTab: FC<StockTabProps> = ({
           <DataTable<Item>
             columns={[
               { header: 'Code', accessor: 'item_code' },
-              { header: 'Item Name', accessor: 'item_name' },
+              {
+                header: 'Item Name / Recipe (BOM)',
+                accessor: (r: any) => (
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#0f172a' }}>{r.item_name}</div>
+                    {r._bomGroup && (
+                      <div style={{ marginTop: '3px', display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', padding: '1px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
+                        {r._bomGroup.bom_code ? `${r._bomGroup.bom_code} • ` : ''}{r._bomGroup.bom_name}
+                      </div>
+                    )}
+                  </div>
+                ),
+              },
               { header: 'Category', accessor: 'category' },
               {
                 header: `Rate (${symbol})`,
-                accessor: (r) => {
-                  const rateVal = Number(r.standard_rate || 0);
-                  const conv = Number(r.conversion_factor || 0);
+                accessor: (r: any) => {
+                  const rateVal = r._bomGroup ? Number(r._bomGroup.unit_rate || 0) : Number(r.standard_rate || 0);
+                  const conv = r._bomGroup ? Number(r._bomGroup.conversion_factor || r.conversion_factor || 0) : Number(r.conversion_factor || 0);
                   const hasAlt = Boolean(r.alt_unit && conv > 0 && String(r.alt_unit).toLowerCase() !== String(r.unit || '').toLowerCase());
                   return (
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
@@ -431,29 +443,38 @@ export const StockTab: FC<StockTabProps> = ({
               },
               {
                 header: activeUnitObj ? `${activeUnitObj.name} Stock` : 'Current Stock',
-                accessor: (r) => (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                    <strong>{getEffStock(r)} {r.unit || 'Nos'}</strong>
-                    {r.alt_unit && Number(r.conversion_factor || 0) > 0 && (
-                      <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
-                        {(getEffStock(r) * Number(r.conversion_factor)).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {r.alt_unit}
-                      </span>
-                    )}
-                    {isUnitFiltered && (
-                      <span style={{ fontSize: '11px', color: '#64748b' }}>
-                        (Company Total: {r.current_stock || 0})
-                      </span>
-                    )}
-                  </div>
-                ),
+                accessor: (r: any) => {
+                  const qtyVal = r._bomGroup ? Number(r._bomGroup.stock_qty || 0) : getEffStock(r);
+                  const conv = r._bomGroup ? Number(r._bomGroup.conversion_factor || r.conversion_factor || 0) : Number(r.conversion_factor || 0);
+                  return (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <strong>{qtyVal} {r.unit || 'Nos'}</strong>
+                      {r.alt_unit && conv > 0 && (
+                        <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                          {(qtyVal * conv).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {r.alt_unit}
+                        </span>
+                      )}
+                      {isUnitFiltered && !r._bomGroup && (
+                        <span style={{ fontSize: '11px', color: '#64748b' }}>
+                          (Company Total: {r.current_stock || 0})
+                        </span>
+                      )}
+                    </div>
+                  );
+                },
               },
               {
                 header: `Stock Value (${symbol})`,
-                accessor: (r) => (
-                  <strong style={{ color: '#0284c7' }}>
-                    {symbol} {(getEffStock(r) * Number(r.standard_rate || 0)).toFixed(2)}
-                  </strong>
-                ),
+                accessor: (r: any) => {
+                  const val = r._bomGroup
+                    ? Number(r._bomGroup.stock_value || 0)
+                    : getEffStock(r) * Number(r.standard_rate || 0);
+                  return (
+                    <strong style={{ color: '#0284c7' }}>
+                      {symbol} {val.toFixed(2)}
+                    </strong>
+                  );
+                },
               },
               {
                 header: 'Actions',
@@ -489,7 +510,20 @@ export const StockTab: FC<StockTabProps> = ({
                 ),
               },
             ]}
-            data={paginatedItems}
+            data={paginatedItems.flatMap((it: any) => {
+              const groups: any[] = Array.isArray(it.bom_stock_groups) ? it.bom_stock_groups : [];
+              if (groups.length > 1) {
+                return groups.map((g: any, idx: number) => ({
+                  ...it,
+                  _rowKey: `${it.id}-bom-${idx}`,
+                  _bomGroup: g,
+                }));
+              }
+              if (groups.length === 1) {
+                return [{ ...it, _bomGroup: groups[0] }];
+              }
+              return [it];
+            })}
             emptyMessage={activeUnitObj ? `No stock items available in ${activeUnitObj.name} yet. Purchase or Transfer stock into this division.` : 'No inventory items found.'}
           />
         </>

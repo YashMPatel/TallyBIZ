@@ -262,14 +262,16 @@ export const SellingTab: FC<SellingTabProps> = ({
     try {
       const compId = localStorage.getItem('active_company_id') || '';
       const invType = String(inv.invoice_type || 'SALES').toUpperCase() === 'JOB_WORK' ? 'JOB_WORK' : 'OWN';
+      const isProformaDoc = String(inv.invoice_number || '').toUpperCase().startsWith('PI-');
       const itemsList = Array.isArray(inv.items) ? inv.items : [];
       const firstLine = itemsList[0] || {};
       const totalQty = itemsList.reduce((s: number, it: any) => s + Number(it.quantity || 0), 0) || 1;
-      const payload = {
+      const payload: any = {
         order_type: invType,
         party_challan_no: inv.party_challan_no || '',
-        existing_invoice_id: inv.id,
-        existing_invoice_no: inv.invoice_number,
+        ...(isProformaDoc
+          ? { proforma_invoice_id: inv.id, proforma_invoice_no: inv.invoice_number }
+          : { existing_invoice_id: inv.id, existing_invoice_no: inv.invoice_number }),
         sales_ref: inv.invoice_number,
         posting_date: inv.posting_date,
         customer_name: inv.customer_name || 'Customer',
@@ -284,7 +286,9 @@ export const SellingTab: FC<SellingTabProps> = ({
           rate: Number(it.rate || 0),
           hsn_code: it.hsn_code || '',
         })),
-        notes: `Pre-generated ${invType === 'JOB_WORK' ? 'Job Work (SAC 9988)' : 'Sales'} Invoice ${inv.invoice_number} — Update dispatch details only (no duplicate invoice).`,
+        notes: isProformaDoc
+          ? `Confirmed Proforma Order ${inv.invoice_number} — Schedule production & dispatch; 1-Click Tax Invoice will be generated on dispatch.`
+          : `Pre-generated ${invType === 'JOB_WORK' ? 'Job Work (SAC 9988)' : 'Sales'} Invoice ${inv.invoice_number} — Update dispatch details only (no duplicate invoice).`,
         created_by: user?.username || 'Sales Team',
       };
       const res = await fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`, {
@@ -333,6 +337,39 @@ export const SellingTab: FC<SellingTabProps> = ({
       alert(getErrorMessage(err));
     } finally {
       setInvoicingBatchId(null);
+    }
+  };
+
+  const handleConvertProformaToTax = async (inv: SalesInvoice) => {
+    if (!inv.id) return;
+    setSendingInvId(inv.id);
+    setFwdErr('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${API_BASE}/selling/invoices/${inv.id}/convert-to-tax/?company_id=${compId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to convert Proforma to Tax Invoice');
+      if (data.invoice) {
+        setDirectInvoices((prev) => [
+          data.invoice,
+          ...prev.map((x) =>
+            x.id === inv.id ? { ...x, status: 'Rejected', rejection_reason: `Converted to ${data.invoice_number}` } : x
+          ),
+        ]);
+      }
+      loadInvoicesDirect();
+      setFwdMsg(data.message || `Tax Invoice ${data.invoice_number} generated!`);
+    } catch (err) {
+      alert(getErrorMessage(err));
+    } finally {
+      setSendingInvId(null);
     }
   };
 
@@ -404,7 +441,32 @@ export const SellingTab: FC<SellingTabProps> = ({
           <button
             onClick={() => {
               setEditingId(null);
-              const nextInvNo = getNextInvoiceNumber(invoices);
+              const piNums = displayInvoices
+                .map((x) => String(x.invoice_number || '').match(/^PI-(\d+)$/i))
+                .filter(Boolean)
+                .map((m) => parseInt(m![1], 10));
+              const nextPiSeq = (piNums.length > 0 ? Math.max(...piNums) : 0) + 1;
+              const nextPiNo = `PI-${String(nextPiSeq).padStart(3, '0')}`;
+              setInvoiceForm({
+                invoice_number: nextPiNo,
+                customer_id: customers.length > 0 ? String(customers[0].id) : '',
+                posting_date: new Date().toISOString().split('T')[0],
+                due_date: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+                tax_rate: '18',
+                status: 'Draft',
+                lines: [newLine()],
+              });
+              setShowInvoiceModal(true);
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#d97706', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700' }}
+          >
+            <FileText size={16} /> + Proforma Invoice
+          </button>
+          <button
+            onClick={() => {
+              setEditingId(null);
+              const taxOnly = displayInvoices.filter((x) => !String(x.invoice_number || '').toUpperCase().startsWith('PI-'));
+              const nextInvNo = getNextInvoiceNumber(taxOnly);
               setInvoiceForm({
                 invoice_number: nextInvNo,
                 customer_id: customers.length > 0 ? String(customers[0].id) : '',
@@ -433,7 +495,7 @@ export const SellingTab: FC<SellingTabProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
         <div style={{ background: '#fff', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
           <div style={{ color: '#64748b', fontSize: '13px', fontWeight: '600' }}>Total Sales</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#0284c7', marginTop: '6px' }}>{symbol} {Math.max(dashboardSummary.total_sales, displayInvoices.reduce((acc, x) => acc + (parseFloat(String(x.grand_total)) || 0), 0)).toFixed(2)}</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#0284c7', marginTop: '6px' }}>{symbol} {Math.max(dashboardSummary.total_sales, displayInvoices.filter((x) => !String(x.invoice_number || '').toUpperCase().startsWith('PI-')).reduce((acc, x) => acc + (parseFloat(String(x.grand_total)) || 0), 0)).toFixed(2)}</div>
         </div>
         <div style={{ background: '#fff', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
           <div style={{ color: '#64748b', fontSize: '13px', fontWeight: '600' }}>Total Purchases</div>
@@ -672,9 +734,55 @@ export const SellingTab: FC<SellingTabProps> = ({
                     <td style={{ padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {(() => {
-                          const linkedReq = salesRequests.find((r: any) => r.existing_invoice_no === inv.invoice_number || r.sales_ref === inv.invoice_number);
+                          const isPi = String(inv.invoice_number || '').toUpperCase().startsWith('PI-');
+                          const isConvertedPi = isPi && inv.status === 'Rejected' && String((inv as any).rejection_reason || '').includes('Converted');
+                          const linkedReq = salesRequests.find(
+                            (r: any) =>
+                              r.existing_invoice_no === inv.invoice_number ||
+                              r.proforma_invoice_no === inv.invoice_number ||
+                              r.sales_ref === inv.invoice_number
+                          );
+                          if (isConvertedPi) {
+                            return (
+                              <span
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  background: '#dcfce7',
+                                  color: '#166534',
+                                }}
+                              >
+                                {(inv as any).rejection_reason}
+                              </span>
+                            );
+                          }
                           if (linkedReq) {
                             const dispBatches = (linkedReq.delivery_schedule || []).filter((b: any) => b.status === 'DISPATCHED');
+                            const readyBatch = dispBatches.find((b: any) => !b.invoiced);
+                            if (readyBatch) {
+                              return (
+                                <button
+                                  type="button"
+                                  disabled={invoicingBatchId === readyBatch.id}
+                                  onClick={() => handleOneClickInvoice(linkedReq.id, readyBatch.id)}
+                                  title="Factory dispatched! Generate next Tax Invoice (INV-...) in 1 click"
+                                  style={{
+                                    padding: '4px 9px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: '#059669',
+                                    color: '#fff',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                  }}
+                                >
+                                  {invoicingBatchId === readyBatch.id ? 'Creating...' : '1-Click Tax Invoice'}
+                                </button>
+                              );
+                            }
                             return (
                               <span
                                 title={`Linked to Factory Request ${linkedReq.request_no} (${linkedReq.status})`}
@@ -689,29 +797,61 @@ export const SellingTab: FC<SellingTabProps> = ({
                               >
                                 {dispBatches.length > 0
                                   ? `Dispatched (${dispBatches.map((b: any) => b.dispatch_no).join(', ')})`
-                                  : `In Factory (${linkedReq.request_no})`}
+                                  : `Confirmed • In Factory (${linkedReq.request_no})`}
                               </span>
                             );
                           }
                           return (
-                            <button
-                              type="button"
-                              disabled={sendingInvId === inv.id}
-                              onClick={() => handleSendInvoiceToFactory(inv)}
-                              title="Send this invoice order to Factory Unit for Date Schedule & Dispatch tracking (no duplicate invoice)"
-                              style={{
-                                padding: '4px 8px',
-                                borderRadius: '4px',
-                                border: '1px solid #bae6fd',
-                                background: '#f0f9ff',
-                                color: '#0369a1',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                fontSize: '11px',
-                              }}
-                            >
-                              {sendingInvId === inv.id ? 'Sending...' : 'Send to Factory'}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                disabled={sendingInvId === inv.id}
+                                onClick={() => handleSendInvoiceToFactory(inv)}
+                                title={
+                                  isPi
+                                    ? 'Party confirmed Proforma! Send order to Factory Unit for production & dispatch'
+                                    : 'Send this invoice order to Factory Unit for Date Schedule & Dispatch tracking'
+                                }
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  border: isPi ? '1px solid #fcd34d' : '1px solid #bae6fd',
+                                  background: isPi ? '#fef3c7' : '#f0f9ff',
+                                  color: isPi ? '#92400e' : '#0369a1',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  fontSize: '11px',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {sendingInvId === inv.id
+                                  ? 'Sending...'
+                                  : isPi
+                                  ? 'Confirm & Send to Factory'
+                                  : 'Send to Factory'}
+                              </button>
+                              {isPi && (
+                                <button
+                                  type="button"
+                                  disabled={sendingInvId === inv.id}
+                                  onClick={() => handleConvertProformaToTax(inv)}
+                                  title="Convert Proforma directly to next sequential Tax Invoice (INV-...)"
+                                  style={{
+                                    padding: '4px 8px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: '#059669',
+                                    color: '#fff',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  1-Click Tax Invoice
+                                </button>
+                              )}
+                            </>
                           );
                         })()}
                         <button

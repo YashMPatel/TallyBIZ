@@ -65,19 +65,19 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
   };
 
   return (
-    <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+    <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
           <tr>
-            <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item *</th>
+            <th style={{ padding: '8px 10px', textAlign: 'left', minWidth: '260px' }}>Item *</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '80px' }}>HSN</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '78px' }}>Unit</th>
             {showStock && <th style={{ padding: '8px 10px', textAlign: 'center', width: '85px' }}>Stock</th>}
-            <th style={{ padding: '8px 10px', textAlign: 'center', width: '95px' }}>Qty *</th>
-            <th style={{ padding: '8px 10px', textAlign: 'right', width: '110px' }}>Rate ({currencySymbol}) *</th>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '115px', minWidth: '115px' }}>Qty *</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '125px', minWidth: '125px' }}>Rate ({currencySymbol}) *</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '50px' }}>FOC</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
-            <th style={{ padding: '8px 10px', textAlign: 'right', width: '120px' }}>Amount ({currencySymbol})</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '130px', minWidth: '130px' }}>Amount ({currencySymbol})</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '40px' }}></th>
           </tr>
         </thead>
@@ -112,7 +112,15 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                   >
                     <option value="">-- Choose Item --</option>
-                    {items.filter((opt) => !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc))).map((it, itIdx) => {
+                    {items.filter((opt) => {
+                      if (String(opt.id) === String(line.item_id)) return true;
+                      if (priceMode === 'selling') {
+                        const cat = String(opt.category || '').toLowerCase();
+                        const code = String(opt.item_code || '').toUpperCase();
+                        if (cat.includes('raw') || code.startsWith('RM-')) return false;
+                      }
+                      return !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc));
+                    }).map((it, itIdx) => {
                       const itHasAlt = it.alt_unit && Number(it.conversion_factor || 0) > 0;
                       return (
                         <option

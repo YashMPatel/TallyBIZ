@@ -35,11 +35,52 @@ class CompanyViewSet(viewsets.ModelViewSet):
 def register_user(request):
     serializer = UserSignupSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        user = serializer.save()
+        mode = getattr(user, '_signup_mode', 'SELF_COMPANY')
+        comp_name = getattr(user, '_signup_company_name', '')
+        if mode == 'INVITED':
+            msg = f"Registration submitted for {comp_name}! Your account is pending admin approval."
+        else:
+            msg = f"Workspace '{comp_name}' created! You can sign in right now as Admin."
         return Response({
-            "message": "Registration successful! Your account is pending admin approval."
+            "message": msg,
+            "mode": mode,
+            "company_name": comp_name,
+            "auto_approved": mode != 'INVITED',
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def inspect_invite_token(request):
+    from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
+    from accounts.models import Company as AccountsCompany
+
+    token = (request.GET.get('token') or '').strip()
+    if not token:
+        return Response({'error': 'Invite token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    signer = TimestampSigner(salt='tallybiz-staff-invite')
+    try:
+        payload = signer.unsign_object(token, max_age=7 * 86400)
+    except SignatureExpired:
+        return Response({'error': 'This invite link has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+    except BadSignature:
+        return Response({'error': 'Invalid invite link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    comp = AccountsCompany.objects.filter(id=payload.get('company_id')).first()
+    if not comp:
+        return Response({'error': 'Invited company not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({
+        'valid': True,
+        'company_id': comp.id,
+        'company_name': comp.name,
+        'username': payload.get('username') or '',
+        'first_name': payload.get('first_name') or '',
+        'last_name': payload.get('last_name') or '',
+        'role': payload.get('role') or 'Sales User',
+    })
 
 
 def _get_authenticated_user(request):

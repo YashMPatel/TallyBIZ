@@ -55,6 +55,7 @@ function MainERPApp() {
   // --- Company Gateway & Division/Unit States ---
   const [companies, setCompanies] = useState<any[]>([]);
   const [businessUnits, setBusinessUnits] = useState<any[]>([]);
+  const [unitsLoaded, setUnitsLoaded] = useState<boolean>(false);
   const [bankAccountsList, setBankAccountsList] = useState<any[]>([]);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [newUnitName, setNewUnitName] = useState('');
@@ -77,13 +78,25 @@ function MainERPApp() {
       return;
     }
     fetch(`${API_BASE}/accounts/bank-accounts/?company_id=${activeCompany.id}`).then((r) => (r.ok ? r.json() : [])).then((b) => setBankAccountsList(Array.isArray(b) ? b : [])).catch(() => {});
+    setUnitsLoaded(false);
     fetch(`${API_BASE}/accounts/units/?company_id=${activeCompany.id}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((rows) => {
         const list = Array.isArray(rows) ? rows : (rows?.units || rows?.results || []);
         setBusinessUnits(list);
+        const savedUnitId = localStorage.getItem('active_unit_id') || 'all';
+        const curUnit = list.find((u: any) => String(u.id) === String(savedUnitId));
+        if (curUnit?.unit_type === 'MANUFACTURING') {
+          setActiveTab((prev) => (prev === 'selling' ? 'production' : prev));
+        } else if (curUnit?.unit_type === 'HO') {
+          setActiveTab((prev) => (prev === 'selling' ? 'payments' : prev));
+        }
+        setUnitsLoaded(true);
       })
-      .catch(() => setBusinessUnits([]));
+      .catch(() => {
+        setBusinessUnits([]);
+        setUnitsLoaded(true);
+      });
   }, [isAuthenticated, activeCompany?.id]);
 
   const handleCleanLogout = useCallback(() => {
@@ -1051,7 +1064,7 @@ function MainERPApp() {
             </div>
           )}
 
-          {activeTab === 'selling' && (
+          {activeTab === 'selling' && (activeUnitId === 'all' || unitsLoaded) && (
             <SellingTab
               user={user}
               invoices={invoices}
@@ -1988,7 +2001,7 @@ function MainERPApp() {
       {/* Sales Invoice Modal */}
       {showInvoiceModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '1080px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Sales Invoice' : 'Create Sales Invoice'}</h3>
               <button onClick={() => setShowInvoiceModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
@@ -2079,7 +2092,7 @@ function MainERPApp() {
       {/* Purchase Bill Modal */}
       {showPurchaseModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '780px', maxWidth: '94vw', maxHeight: '92vh', overflowY: 'auto' }}>
+          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '1080px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Purchase Bill' : 'Record Purchase Bill'}</h3>
               <button onClick={() => setShowPurchaseModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>

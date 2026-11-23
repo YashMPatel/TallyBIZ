@@ -213,7 +213,7 @@ class FinancialStatementsAPIView(APIView):
                 has_unit_filter = False
 
         # Books show only approved documents; drafts awaiting the checker are not income or GST yet.
-        base_sales_qs = SalesInvoice.objects.filter(company=company, status__iexact='Approved')
+        base_sales_qs = SalesInvoice.objects.filter(company=company, status__iexact='Approved').exclude(invoice_number__istartswith='PI-')
         base_pur_qs = PurchaseInvoice.objects.filter(company=company, status__iexact='Approved')
         items_qs = Item.objects.filter(company=company)
 
@@ -1243,8 +1243,11 @@ class DatabaseBackupAPIView(APIView):
         req_user = _resolve_gateway_user(request)
         if req_user and not req_user.is_superuser:
             prof = getattr(req_user, 'profile', None)
-            if prof and prof.company_id and prof.role != 'ADMIN':
+            if not prof or not prof.company_id or (prof.role or '').strip().upper() != 'ADMIN':
                 return Response({'error': 'Only Company Admin can backup data.'}, status=status.HTTP_403_FORBIDDEN)
+            if comp_id and str(comp_id).isdigit() and int(comp_id) != prof.company_id:
+                return Response({'error': 'You can only backup your own company.'}, status=status.HTTP_403_FORBIDDEN)
+            comp_id = str(prof.company_id)
 
         comp_id = request.GET.get('company_id') or request.headers.get('X-Company-Id')
         if comp_id and str(comp_id).isdigit():
@@ -1347,7 +1350,7 @@ class DatabaseRestoreAPIView(APIView):
         has_companies = AccountsCompany.objects.exists()
         if has_companies and req_user and not req_user.is_superuser:
             prof = getattr(req_user, 'profile', None)
-            if prof and prof.company_id and prof.role != 'ADMIN':
+            if not prof or not prof.company_id or (prof.role or '').strip().upper() != 'ADMIN':
                 return Response({'error': 'Only Company Admin can restore data.'}, status=status.HTTP_403_FORBIDDEN)
 
         uploaded = request.FILES.get('file')
@@ -1370,6 +1373,13 @@ class DatabaseRestoreAPIView(APIView):
             or request.GET.get('company_id')
             or request.headers.get('X-Company-Id')
         )
+        if req_user and not req_user.is_superuser:
+            prof = getattr(req_user, 'profile', None)
+            if target_comp_id and str(target_comp_id).isdigit() and prof and prof.company_id and int(target_comp_id) != prof.company_id:
+                return Response({'error': 'You can only restore data into your own company.'}, status=status.HTTP_403_FORBIDDEN)
+            if prof and prof.company_id:
+                target_comp_id = str(prof.company_id)
+
         target_comp = None
         if target_comp_id and str(target_comp_id).isdigit():
             target_comp = AccountsCompany.objects.filter(id=int(target_comp_id)).first()

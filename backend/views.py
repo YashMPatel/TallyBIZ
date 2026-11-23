@@ -89,8 +89,19 @@ class RBACUserManagementView(APIView):
     permission_classes = [IsCompanyAdmin]
 
     def get(self, request, *args, **kwargs):
+        from backend.permissions import jwt_user
+        req_user = jwt_user(request)
         include_all = request.query_params.get('include_all') == '1'
         qs = UserProfile.objects.select_related('user', 'company', 'assigned_unit').order_by('is_approved', 'id')
+        comp_filter = request.query_params.get('company_id') or request.headers.get('X-Company-Id')
+        if req_user and not req_user.is_superuser:
+            admin_prof = UserProfile.objects.filter(user=req_user).first()
+            if admin_prof and admin_prof.company_id:
+                qs = qs.filter(company_id=admin_prof.company_id)
+            else:
+                qs = qs.none()
+        elif comp_filter and str(comp_filter).isdigit():
+            qs = qs.filter(company_id=int(comp_filter))
         if not include_all:
             qs = qs.filter(is_approved=False)
         users_list = []
@@ -132,12 +143,19 @@ class RBACUserManagementView(APIView):
 
     def post(self, request, pk=None, *args, **kwargs):
         from accounts.models import BusinessUnit
+        from backend.permissions import jwt_user
+        req_user = jwt_user(request)
         data = request.data or {}
         profile_id = pk or data.get('profile_id') or data.get('id') or data.get('user_id')
         profile = UserProfile.objects.filter(id=profile_id).first() or UserProfile.objects.filter(user_id=profile_id).first()
 
         if not profile:
             return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if req_user and not req_user.is_superuser:
+            admin_prof = UserProfile.objects.filter(user=req_user).first()
+            if not admin_prof or not admin_prof.company_id or profile.company_id != admin_prof.company_id:
+                return Response({'error': 'You can only manage users belonging to your own company.'}, status=status.HTTP_403_FORBIDDEN)
 
         action = request.path.strip('/').split('/')[-1]
         if action in ['approve', 'accept'] or data.get('action') in ['approve', 'update_access'] or data.get('is_approved') is True:
@@ -149,6 +167,10 @@ class RBACUserManagementView(APIView):
                 profile.custom_permissions = data.get('custom_permissions')
             if data.get('company') or data.get('company_id'):
                 cid = data.get('company') or data.get('company_id')
+                if req_user and not req_user.is_superuser:
+                    admin_prof = UserProfile.objects.filter(user=req_user).first()
+                    if admin_prof and admin_prof.company_id:
+                        cid = admin_prof.company_id
                 c = Company.objects.filter(id=cid).first()
                 if c:
                     profile.company = c
@@ -191,20 +213,15 @@ class CompanyListView(APIView):
 
         comps = Company.objects.all().order_by('id')
 
-        if target_user:
+        if target_user and not target_user.is_superuser:
             profile = UserProfile.objects.filter(user=target_user).select_related('company').first()
-            role_str = (profile.role if profile and profile.role else '').upper()
-            is_admin = bool(target_user.is_superuser or target_user.is_staff or role_str == 'ADMIN')
-
-            if not is_admin:
-                allowed_ids = set()
-                if profile and profile.company_id:
-                    allowed_ids.add(profile.company_id)
-                # Check if ManyToMany field (companies / allowed_companies) exists
-                for m2m_name in ['companies', 'allowed_companies']:
-                    if profile and hasattr(profile, m2m_name):
-                        allowed_ids.update(getattr(profile, m2m_name).values_list('id', flat=True))
-                comps = comps.filter(id__in=allowed_ids)
+            allowed_ids = set()
+            if profile and profile.company_id:
+                allowed_ids.add(profile.company_id)
+            for m2m_name in ['companies', 'allowed_companies']:
+                if profile and hasattr(profile, m2m_name):
+                    allowed_ids.update(getattr(profile, m2m_name).values_list('id', flat=True))
+            comps = comps.filter(id__in=allowed_ids)
 
         data = []
         for c in comps:
@@ -224,3 +241,49 @@ class CompanyListView(APIView):
                 'bank_details': getattr(c, 'bank_details', '') or '',
             })
         return Response(data, status=status.HTTP_200_OK)
+
+
+class RBACInviteLinkView(APIView):
+    permission_classes = [IsCompanyAdmin]
+
+    def post(self, request):
+        from django.core.signing import TimestampSigner
+        from backend.permissions import jwt_user
+
+        req_user = jwt_user(request)
+        data = request.data or {}
+        prof = UserProfile.objects.filter(user=req_user).select_related('company').first() if req_user else None
+
+        comp_id = data.get('company_id') or (prof.company_id if prof else None)
+        if req_user and not req_user.is_superuser and prof and prof.company_id:
+            comp_id = prof.company_id
+
+        comp = Company.objects.filter(id=comp_id).first() if comp_id else Company.objects.first()
+        if not comp:
+            return Response({'error': 'No active company found to generate invite link.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        username = (data.get('username') or '').strip()
+        first_name = (data.get('first_name') or '').strip()
+        last_name = (data.get('last_name') or '').strip()
+        role = (data.get('role') or 'Sales User').strip()
+        if role not in ('Sales User', 'Manager', 'ADMIN', 'MANAGER', 'SALES_USER'):
+            role = 'Sales User'
+
+        payload = {
+            'company_id': comp.id,
+            'company_name': comp.name,
+            'username': username,
+            'first_name': first_name,
+            'last_name': last_name,
+            'role': role,
+        }
+        signer = TimestampSigner(salt='tallybiz-staff-invite')
+        token = signer.sign_object(payload)
+        return Response({
+            'token': token,
+            'company_id': comp.id,
+            'company_name': comp.name,
+            'username': username,
+            'role': role,
+            'expires_in_days': 7,
+        }, status=status.HTTP_200_OK)

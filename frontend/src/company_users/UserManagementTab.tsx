@@ -30,6 +30,11 @@ export const UserManagementTab: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [customPermsMap, setCustomPermsMap] = useState<Record<number, { allowed: string[]; revoked: string[] }>>({});
   const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [inviteFullName, setInviteFullName] = useState('');
+  const [inviteRole, setInviteRole] = useState('Sales User');
+  const [generatedInviteUrl, setGeneratedInviteUrl] = useState('');
+  const [generatingInvite, setGeneratingInvite] = useState(false);
 
   const ALL_MODULES = [
     { key: 'approvals', label: 'Approvals Hub', salesDefault: false, mgrDefault: true, adminOnly: false },
@@ -93,7 +98,8 @@ export const UserManagementTab: React.FC = () => {
   const fetchPendingUsers = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/accounts/users/pending/?include_all=1`);
+      const activeComp = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/accounts/users/pending/?include_all=1&company_id=${activeComp}`);
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.users || data.results || []);
@@ -220,6 +226,144 @@ export const UserManagementTab: React.FC = () => {
         >
           {loading ? 'Refreshing...' : '🔄 Refresh Queue'}
         </button>
+      </div>
+
+      {/* Staff Invite Link Generator (Only invited users enter your approval queue) */}
+      <div style={{
+        backgroundColor: '#ffffff',
+        border: '1px solid #bae6fd',
+        borderRadius: '10px',
+        padding: '16px 20px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>
+              🔗 Generate Staff Invite Link (For Your Company Only)
+            </div>
+            <div style={{ fontSize: '12px', color: '#64748b' }}>
+              Share this link with your staff. Only users who sign up via this link will appear in your Pending Approval queue below.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.9fr auto', gap: '10px', alignItems: 'end' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+              Lock Username (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. revati (or leave blank)"
+              value={inviteUsername}
+              onChange={(e) => setInviteUsername(e.target.value)}
+              style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+              Staff Full Name (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Revati Ben"
+              value={inviteFullName}
+              onChange={(e) => setInviteFullName(e.target.value)}
+              style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+              Default Role
+            </label>
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+              style={{ width: '100%', padding: '7px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', background: '#fff' }}
+            >
+              <option value="Sales User">Sales User</option>
+              <option value="Manager">Manager</option>
+              <option value="ADMIN">Admin</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            disabled={generatingInvite}
+            onClick={async () => {
+              setGeneratingInvite(true);
+              try {
+                const token = localStorage.getItem('access_token');
+                const activeCompId = localStorage.getItem('active_company_id') || (companies[0] ? String(companies[0].id) : '');
+                const parts = inviteFullName.trim().split(/\s+/);
+                const first_name = parts[0] || '';
+                const last_name = parts.slice(1).join(' ');
+                const res = await fetch(`${API_BASE}/accounts/users/invite-link/`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                  },
+                  body: JSON.stringify({
+                    company_id: activeCompId,
+                    username: inviteUsername.trim(),
+                    first_name,
+                    last_name,
+                    role: inviteRole,
+                  }),
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'Failed to generate invite link');
+                const url = `${window.location.origin}/?invite=${encodeURIComponent(d.token)}`;
+                setGeneratedInviteUrl(url);
+                if (navigator.clipboard) {
+                  await navigator.clipboard.writeText(url).catch(() => {});
+                }
+                setSuccessMsg(`Invite link generated & copied for ${d.company_name}!`);
+                setTimeout(() => setSuccessMsg(null), 4000);
+              } catch (err: any) {
+                alert(err.message || 'Could not generate invite link');
+              } finally {
+                setGeneratingInvite(false);
+              }
+            }}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '6px',
+              border: 'none',
+              backgroundColor: '#0284c7',
+              color: '#fff',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {generatingInvite ? 'Generating...' : 'Generate & Copy Link'}
+          </button>
+        </div>
+
+        {generatedInviteUrl && (
+          <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', background: '#f8fafc', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+            <input
+              type="text"
+              readOnly
+              value={generatedInviteUrl}
+              onClick={(e) => (e.target as HTMLInputElement).select()}
+              style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '12px', color: '#0f172a', outline: 'none' }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (navigator.clipboard) navigator.clipboard.writeText(generatedInviteUrl);
+                setSuccessMsg('Invite link copied to clipboard!');
+                setTimeout(() => setSuccessMsg(null), 3000);
+              }}
+              style={{ padding: '5px 10px', borderRadius: '5px', border: '1px solid #bae6fd', background: '#e0f2fe', color: '#0369a1', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              Copy URL
+            </button>
+          </div>
+        )}
       </div>
 
       {successMsg && (

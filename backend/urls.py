@@ -1,5 +1,5 @@
 from backend.views import CompanyListView
-from backend.views import RBACUserManagementView
+from backend.views import RBACUserManagementView, RBACInviteLinkView
 from django.urls import re_path
 from backend.views import UniversalLoginView, CompanyListView
 from django.views.generic import RedirectView
@@ -9,6 +9,7 @@ from django.urls import path, include
 
 urlpatterns = [
     path('api/accounts/companies/', CompanyListView.as_view()),
+    path('api/accounts/users/invite-link/', RBACInviteLinkView.as_view()),
     path('api/accounts/users/pending/', RBACUserManagementView.as_view()),
     path('api/accounts/users/<int:pk>/approve/', RBACUserManagementView.as_view()),
     path('api/accounts/users/<int:pk>/reject/', RBACUserManagementView.as_view()),

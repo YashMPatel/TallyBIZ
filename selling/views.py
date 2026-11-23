@@ -216,10 +216,17 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
         u_obj = resolve_active_unit(request, comp, default_unit_type='TRADING')
         inv_no = (data.get('invoice_number') or '').strip()
+        is_proforma = inv_no.upper().startswith('PI-')
         # GST Rule 46: one serial series per GSTIN, so uniqueness is per company, not per division.
-        # ponytail: single INV- series, add per-FY prefix (e.g. 2627/INV-) if the CA wants yearly reset
-        if not inv_no or SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
-            count = SalesInvoice.objects.filter(company=comp).count() + 1
+        if is_proforma:
+            if SalesInvoice.objects.filter(company=comp, invoice_number__iexact=inv_no).exists():
+                pi_count = SalesInvoice.objects.filter(company=comp, invoice_number__istartswith='PI-').count() + 1
+                inv_no = f"PI-{pi_count:03d}"
+                while SalesInvoice.objects.filter(company=comp, invoice_number__iexact=inv_no).exists():
+                    pi_count += 1
+                    inv_no = f"PI-{pi_count:03d}"
+        elif not inv_no or SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
+            count = SalesInvoice.objects.filter(company=comp).exclude(invoice_number__istartswith='PI-').count() + 1
             inv_no = f"INV-{count:04d}"
             while SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
                 count += 1
@@ -246,7 +253,7 @@ class SalesInvoiceListCreateAPIView(generics.ListCreateAPIView):
 
         user = _resolve_request_user(request)
 
-        if invoice_type != 'JOB_WORK':
+        if invoice_type != 'JOB_WORK' and not is_proforma:
             validate_sales_invoice_stock(data.get('items', []), comp.id if comp else None)
 
         with transaction.atomic():
@@ -387,3 +394,75 @@ class SalesInvoiceApproveAPIView(APIView):
         if update_fields:
             invoice.save(update_fields=update_fields)
         return Response({'status': 'Approved', 'id': invoice.id})
+
+
+class ConvertProformaToTaxInvoiceAPIView(APIView):
+    @transaction.atomic
+    def post(self, request, pk):
+        comp = get_request_company(request)
+        pi = get_object_or_404(SalesInvoice, pk=pk)
+        if comp and pi.company_id and pi.company_id != comp.id:
+            return Response({'error': 'Proforma invoice does not belong to active company.'}, status=status.HTTP_403_FORBIDDEN)
+        if not str(pi.invoice_number or '').upper().startswith('PI-'):
+            return Response({'error': 'Only Proforma Invoices (PI-...) can be converted to Tax Invoice.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        use_comp = pi.company or comp
+        count = SalesInvoice.objects.filter(company=use_comp).exclude(invoice_number__istartswith='PI-').count() + 1
+        inv_no = f"INV-{count:04d}"
+        while SalesInvoice.objects.filter(company=use_comp, invoice_number=inv_no).exists():
+            count += 1
+            inv_no = f"INV-{count:04d}"
+
+        p_date = timezone.now().date()
+        due_days = 30
+        if pi.posting_date and pi.due_date:
+            diff = (pi.due_date - pi.posting_date).days
+            if diff > 0:
+                due_days = diff
+        due_date = p_date + timezone.timedelta(days=due_days)
+
+        user = _resolve_request_user(request)
+        tax_inv = SalesInvoice.objects.create(
+            company=use_comp,
+            unit=pi.unit,
+            customer=pi.customer,
+            customer_name=pi.customer_name,
+            invoice_type=pi.invoice_type,
+            party_challan_no=pi.party_challan_no,
+            invoice_number=inv_no,
+            posting_date=p_date,
+            due_date=due_date,
+            tax_rate=pi.tax_rate,
+            net_total=pi.net_total,
+            tax_amount=pi.tax_amount,
+            adjustment=pi.adjustment,
+            grand_total=pi.grand_total,
+            status='Draft',
+            created_by=user or pi.created_by,
+        )
+        for line in pi.items.all():
+            SalesInvoiceItem.objects.create(
+                invoice=tax_inv,
+                item=line.item,
+                hsn_code=line.hsn_code,
+                description=line.description,
+                quantity=line.quantity,
+                billed_unit=line.billed_unit,
+                billed_qty=line.billed_qty,
+                rate=line.rate,
+                discount_percentage=line.discount_percentage,
+                discount_amount=line.discount_amount,
+                is_foc=line.is_foc,
+                amount=line.amount,
+            )
+
+        pi.status = 'Rejected'
+        pi.rejection_reason = f'Converted to Tax Invoice {inv_no}'
+        pi.save(update_fields=['status', 'rejection_reason'])
+
+        ser = SalesInvoiceSerializer(tax_inv)
+        return Response({
+            'message': f'Proforma {pi.invoice_number} converted to Tax Invoice {inv_no}!',
+            'invoice_number': inv_no,
+            'invoice': ser.data,
+        }, status=status.HTTP_201_CREATED)

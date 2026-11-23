@@ -39,6 +39,15 @@ export const CompanyGateway: React.FC<CompanyGatewayProps> = ({
   const [address, setAddress] = useState('');
   const [busy, setBusy] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const isGatewayAdmin = (() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('user_data') || localStorage.getItem('rbac_user') || 'null');
+      const r = String(u?.role || '').trim().toUpperCase();
+      return Boolean(u?.is_superuser || u?.is_staff || r === 'ADMIN');
+    } catch {
+      return false;
+    }
+  })();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -448,7 +457,7 @@ Existing data in "${selComp.name}" will be replaced. Other companies will NOT be
             </form>
           )}
 
-              {companies[selectedIndex] && (
+              {isGatewayAdmin && companies[selectedIndex] && (
                 <div style={{
                   fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9',
                   padding: '6px 10px', borderRadius: '6px', marginBottom: '10px',
@@ -459,41 +468,45 @@ Existing data in "${selComp.name}" will be replaced. Other companies will NOT be
                 </div>
               )}
               <div style={{
-                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px',
+                display: 'grid', gridTemplateColumns: isGatewayAdmin ? '1fr 1fr 1fr' : '1fr', gap: '10px',
                 paddingTop: '12px', borderTop: '1px solid #e2e8f0'
               }}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleBackup}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
-                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
-                  }}
-                >
-                  <Download size={14} color="#0284c7" /> Backup Data
-                </button>
+                {isGatewayAdmin && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleBackup}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                        padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
+                        backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
+                      }}
+                    >
+                      <Download size={14} color="#0284c7" /> Backup Data
+                    </button>
 
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                    padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
-                    backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
-                  }}
-                >
-                  <Upload size={14} color="#16a34a" /> Restore Data
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleRestoreFile}
-                  style={{ display: 'none' }}
-                />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                        padding: '9px 10px', borderRadius: '7px', border: '1px solid #cbd5e1',
+                        backgroundColor: '#f8fafc', color: '#0f172a', fontWeight: 600, fontSize: '12px', cursor: 'pointer'
+                      }}
+                    >
+                      <Upload size={14} color="#16a34a" /> Restore Data
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      onChange={handleRestoreFile}
+                      style={{ display: 'none' }}
+                    />
+                  </>
+                )}
 
                 <button
                   type="button"

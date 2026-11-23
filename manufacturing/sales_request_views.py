@@ -265,6 +265,8 @@ class ProductionSalesRequestListCreateAPIView(APIView):
                 'party_challan_no': (data.get('party_challan_no') or '').strip(),
                 'existing_invoice_id': data.get('existing_invoice_id'),
                 'existing_invoice_no': (data.get('existing_invoice_no') or '').strip(),
+                'proforma_invoice_id': data.get('proforma_invoice_id'),
+                'proforma_invoice_no': (data.get('proforma_invoice_no') or '').strip(),
                 'line_items_summary': data.get('line_items_summary') or [],
                 'selling_rate': float(sell_rate or item_obj.selling_rate or 0),
                 'cost_rate': float(cost_rate or item_obj.standard_rate or 0),
@@ -557,7 +559,7 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         if req_obj.customer_name:
             cust_obj, _ = Customer.objects.get_or_create(company=comp, customer_name=req_obj.customer_name)
 
-        cnt = SalesInvoice.objects.filter(company=comp).count() + 1
+        cnt = SalesInvoice.objects.filter(company=comp).exclude(invoice_number__istartswith='PI-').count() + 1
         inv_no = f"INV-{cnt:04d}"
         while SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
             cnt += 1
@@ -602,6 +604,15 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         snap['delivery_schedule'] = schedule
         req_obj.mrp_snapshot = snap
         req_obj.save(update_fields=['mrp_snapshot'])
+
+        pi_id = snap.get('proforma_invoice_id')
+        pi_no = (snap.get('proforma_invoice_no') or '').strip()
+        if pi_id or pi_no:
+            pi_obj = SalesInvoice.objects.filter(company=comp, id=pi_id).first() if pi_id else SalesInvoice.objects.filter(company=comp, invoice_number__iexact=pi_no).first()
+            if pi_obj and str(pi_obj.invoice_number or '').upper().startswith('PI-'):
+                pi_obj.status = 'Rejected'
+                pi_obj.rejection_reason = f'Converted to Tax Invoice {inv_no}'
+                pi_obj.save(update_fields=['status', 'rejection_reason'])
 
         inv_payload = {
             'id': inv.id,

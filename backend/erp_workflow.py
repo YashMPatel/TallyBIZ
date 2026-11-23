@@ -91,6 +91,8 @@ def validate_sales_invoice_stock(items_data, company_id=None):
 
 @transaction.atomic
 def approve_and_post_sales_invoice(invoice):
+    if str(getattr(invoice, 'invoice_number', '') or '').upper().startswith('PI-'):
+        raise ValidationError({'error': 'Proforma Invoice cannot be posted as a Tax Invoice. Click Convert to Tax Invoice first.'})
     Item = apps.get_model('stock', 'Item')
     StockLedgerEntry = apps.get_model('stock', 'StockLedgerEntry')
     GLEntry = apps.get_model('accounts', 'GLEntry')
