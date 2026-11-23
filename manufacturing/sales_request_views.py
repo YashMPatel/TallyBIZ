@@ -70,8 +70,6 @@ def _get_or_create_item(comp, item_id=None, item_name='', category='General', un
 
 
 class ProductionSalesRequestListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -285,8 +283,6 @@ class ProductionSalesRequestListCreateAPIView(APIView):
 
 
 class ProductionSalesRequestScheduleAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):
@@ -383,8 +379,6 @@ class ProductionSalesRequestScheduleAPIView(APIView):
 
 
 class ProductionSalesRequestDispatchAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):
@@ -524,8 +518,6 @@ class ProductionSalesRequestDispatchAPIView(APIView):
 
 
 class ProductionSalesRequestCreateInvoiceAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):
@@ -652,8 +644,6 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
 
 
 class ProductionSalesRequestAcceptPlanAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):

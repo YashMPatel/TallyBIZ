@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 
+from backend.permissions import IsCompanyAdmin
 from rest_framework import generics, viewsets, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -102,8 +103,6 @@ def resolve_active_unit(request, company, default_unit_type=None):
 
 
 class BusinessUnitListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         from .models import BusinessUnit, ensure_default_units
@@ -145,8 +144,6 @@ class BusinessUnitListCreateAPIView(APIView):
         return Response({'id': u.id, 'code': u.code, 'name': u.name, 'unit_type': u.unit_type}, status=status.HTTP_201_CREATED)
 
 class AccountsCompanyListView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         req_user = _resolve_gateway_user(request)
@@ -182,8 +179,6 @@ class AccountsCompanyListView(APIView):
 
 
 class AccountsCompanySwitchView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def post(self, request):
         company_id = request.data.get('company_id')
@@ -1083,8 +1078,6 @@ class ApproveDocumentAPIView(APIView):
 
 
 class FrontendCompanyCreateView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request):
@@ -1167,7 +1160,6 @@ from django.shortcuts import get_object_or_404 as _get_obj_404
 
 
 class MakerCheckerApprovalAPIView(_ApprovalAPIView):
-    authentication_classes = []
     permission_classes = []
     def post(self, request, action_type, doc_type, pk):
         from backend.erp_workflow import (
@@ -1239,8 +1231,7 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
 
 
 class DatabaseBackupAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    permission_classes = [IsCompanyAdmin]
 
     def get(self, request):
         import re as _re
@@ -1344,8 +1335,7 @@ class DatabaseBackupAPIView(APIView):
 
 
 class DatabaseRestoreAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    permission_classes = [IsCompanyAdmin]
 
     def post(self, request):
         import json
@@ -1639,8 +1629,6 @@ class DatabaseRestoreAPIView(APIView):
             return Response({'error': f'Restore failed: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CompanyBrandingAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def _serialize_company(self, c):
         b_name = getattr(c, 'bank_name', '') or ''

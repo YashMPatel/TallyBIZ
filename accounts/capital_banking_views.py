@@ -15,8 +15,6 @@ from .views import get_active_company
 
 
 class BankAccountListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -99,8 +97,6 @@ class BankAccountListCreateAPIView(APIView):
 
 
 class PartnerListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -232,8 +228,6 @@ class PartnerListCreateAPIView(APIView):
 
 
 class PartnerTransactionAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):
@@ -283,8 +277,6 @@ class PartnerTransactionAPIView(APIView):
 
 
 class LoanListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -379,8 +371,6 @@ class LoanListCreateAPIView(APIView):
 
 
 class LoanRepayAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):
@@ -421,8 +411,6 @@ class LoanRepayAPIView(APIView):
 
 
 class BankTransferAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -519,8 +507,6 @@ class BankTransferAPIView(APIView):
 
 
 class FixedAssetPurchaseAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)

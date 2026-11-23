@@ -54,7 +54,7 @@ def _get_authenticated_user(request):
 
 # 3. User Profile API
 @api_view(['GET', 'PUT'])
-@permission_classes([permissions.AllowAny])
+@permission_classes([permissions.IsAuthenticated])
 def user_profile(request):
     user = _get_authenticated_user(request)
     if not user:
@@ -97,7 +97,7 @@ def user_profile(request):
 
 # 4. Change Password API
 @api_view(['POST'])
-@permission_classes([permissions.AllowAny])
+@permission_classes([permissions.IsAuthenticated])
 def change_password(request):
     user = _get_authenticated_user(request)
     if not user:

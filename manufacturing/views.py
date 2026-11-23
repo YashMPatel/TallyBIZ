@@ -349,7 +349,6 @@ def _apply_order_lines(order, bom, data):
     order.save(update_fields=['total_raw_cost', 'net_production_cost', 'unit_cost'])
 
 class BOMListCreateView(APIView):
-    permission_classes = [AllowAny]
 
     
     def get(self, request):
@@ -403,7 +402,6 @@ class BOMListCreateView(APIView):
         return Response(_serialize_bom(bom), status=201)
 
 class BOMDetailView(APIView):
-    permission_classes = [AllowAny]
 
     def put(self, request, pk):
         bom = BillOfMaterial.objects.filter(id=pk).first()
@@ -462,7 +460,6 @@ class BOMDetailView(APIView):
         return Response({'deleted': True})
 
 class MRPCheckView(APIView):
-    permission_classes = [AllowAny]
 
     def get(self, request):
         bom_id = request.GET.get('bom_id')
@@ -512,7 +509,6 @@ class MRPCheckView(APIView):
         })
 
 class ProductionOrderListCreateView(APIView):
-    permission_classes = [AllowAny]
 
     def get(self, request):
         company = _get_company(request)
@@ -613,7 +609,6 @@ class ProductionOrderListCreateView(APIView):
         return Response(_serialize_order(order, include_vouchers=True), status=201)
 
 class ProductionOrderDetailView(APIView):
-    permission_classes = [AllowAny]
 
     def get(self, request, pk):
         order = ProductionOrder.objects.filter(id=pk).select_related('bom', 'finished_item', 'scrap_item').prefetch_related('consumptions__raw_item').first()
@@ -672,7 +667,6 @@ class ProductionOrderDetailView(APIView):
         return Response(_serialize_order(order, include_vouchers=True))
 
 class ProductionOrderApproveView(APIView):
-    permission_classes = [AllowAny]
 
     def post(self, request, pk):
         username, role = _get_actor(request)
@@ -689,7 +683,6 @@ class ProductionOrderApproveView(APIView):
         return Response(_serialize_order(order, include_vouchers=True))
 
 class ProductionOrderReopenView(APIView):
-    permission_classes = [AllowAny]
 
     def post(self, request, pk):
         username, role = _get_actor(request)
@@ -703,7 +696,6 @@ class ProductionOrderReopenView(APIView):
         return Response(_serialize_order(order, include_vouchers=True))
 
 class ProductionOrderCancelView(APIView):
-    permission_classes = [AllowAny]
 
     def post(self, request, pk):
         order = ProductionOrder.objects.filter(id=pk).first()

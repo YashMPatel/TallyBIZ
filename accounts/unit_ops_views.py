@@ -15,8 +15,6 @@ from .views import get_active_company, resolve_active_unit
 
 
 class UnitPettyCashAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -184,8 +182,6 @@ class UnitPettyCashAPIView(APIView):
 
 
 class DepartmentRequestListCreateAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     def get(self, request):
         comp = get_active_company(request)
@@ -264,8 +260,6 @@ class DepartmentRequestListCreateAPIView(APIView):
 
 
 class DepartmentRequestResolveAPIView(APIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
 
     @transaction.atomic
     def post(self, request, pk):

@@ -14,6 +14,10 @@ from accounts.models import GLEntry, PaymentEntry
 
 class MultiLineInvoiceTests(APITestCase):
     def setUp(self):
+        from django.contrib.auth.models import User
+        from rest_framework_simplejwt.tokens import RefreshToken
+        admin = User.objects.create_superuser('test_admin', 'admin@example.com', 'x')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(admin).access_token}')
         self.customer = Customer.objects.create(customer_name='Multi Cust')
         self.supplier = Supplier.objects.create(supplier_name='Multi Supp')
         self.item_a = Item.objects.create(item_code='MLA', item_name='Item A', standard_rate=100, current_stock=500)

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 from accounts.models import UserProfile, Company
 from django.contrib.auth import authenticate, get_user_model
+from backend.permissions import IsCompanyAdmin
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -85,8 +86,7 @@ class UniversalLoginView(APIView):
 
 
 class RBACUserManagementView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = [IsCompanyAdmin]
 
     def get(self, request, *args, **kwargs):
         include_all = request.query_params.get('include_all') == '1'
@@ -176,8 +176,6 @@ class RBACUserManagementView(APIView):
         return self.post(request, pk=pk, *args, **kwargs)
 
 class CompanyListView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
 
     def get(self, request, *args, **kwargs):
         user_id = request.query_params.get('user_id')
