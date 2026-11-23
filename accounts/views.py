@@ -1159,7 +1159,6 @@ from django.shortcuts import get_object_or_404 as _get_obj_404
 
 
 class MakerCheckerApprovalAPIView(_ApprovalAPIView):
-    permission_classes = []
     def post(self, request, action_type, doc_type, pk):
         from backend.erp_workflow import (
             approve_and_post_sales_invoice,
