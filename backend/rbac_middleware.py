@@ -3,6 +3,7 @@ import re
 from django.http import JsonResponse
 from django.contrib.auth import get_user_model
 from accounts.models import UserProfile
+from backend.permissions import jwt_user
 
 User = get_user_model()
 
@@ -22,16 +23,7 @@ class RBACPermissionMiddleware:
         self.get_response = get_response
 
     def _resolve_user_profile(self, request):
-        target_user = None
-        if getattr(request, 'user', None) and request.user.is_authenticated:
-            target_user = request.user
-        else:
-            user_id = request.headers.get('X-User-ID') or request.GET.get('user_id')
-            username = request.headers.get('X-Username') or request.GET.get('username')
-            if user_id and str(user_id).isdigit():
-                target_user = User.objects.filter(id=int(user_id)).first()
-            elif username:
-                target_user = User.objects.filter(username__iexact=username).first()
+        target_user = jwt_user(request)
 
         if not target_user:
             return None, None

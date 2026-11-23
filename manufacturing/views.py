@@ -32,13 +32,6 @@ def _get_company(request):
 def _get_actor(request):
     u = getattr(request, 'user', None) if getattr(request, 'user', None) and request.user.is_authenticated else None
     if not u:
-        uid = request.headers.get('X-User-ID') or request.GET.get('user_id')
-        uname = request.headers.get('X-Username') or request.GET.get('username')
-        if uid and str(uid).isdigit():
-            u = User.objects.filter(id=int(uid)).first()
-        elif uname:
-            u = User.objects.filter(username__iexact=uname).first()
-    if not u:
         return ('Admin', 'ADMIN')
     prof = UserProfile.objects.filter(user=u).first()
     role = 'ADMIN' if (u.is_superuser or u.is_staff) else (prof.role.upper() if prof and prof.role else 'SALES_USER')

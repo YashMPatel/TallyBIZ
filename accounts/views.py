@@ -53,15 +53,6 @@ def _resolve_gateway_user(request):
             return auth_res[0]
     except Exception:
         pass
-    from django.contrib.auth.models import User
-    uid = request.headers.get('X-User-ID') or request.META.get('HTTP_X_USER_ID')
-    uname = request.headers.get('X-Username') or request.META.get('HTTP_X_USERNAME')
-    if uid:
-        u = User.objects.filter(id=uid).first()
-        if u:
-            return u
-    if uname:
-        return User.objects.filter(username=uname).first()
     return None
 
 
@@ -76,13 +67,6 @@ def _get_user_unit_access(request, company):
     target_user = None
     if getattr(request, 'user', None) and request.user.is_authenticated:
         target_user = request.user
-    if not target_user:
-        uid = request.headers.get('X-User-ID') or request.GET.get('user_id')
-        uname = request.headers.get('X-Username') or request.GET.get('username')
-        if uid and str(uid).isdigit():
-            target_user = UserModel.objects.filter(id=int(uid)).first()
-        elif uname:
-            target_user = UserModel.objects.filter(username__iexact=str(uname)).first()
     if not target_user or target_user.is_superuser:
         return target_user, True, None
     profile = UserProfile.objects.filter(user=target_user).select_related('assigned_unit').first()
@@ -1204,20 +1188,6 @@ class MakerCheckerApprovalAPIView(_ApprovalAPIView):
                 approver = None
                 if getattr(request, 'user', None) and request.user.is_authenticated:
                     approver = request.user
-                else:
-                    uid = (
-                        request.headers.get('X-User-ID')
-                        or request.META.get('HTTP_X_USER_ID')
-                        or request.GET.get('user_id')
-                    )
-                    uname = (
-                        request.headers.get('X-Username')
-                        or request.META.get('HTTP_X_USERNAME')
-                    )
-                    if uid:
-                        approver = UserModel.objects.filter(id=uid).first()
-                    if not approver and uname:
-                        approver = UserModel.objects.filter(username=uname).first()
                 uf = []
                 if hasattr(doc, 'approved_by') and approver:
                     doc.approved_by = approver

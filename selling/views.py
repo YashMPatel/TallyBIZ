@@ -42,18 +42,6 @@ def _resolve_request_user(request):
     raw_req = getattr(request, '_request', None)
     if raw_req and getattr(raw_req, 'user', None) and raw_req.user.is_authenticated:
         return raw_req.user
-    from django.contrib.auth import get_user_model
-    UserModel = get_user_model()
-    user_id = request.headers.get('X-User-ID') or request.GET.get('user_id')
-    username = request.headers.get('X-Username')
-    if user_id:
-        u = UserModel.objects.filter(id=user_id).first()
-        if u:
-            return u
-    if username:
-        u = UserModel.objects.filter(username=username).first()
-        if u:
-            return u
     return None
 
 
