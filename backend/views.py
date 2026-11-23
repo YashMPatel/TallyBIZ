@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 from accounts.models import UserProfile, Company
 from django.contrib.auth import authenticate, get_user_model
-from backend.permissions import IsCompanyAdmin
+from backend.permissions import IsCompanyAdmin, is_approved
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -39,9 +39,9 @@ class UniversalLoginView(APIView):
         if not auth_user:
             return Response({'error': 'Invalid password. Please check your password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        if not auth_user.is_active:
-            auth_user.is_active = True
-            auth_user.save()
+        if not is_approved(auth_user):
+            msg = 'Your account is pending admin approval.' if auth_user.is_active else 'This account is disabled.'
+            return Response({'error': msg}, status=status.HTTP_403_FORBIDDEN)
 
         # Determine Role
         role = 'ADMIN' if (auth_user.is_superuser or auth_user.is_staff) else 'STAFF'

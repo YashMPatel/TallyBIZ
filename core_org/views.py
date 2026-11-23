@@ -19,7 +19,6 @@ User = get_user_model()
 # 1. Company CRUD ViewSet
 class CompanyViewSet(viewsets.ModelViewSet):
     serializer_class = CompanySerializer
-    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
@@ -54,7 +53,6 @@ def _get_authenticated_user(request):
 
 # 3. User Profile API
 @api_view(['GET', 'PUT'])
-@permission_classes([permissions.IsAuthenticated])
 def user_profile(request):
     user = _get_authenticated_user(request)
     if not user:
@@ -97,7 +95,6 @@ def user_profile(request):
 
 # 4. Change Password API
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
 def change_password(request):
     user = _get_authenticated_user(request)
     if not user:
@@ -121,7 +118,6 @@ def change_password(request):
 
 # 5. Switch Active Company API (Multi-Company Switcher)
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
 def switch_active_company(request):
     company_id = request.data.get('company_id')
     if not company_id:

@@ -1146,7 +1146,6 @@ class FrontendCompanyCreateView(APIView):
 
 
 class FrontendUserCreateView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         return Response({'message': 'OK'}, status=status.HTTP_201_CREATED)
