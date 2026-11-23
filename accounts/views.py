@@ -1078,6 +1078,8 @@ class ApproveDocumentAPIView(APIView):
 
 
 class FrontendCompanyCreateView(APIView):
+    # Creating a company makes the caller its ADMIN, so only an existing admin may do it.
+    permission_classes = [IsCompanyAdmin]
 
     @transaction.atomic
     def post(self, request):
