@@ -49,7 +49,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       ? await originalFetch(rawUrl, { ...init, headers })
       : await originalFetch(new Request(rawUrl, input), init);
 
+    // Only a rejected token means the session expired; a tokenless 401 (login screen) must not reload.
     if (
+      token &&
       response.status === 401 &&
       rawUrl.includes('/api/') &&
       !rawUrl.includes('/auth/login') &&
@@ -71,7 +73,7 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 axios.interceptors.response.use(undefined, (error) => {
-  if (error?.response?.status === 401) handleSessionExpired();
+  if (error?.response?.status === 401 && error.config?.headers?.Authorization) handleSessionExpired();
   return Promise.reject(error);
 });
 

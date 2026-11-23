@@ -73,7 +73,7 @@ function MainERPApp() {
 
 
   useEffect(() => {
-    if (!activeCompany?.id) {
+    if (!isAuthenticated || !activeCompany?.id) {
       return;
     }
     fetch(`${API_BASE}/accounts/bank-accounts/?company_id=${activeCompany.id}`).then((r) => (r.ok ? r.json() : [])).then((b) => setBankAccountsList(Array.isArray(b) ? b : [])).catch(() => {});
@@ -84,7 +84,7 @@ function MainERPApp() {
         setBusinessUnits(list);
       })
       .catch(() => setBusinessUnits([]));
-  }, [activeCompany?.id]);
+  }, [isAuthenticated, activeCompany?.id]);
 
   const handleCleanLogout = useCallback(() => {
     setActiveCompany(null);
