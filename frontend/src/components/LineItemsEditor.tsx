@@ -12,6 +12,15 @@ interface LineItemsEditorProps {
   onChange: (lines: LineForm[]) => void;
 }
 
+const baseItemIdOf = (val: any): string => {
+  const s = String(val ?? '');
+  return s.includes('::') ? s.split('::')[0] : s;
+};
+const bomGroupKeyOf = (val: any): string => {
+  const s = String(val ?? '');
+  return s.includes('::') ? s.split('::')[1] : '';
+};
+
 export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
   lines,
   items,
@@ -31,16 +40,24 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
     updated[index] = { ...updated[index], [field]: value };
 
     if (field === 'item_id') {
-      const selectedItem = items.find(
-        (i) => i.id !== undefined && String(i.id) === String(value)
+      const bId = baseItemIdOf(value);
+      const gKey = bomGroupKeyOf(value);
+      const selectedItem: any = items.find(
+        (i) => i.id !== undefined && String(i.id) === bId
       );
       if (selectedItem) {
+        const bomGrp: any = gKey && Array.isArray(selectedItem.bom_stock_groups)
+          ? selectedItem.bom_stock_groups.find((g: any) => String(g.group_key) === gKey)
+          : null;
         updated[index].billed_unit = selectedItem.unit || 'Nos';
-        updated[index].rate = getBaseRate(selectedItem).toString();
+        const rVal = bomGrp && Number(bomGrp.unit_rate || 0) > 0
+          ? Number(bomGrp.unit_rate)
+          : getBaseRate(selectedItem);
+        updated[index].rate = rVal.toString();
       }
     } else if (field === 'billed_unit') {
       const selectedItem = items.find(
-        (i) => i.id !== undefined && String(i.id) === String(updated[index].item_id)
+        (i) => i.id !== undefined && String(i.id) === baseItemIdOf(updated[index].item_id)
       );
       if (selectedItem) {
         const baseRate = getBaseRate(selectedItem);
@@ -89,9 +106,13 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
             const gross = qty * rate;
             const net = Math.max(0, gross - (gross * disc) / 100);
 
-            const selectedItem = items.find(
-              (i) => i.id !== undefined && String(i.id) === String(line.item_id)
+            const lineBomKey = bomGroupKeyOf(line.item_id);
+            const selectedItem: any = items.find(
+              (i) => i.id !== undefined && String(i.id) === baseItemIdOf(line.item_id)
             );
+            const activeBomGroup: any = selectedItem && lineBomKey && Array.isArray(selectedItem.bom_stock_groups)
+              ? selectedItem.bom_stock_groups.find((g: any) => String(g.group_key) === lineBomKey)
+              : null;
             const conv = Number(selectedItem?.conversion_factor || 1);
             const hasAlt = Boolean(
               selectedItem?.alt_unit &&
@@ -122,6 +143,17 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                       return !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc));
                     }).map((it, itIdx) => {
                       const itHasAlt = it.alt_unit && Number(it.conversion_factor || 0) > 0;
+                      const groups: any[] = Array.isArray((it as any).bom_stock_groups) ? (it as any).bom_stock_groups : [];
+                      if (groups.length > 1) {
+                        return groups.map((g: any, gIdx: number) => (
+                          <option
+                            key={`${it.id ?? itIdx}-bom-${gIdx}`}
+                            value={`${it.id}::${g.group_key}`}
+                          >
+                            {it.item_name} • {g.bom_code ? `${g.bom_code} ` : ''}{g.bom_name} ({it.item_code}) • {it.unit || 'Nos'}{itHasAlt ? ` (1 ${it.unit} = ${Number(it.conversion_factor)} ${it.alt_unit})` : ''}{it.hsn_code ? ` • HSN: ${it.hsn_code}` : ''}{showStock ? ` — Stock: ${Number(g.stock_qty ?? 0).toFixed(2)}` : ''}
+                          </option>
+                        )) as any;
+                      }
                       return (
                         <option
                           key={it.id !== undefined ? it.id : itIdx}
@@ -157,18 +189,26 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                   )}
                 </td>
                 {showStock && (
-                  <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
-                    {selectedItem ? (
+                  <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>{selectedItem ? (() => {
+                    const dispStock = activeBomGroup
+                      ? Number(activeBomGroup.stock_qty ?? 0)
+                      : Number(selectedItem.current_stock ?? 0);
+                    const dispConv = activeBomGroup
+                      ? Number(activeBomGroup.conversion_factor || conv || 1)
+                      : conv;
+                    return (
                       <div>
-                        <div>{selectedItem.current_stock} {selectedItem.unit}</div>
+                        <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '12.5px' }}>
+                          {dispStock.toFixed(2)} {selectedItem.unit || 'Nos'}
+                        </div>
                         {hasAlt && (
-                          <div style={{ fontSize: '10px', color: '#0369a1' }}>
-                            ({(Number(selectedItem.current_stock || 0) * conv).toFixed(0)} {selectedItem.alt_unit})
+                          <div style={{ marginTop: '3px', fontSize: '12px', fontWeight: 700, color: '#0369a1', background: '#e0f2fe', border: '1px solid #7dd3fc', borderRadius: '4px', padding: '1px 6px', display: 'inline-block' }}>
+                            {(dispStock * dispConv).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {selectedItem.alt_unit}
                           </div>
                         )}
                       </div>
-                    ) : '-'}
-                  </td>
+                    );
+                  })() : '-'}</td>
                 )}
                 <td style={{ padding: '6px 8px' }}>
                   <input
