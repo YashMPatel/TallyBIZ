@@ -130,7 +130,23 @@ export const StockLedgerTab: FC<StockLedgerTabProps> = ({
           },
           {
             header: `Valuation Rate (${symbol})`,
-            accessor: (r) => `${symbol} ${Number(r.valuation_rate || 0).toFixed(2)}`,
+            accessor: (r) => {
+              const rateVal = Number(r.valuation_rate || 0);
+              const it = (items || []).find((x: any) => String(x.id) === String(r.item) || (r.item_code && x.item_code === r.item_code));
+              const unitLabel = it?.unit || r.unit || '';
+              const conv = Number(it?.conversion_factor || 0);
+              const hasAlt = Boolean(it?.alt_unit && conv > 0 && String(it.alt_unit).toLowerCase() !== String(unitLabel).toLowerCase());
+              return (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <span>{symbol} {(hasAlt ? rateVal / conv : rateVal).toFixed(2)}{hasAlt ? ` / ${it!.alt_unit}` : (unitLabel ? ` / ${unitLabel}` : '')}</span>
+                  {hasAlt && (
+                    <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                      {symbol} {rateVal.toFixed(2)} / {unitLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            },
           },
           {
             header: `Total Value (${symbol})`,

@@ -14,6 +14,8 @@ class Item(models.Model):
     item_name = models.CharField(max_length=150)
     category = models.CharField(max_length=100, default='General')
     unit = models.CharField(max_length=50, default='Nos')
+    alt_unit = models.CharField(max_length=50, blank=True, default='')
+    conversion_factor = models.DecimalField(max_digits=12, decimal_places=4, default=1.0000)
     hsn_code = models.CharField(max_length=20, blank=True, default='')
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00)
     standard_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)

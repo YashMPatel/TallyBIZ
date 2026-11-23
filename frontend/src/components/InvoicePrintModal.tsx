@@ -394,7 +394,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                             </strong>
                             <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
                               Code: {masterItem?.item_code || '-'} | {(invoice as any).invoice_type === 'JOB_WORK' ? 'SAC' : 'HSN'}: {(itemRow as any).hsn_code || ((invoice as any).invoice_type === 'JOB_WORK' ? '9988' : (masterItem as any)?.hsn_code || '-')} | Unit:{' '}
-                              {masterItem?.unit || 'Nos'}
+                              {(itemRow as any).billed_unit || masterItem?.unit || 'Nos'}
                             </div>
                             {(itemRow as any).description && String((itemRow as any).description).includes('Dispatch') ? (
                               <div style={{ fontSize: '10px', color: '#0369a1', fontWeight: 600, marginTop: '4px', whiteSpace: 'pre-line', background: '#f0f9ff', padding: '4px 6px', borderRadius: '4px', borderLeft: '2px solid #0284c7' }}>
@@ -406,10 +406,39 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                             ) : null}
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
-                            {itemRow.quantity}
+                            {(() => {
+                              const bQty = Number((itemRow as any).billed_qty || 0);
+                              const pQty = Number(itemRow.quantity || 0);
+                              const bUnit = (itemRow as any).billed_unit || masterItem?.unit || '';
+                              const isAltBilled = bQty > 0 && Math.abs(bQty - pQty) > 0.0001;
+                              const conv = Number((masterItem as any)?.conversion_factor || 0);
+                              if (isAltBilled) {
+                                return (
+                                  <div>
+                                    <div>{bQty} {bUnit}</div>
+                                    <div style={{ fontSize: '10px', color: '#64748b' }}>({pQty} {masterItem?.unit})</div>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div>
+                                  <div>{itemRow.quantity}</div>
+                                  {(masterItem as any)?.alt_unit && conv > 0 ? (
+                                    <div style={{ fontSize: '10px', color: '#64748b' }}>({(pQty * conv).toFixed(0)} {(masterItem as any).alt_unit})</div>
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'right', verticalAlign: 'top' }}>
-                            {isFoc ? '0.00' : parseFloat(itemRow.rate.toString()).toFixed(2)}
+                            {(() => {
+                              if (isFoc) return '0.00';
+                              const bQty = Number((itemRow as any).billed_qty || 0);
+                              const pQty = Number(itemRow.quantity || 0);
+                              const isAltBilled = bQty > 0 && Math.abs(bQty - pQty) > 0.0001;
+                              const dispRate = isAltBilled ? Number(itemRow.rate) * (pQty / bQty) : Number(itemRow.rate);
+                              return dispRate.toFixed(2);
+                            })()}
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center', verticalAlign: 'top' }}>
                             {discPct > 0 ? `${discPct}%` : '-'}

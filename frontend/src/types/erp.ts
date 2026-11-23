@@ -26,12 +26,16 @@ export interface Supplier {
 
 export interface Item {
   hsn_code?: string;
+  gst_rate?: number | string;
   id?: number;
   item_code: string;
   item_name: string;
   category: string;
   unit: string;
+  alt_unit?: string;
+  conversion_factor?: number | string;
   standard_rate: number | string;
+  selling_rate?: number | string;
   current_stock: number | string;
 }
 

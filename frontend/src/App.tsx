@@ -234,6 +234,8 @@ function MainERPApp() {
     item_name: '',
     category: 'General',
     unit: 'Nos',
+    alt_unit: '',
+    conversion_factor: '1',
     hsn_code: '',
     gst_rate: '18',
     standard_rate: '0',
@@ -601,8 +603,10 @@ function MainERPApp() {
         body: JSON.stringify({
           ...itemForm,
           company: activeCompanyId ? parseInt(String(activeCompanyId), 10) : undefined,
+          alt_unit: ((itemForm as any).alt_unit || '').trim(),
+          conversion_factor: parseFloat((itemForm as any).conversion_factor) || 1,
           standard_rate: parseFloat(itemForm.standard_rate) || 0,
-      selling_rate: parseFloat((itemForm as any).selling_rate) || 0,
+          selling_rate: parseFloat((itemForm as any).selling_rate) || 0,
           current_stock: parseFloat(itemForm.current_stock) || 0
         })
       });
@@ -649,6 +653,7 @@ function MainERPApp() {
 
       return {
         item: parseInt(l.item_id, 10), ...((l as any).hsn_code ? { hsn_code: (l as any).hsn_code } : {}),
+        ...(l.billed_unit ? { billed_unit: l.billed_unit } : {}),
         quantity,
         rate,
         discount_percentage: discPct,
@@ -1247,7 +1252,7 @@ function MainERPApp() {
             background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
           }}>
             <div style={{
-              background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
+              background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '720px', padding: '24px',
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
@@ -1452,7 +1457,7 @@ function MainERPApp() {
           background: 'rgba(15, 23, 42, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }}>
           <div style={{
-            background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '24px',
+            background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '720px', padding: '24px',
             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxHeight: '90vh', overflowY: 'auto'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -1799,7 +1804,7 @@ function MainERPApp() {
       {/* Item Modal */}
       {showItemModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: '420px' }}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', width: '94vw', maxWidth: '760px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0, fontSize: '18px' }}>{editingId ? 'Edit Item' : 'Create New Item'}</h3>
               <button onClick={() => setShowItemModal(false)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}><X size={18} /></button>
@@ -1928,6 +1933,42 @@ function MainERPApp() {
                     <option value="18">18%</option>
                     <option value="28">28%</option>
                   </select>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', background: '#f8fafc', padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#475569' }}>Alternate Unit (Optional)</label>
+                  <select
+                    style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '3px', boxSizing: 'border-box', background: '#fff', fontSize: '12px' }}
+                    value={(itemForm as any).alt_unit || ''}
+                    onChange={e => setItemForm({ ...itemForm, alt_unit: e.target.value } as any)}
+                  >
+                    <option value="">None (Single Unit)</option>
+                    <option value="Nos">Nos (Numbers)</option>
+                    <option value="Pcs">Pcs (Pieces)</option>
+                    <option value="Box">Box</option>
+                    <option value="Mtr">Mtr (Meter)</option>
+                    <option value="Kg">Kg (Kilogram)</option>
+                    <option value="Ltr">Ltr (Litre)</option>
+                    <option value="Roll">Roll</option>
+                    <option value="Set">Set</option>
+                    <option value="Pair">Pair</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1.2 }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#475569' }}>
+                    1 {itemForm.unit || 'Unit'} = ? {(itemForm as any).alt_unit || 'Alt Unit'}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.0001"
+                    disabled={!(itemForm as any).alt_unit}
+                    placeholder="e.g. 3, 4, 5..."
+                    style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '3px', boxSizing: 'border-box', fontSize: '12px', background: !(itemForm as any).alt_unit ? '#f1f5f9' : '#fff' }}
+                    value={(itemForm as any).conversion_factor ?? '1'}
+                    onChange={e => setItemForm({ ...itemForm, conversion_factor: e.target.value } as any)}
+                  />
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>

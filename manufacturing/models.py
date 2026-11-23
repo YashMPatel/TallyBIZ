@@ -6,6 +6,7 @@ class BillOfMaterial(models.Model):
     name = models.CharField(max_length=150)
     finished_item = models.ForeignKey('stock.Item', on_delete=models.CASCADE, related_name='finished_boms')
     output_qty = models.DecimalField(max_digits=12, decimal_places=2, default=1.00)
+    alt_output_qty = models.DecimalField(max_digits=12, decimal_places=3, default=0.000)
     labor_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     overhead_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     notes = models.TextField(blank=True, default='')

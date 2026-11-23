@@ -103,6 +103,8 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [bomCode, setBomCode] = useState('');
   const [finishedItemId, setFinishedItemId] = useState<string>('');
   const [outputQty, setOutputQty] = useState<string>('1');
+  const [bomAltOutputQty, setBomAltOutputQty] = useState<string>('');
+  const [bomSearch, setBomSearch] = useState<string>('');
   const [bomLaborCost, setBomLaborCost] = useState<string>('0');
   const [bomOverheadCost, setBomOverheadCost] = useState<string>('0');
   const [bomNotes, setBomNotes] = useState('');
@@ -215,6 +217,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     setBomCode('');
     setFinishedItemId('');
     setOutputQty('1');
+    setBomAltOutputQty('');
     setBomLaborCost('0');
     setBomOverheadCost('0');
     setBomNotes('');
@@ -229,6 +232,8 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
     setBomCode(b.bom_code || '');
     setFinishedItemId(String(b.finished_item || ''));
     setOutputQty(String(b.output_qty || 1));
+    const validBomAlt = Number(b.alt_output_qty || 0) > 0 && (Boolean(b.finished_item_alt_unit) || Number(b.alt_output_qty) !== Number(b.output_qty));
+    setBomAltOutputQty(validBomAlt ? String(Number(b.alt_output_qty)) : '');
     setBomLaborCost(String(b.labor_cost || 0));
     setBomOverheadCost(String(b.overhead_cost || 0));
     setBomNotes(b.notes || '');
@@ -363,6 +368,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
           name: bomName,
           finished_item: Number(finishedItemId),
           output_qty: Number(outputQty || 1),
+          alt_output_qty: Number(bomAltOutputQty || 0),
           labor_cost: Number(bomLaborCost || 0),
           overhead_cost: Number(bomOverheadCost || 0),
           notes: bomNotes,
@@ -667,13 +673,52 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       </div>
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>
-                      {o.actual_qty} {o.finished_item_unit}
+                      {(() => {
+                        const fIt = items.find((x: any) => String(x.id) === String(o.finished_item));
+                        const oBom = boms.find((x: any) => String(x.id) === String(o.bom));
+                        const altLbl = fIt?.alt_unit || oBom?.finished_item_alt_unit || (Number(oBom?.alt_output_qty || 0) > 0 && Number(oBom?.alt_output_qty) !== Number(oBom?.output_qty) ? 'Nos' : '');
+                        const bomRatio = altLbl && Number(oBom?.alt_output_qty || 0) > 0 && Number(oBom?.output_qty || 0) > 0
+                          ? Number(oBom.alt_output_qty) / Number(oBom.output_qty)
+                          : 0;
+                        const conv = bomRatio > 0 ? bomRatio : (altLbl ? Number(fIt?.conversion_factor || 0) : 0);
+                        const hasAlt = Boolean(altLbl && conv > 0 && String(altLbl).toLowerCase() !== String(o.finished_item_unit || '').toLowerCase());
+                        return (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <span>{o.actual_qty} {o.finished_item_unit}</span>
+                            {hasAlt && (
+                              <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                                {(Number(o.actual_qty) * conv).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {altLbl}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700, color: '#0f172a' }}>
                       {symbol} {Number(o.net_production_cost).toFixed(2)}
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right', color: '#0284c7', fontWeight: 600 }}>
-                      {symbol} {Number(o.unit_cost).toFixed(2)}
+                      {(() => {
+                        const fIt = items.find((x: any) => String(x.id) === String(o.finished_item));
+                        const oBom = boms.find((x: any) => String(x.id) === String(o.bom));
+                        const altLbl = fIt?.alt_unit || oBom?.finished_item_alt_unit || (Number(oBom?.alt_output_qty || 0) > 0 && Number(oBom?.alt_output_qty) !== Number(oBom?.output_qty) ? 'Nos' : '');
+                        const bomRatio = altLbl && Number(oBom?.alt_output_qty || 0) > 0 && Number(oBom?.output_qty || 0) > 0
+                          ? Number(oBom.alt_output_qty) / Number(oBom.output_qty)
+                          : 0;
+                        const conv = bomRatio > 0 ? bomRatio : (altLbl ? Number(fIt?.conversion_factor || 0) : 0);
+                        const hasAlt = Boolean(altLbl && conv > 0 && String(altLbl).toLowerCase() !== String(o.finished_item_unit || '').toLowerCase());
+                        const uCost = Number(o.unit_cost || 0);
+                        return (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <span>{symbol} {(hasAlt ? uCost / conv : uCost).toFixed(2)} / {hasAlt ? altLbl : o.finished_item_unit}</span>
+                            {hasAlt && (
+                              <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                                {symbol} {uCost.toFixed(2)} / {o.finished_item_unit}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '12px' }}>
                       <span
@@ -733,6 +778,18 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         </div>
       ) : subTab === 'boms' ? (
         <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', overflowX: 'auto' }}>
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', background: '#f8fafc' }}>
+            <input
+              type="text"
+              value={bomSearch}
+              onChange={(e) => setBomSearch(e.target.value)}
+              placeholder="Search by Finished Item Name, Recipe Name, or BOM Code..."
+              style={{ width: '100%', maxWidth: '420px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+            />
+            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>
+              Multiple BOMs supported per item (e.g. BOM-001 250g, BOM-002 400g)
+            </span>
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#475569' }}>
@@ -746,16 +803,54 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
               </tr>
             </thead>
             <tbody>
-              {boms.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No BOM recipes found.</td></tr>
-              ) : boms.map((b: any) => (
+              {(() => {
+                const q = bomSearch.trim().toLowerCase();
+                const filteredBoms = q
+                  ? boms.filter((b: any) =>
+                      String(b.bom_code || '').toLowerCase().includes(q) ||
+                      String(b.name || '').toLowerCase().includes(q) ||
+                      String(b.finished_item_name || '').toLowerCase().includes(q)
+                    )
+                  : boms;
+                if (filteredBoms.length === 0) {
+                  return <tr><td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No matching BOM recipes found.</td></tr>;
+                }
+                return filteredBoms.map((b: any) => {
+                  const fIt = items.find((x: any) => String(x.id) === String(b.finished_item));
+                  const outQty = Number(b.output_qty || 1);
+                  const altLbl = fIt?.alt_unit || b.finished_item_alt_unit || (Number(b.alt_output_qty || 0) > 0 && Number(b.alt_output_qty) !== outQty ? 'Nos' : '');
+                  const altOut = altLbl
+                    ? (Number(b.alt_output_qty || 0) > 0 ? Number(b.alt_output_qty) : outQty * Number(fIt?.conversion_factor || 0))
+                    : 0;
+                  const hasAlt = Boolean(altLbl && altOut > 0 && String(altLbl).toLowerCase() !== String(b.finished_item_unit || '').toLowerCase());
+                  const uCost = Number(b.unit_cost || 0);
+                  const perAltCost = hasAlt && altOut > 0 ? (uCost * outQty) / altOut : 0;
+                  return (
                 <tr key={b.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                   <td style={{ padding: '12px', fontWeight: 700, color: '#0284c7' }}>{b.bom_code}</td>
                   <td style={{ padding: '12px', fontWeight: 600 }}>{b.name}</td>
                   <td style={{ padding: '12px' }}>{b.finished_item_name} ({b.finished_item_unit})</td>
-                  <td style={{ padding: '12px', textAlign: 'right' }}>{b.output_qty}</td>
+                  <td style={{ padding: '12px', textAlign: 'right' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <span style={{ fontWeight: 600 }}>{outQty} {b.finished_item_unit}</span>
+                      {hasAlt && (
+                        <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                          {altOut.toLocaleString('en-IN', { maximumFractionDigits: 2 })} {altLbl}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td style={{ padding: '12px', textAlign: 'right' }}>₹{Number(b.raw_material_cost || 0).toFixed(2)}</td>
-                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>₹{Number(b.unit_cost || 0).toFixed(2)}</td>
+                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: 700 }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <span>₹{(hasAlt ? perAltCost : uCost).toFixed(2)} / {hasAlt ? altLbl : b.finished_item_unit}</span>
+                      {hasAlt && (
+                        <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                          ₹{uCost.toFixed(2)} / {b.finished_item_unit}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td style={{ padding: '12px', textAlign: 'right' }}>
                     <div style={{ display: 'inline-flex', gap: '6px' }}>
                       <button onClick={() => openOrderForBom(b.id)} style={{ padding: '4px 9px', borderRadius: '6px', border: 'none', background: '#0f172a', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>+ Order</button>
@@ -764,7 +859,9 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     </div>
                   </td>
                 </tr>
-              ))}
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -1082,19 +1179,26 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
       {/* CREATE / EDIT BOM MODAL */}
       {showBomModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '680px', maxHeight: '90vh', overflowY: 'auto', padding: '22px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>
-                {editingBomId ? 'Edit Bill of Materials (BOM Recipe)' : 'Create Bill of Materials (BOM Recipe)'}
-              </h2>
-              <button onClick={() => setShowBomModal(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '920px', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>
+                  {editingBomId ? 'Edit Bill of Materials (BOM Sheet)' : 'Create Bill of Materials (BOM Sheet)'}
+                </h2>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                  Raw Material Mix, Process Waste %, Finish Output &amp; Per-Unit Padtar Calculation
+                </div>
+              </div>
+              <button onClick={() => setShowBomModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '6px', padding: '6px', cursor: 'pointer', color: '#475569' }}>
                 <XCircle size={20} />
               </button>
             </div>
+
             <form onSubmit={handleSaveBom}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              {/* Top Header Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.4fr 0.8fr', gap: '12px', marginBottom: '16px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Finished Product *</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '4px' }}>Finished Product *</label>
                   <select
                     required
                     value={finishedItemId}
@@ -1103,197 +1207,337 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       const it = items.find((x) => String(x.id) === e.target.value);
                       if (it && !bomName) setBomName(`${it.item_name} Standard BOM`);
                     }}
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                    style={{ width: '100%', padding: '9px', borderRadius: '7px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
                   >
-                    <option value="">-- Select Finished Item --</option>
-                    {items.map((it) => (
-                      <option key={it.id} value={it.id}>
-                        {it.item_name} ({it.unit}) — Stock: {it.current_stock}
-                      </option>
-                    ))}
+                    <option value="">-- Select Finished Product --</option>
+                    {items
+                      .filter((it) => {
+                        if (String(it.id) === String(finishedItemId)) return true;
+                        const cat = String(it.category || '').toLowerCase();
+                        const code = String(it.item_code || '').toUpperCase();
+                        if (cat.includes('raw') || cat.includes('scrap') || code.startsWith('RM-')) return false;
+                        return true;
+                      })
+                      .map((it) => (
+                        <option key={it.id} value={it.id}>
+                          {it.item_code ? `${it.item_code} — ` : ''}{it.item_name} ({it.unit})
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Recipe / BOM Name *</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '4px' }}>Recipe / BOM Name *</label>
                   <input
                     required
                     value={bomName}
                     onChange={(e) => setBomName(e.target.value)}
-                    placeholder="e.g. Brass Rod 12mm Batch"
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
+                    placeholder="e.g. Cotton Fabric 10 Mtr Batch"
+                    style={{ width: '100%', padding: '9px', borderRadius: '7px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Batch Output Quantity *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    value={outputQty}
-                    onChange={(e) => setOutputQty(e.target.value)}
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>BOM Code (Optional)</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '4px' }}>BOM Code</label>
                   <input
                     value={bomCode}
                     onChange={(e) => setBomCode(e.target.value)}
                     placeholder="Auto: BOM-001"
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Direct Labour Cost / Unit ({symbol} per Nos)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={bomLaborCost}
-                    onChange={(e) => setBomLaborCost(e.target.value)}
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Factory Overhead / Unit ({symbol} per Nos)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={bomOverheadCost}
-                    onChange={(e) => setBomOverheadCost(e.target.value)}
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '9px', borderRadius: '7px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box' }}
                   />
                 </div>
               </div>
 
-              <div style={{ marginTop: '14px', marginBottom: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>Raw Material Components</span>
-                  <button
-                    type="button"
-                    onClick={() => setBomComponents([...bomComponents, { raw_item: '', qty_required: '1', wastage_percent: '0' }])}
-                    style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #0284c7', background: '#f0f9ff', color: '#0369a1', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    + Add Material
-                  </button>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 1.1fr 0.9fr 24px', gap: '8px', marginBottom: '4px', fontSize: '11px', fontWeight: 600, color: '#475569' }}>
-                  <span>Raw Material Item</span>
-                  <span>Batch Qty ({outputQty || 1} Nos)</span>
-                  <span>Scrap / Wastage %</span>
-                  <span></span>
-                </div>
-                {bomComponents.map((comp, idx) => (
-                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2.2fr 1.1fr 0.9fr 24px', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                    <select
-                      required
-                      value={comp.raw_item}
-                      onChange={(e) => {
-                        const copy = [...bomComponents];
-                        copy[idx].raw_item = e.target.value;
-                        setBomComponents(copy);
-                      }}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
-                    >
-                      <option value="">-- Raw Material --</option>
-                      {items.filter((it) => String(it.id) !== String(finishedItemId)).map((it) => (
-                        <option key={it.id} value={it.id}>
-                          {it.item_name} ({it.unit}) — Rate: {symbol}{it.standard_rate}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      step="0.001"
-                      min="0.001"
-                      required
-                      placeholder="Batch Qty"
-                      value={comp.qty_required}
-                      onChange={(e) => {
-                        const copy = [...bomComponents];
-                        copy[idx].qty_required = e.target.value;
-                        setBomComponents(copy);
-                      }}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="Scrap %"
-                      value={comp.wastage_percent}
-                      onChange={(e) => {
-                        const copy = [...bomComponents];
-                        copy[idx].wastage_percent = e.target.value;
-                        setBomComponents(copy);
-                      }}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px' }}
-                    />
-                    {bomComponents.length > 1 ? (
-                      <button
-                        type="button"
-                        onClick={() => setBomComponents(bomComponents.filter((_, i) => i !== idx))}
-                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: 0 }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    ) : <span />}
-                  </div>
-                ))}
+              {(() => {
+                const fIt = items.find((x: any) => String(x.id) === String(finishedItemId));
+                const fUnit = fIt?.unit || 'Unit';
+                const fAlt = fIt?.alt_unit || 'Nos';
+                const fConv = (fIt?.alt_unit ? Number(fIt?.conversion_factor || 0) : 0);
+                const typedAltOut = parseFloat(bomAltOutputQty) || 0;
+                const resolvedAltOut = typedAltOut > 0 ? typedAltOut : ((parseFloat(outputQty) || 1) * fConv);
+                const hasAlt = Boolean(fAlt && resolvedAltOut > 0 && fAlt.toLowerCase() !== fUnit.toLowerCase());
 
-                {(() => {
-                  const batchOut = Math.max(parseFloat(outputQty) || 1, 0.0001);
-                  const batchRawTotal = bomComponents.reduce((sum, c) => {
-                    const it = items.find((x) => String(x.id) === String(c.raw_item));
-                    const rate = it ? Number(it.standard_rate || 0) : 0;
-                    const qty = parseFloat(c.qty_required) || 0;
-                    const scrap = parseFloat(c.wastage_percent) || 0;
-                    return sum + rate * qty * (1 + scrap / 100);
-                  }, 0);
-                  const rawPerUnit = batchRawTotal / batchOut;
-                  const labourPerUnit = parseFloat(bomLaborCost) || 0;
-                  const overheadPerUnit = parseFloat(bomOverheadCost) || 0;
-                  const totalPerUnit = rawPerUnit + labourPerUnit + overheadPerUnit;
-                  const totalBatchCost = totalPerUnit * batchOut;
-                  return (
-                    <div style={{ marginTop: '12px', padding: '12px 14px', borderRadius: '10px', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#334155', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                        Live Per-Unit Cost Breakdown (1 Nos)
+                const batchOut = Math.max(parseFloat(outputQty) || 1, 0.0001);
+                const wastePct = parseFloat(bomComponents[0]?.wastage_percent || '0') || 0;
+
+                let totalInputQty = 0;
+                let baseRawAmt = 0;
+                const lineRows = bomComponents.map((c) => {
+                  const rIt = items.find((x) => String(x.id) === String(c.raw_item));
+                  const qty = parseFloat(c.qty_required) || 0;
+                  const rate = rIt ? Number(rIt.standard_rate || 0) : 0;
+                  const amt = qty * rate;
+                  totalInputQty += qty;
+                  baseRawAmt += amt;
+                  return { rIt, qty, rate, amt };
+                });
+
+                const wasteQty = totalInputQty * (wastePct / 100);
+                const netFinishWeight = Math.max(totalInputQty - wasteQty, 0);
+                const effectiveRawCost = baseRawAmt * (1 + wastePct / 100);
+                const materialPerOut = effectiveRawCost / batchOut;
+                const labourPerOut = parseFloat(bomLaborCost) || 0;
+                const overheadPerOut = parseFloat(bomOverheadCost) || 0;
+                const totalExpensePerOut = labourPerOut + overheadPerOut;
+                const finalPadtarPerOut = materialPerOut + totalExpensePerOut;
+
+                const firstRawUnit = lineRows.find((r) => r.rIt)?.rIt?.unit || 'Kg';
+                const weightPerUnit = netFinishWeight > 0 && batchOut > 0 ? netFinishWeight / batchOut : 0;
+
+                return (
+                  <>
+                    {/* Excel-Style Raw Material Table */}
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
+                      <div style={{ background: '#f1f5f9', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>1. Raw Material Mix</span>
+                        <button
+                          type="button"
+                          onClick={() => setBomComponents([...bomComponents, { raw_item: '', qty_required: '1', wastage_percent: String(wastePct) }])}
+                          style={{ padding: '5px 12px', borderRadius: '6px', border: '1px solid #0284c7', background: '#fff', color: '#0369a1', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          + Add Raw Material
+                        </button>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-                        <div style={{ background: '#fff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                          <div style={{ fontSize: '11px', color: '#64748b' }}>Raw Material / Nos</div>
-                          <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>{symbol}{rawPerUnit.toFixed(2)}</div>
-                          <div style={{ fontSize: '10px', color: '#64748b' }}>Batch: {symbol}{batchRawTotal.toFixed(2)}</div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 0.8fr 0.9fr 0.6fr 0.9fr 1fr 32px', gap: '8px', padding: '8px 14px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>
+                        <span>Raw Material</span>
+                        <span>Code</span>
+                        <span style={{ textAlign: 'right' }}>Qty</span>
+                        <span>Unit</span>
+                        <span style={{ textAlign: 'right' }}>Rate ({symbol})</span>
+                        <span style={{ textAlign: 'right' }}>Amount ({symbol})</span>
+                        <span></span>
+                      </div>
+
+                      {bomComponents.map((comp, idx) => {
+                        const rowMeta = lineRows[idx];
+                        return (
+                          <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2.2fr 0.8fr 0.9fr 0.6fr 0.9fr 1fr 32px', gap: '8px', padding: '8px 14px', alignItems: 'center', borderBottom: '1px solid #f1f5f9' }}>
+                            <select
+                              required
+                              value={comp.raw_item}
+                              onChange={(e) => {
+                                const copy = [...bomComponents];
+                                copy[idx].raw_item = e.target.value;
+                                setBomComponents(copy);
+                              }}
+                              style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', background: '#fff' }}
+                            >
+                              <option value="">-- Select Raw Material --</option>
+                              {items
+                                .filter((it) => {
+                                  if (String(it.id) === String(comp.raw_item)) return true;
+                                  if (String(it.id) === String(finishedItemId)) return false;
+                                  const cat = String(it.category || '').toLowerCase();
+                                  if (cat.includes('finished')) return false;
+                                  return true;
+                                })
+                                .map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {it.item_name} (Stock: {it.current_stock} {it.unit})
+                                  </option>
+                                ))}
+                            </select>
+                            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>
+                              {rowMeta?.rIt?.item_code || '-'}
+                            </span>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.001"
+                              required
+                              value={comp.qty_required}
+                              onChange={(e) => {
+                                const copy = [...bomComponents];
+                                copy[idx].qty_required = e.target.value;
+                                setBomComponents(copy);
+                              }}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '7px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', textAlign: 'right', fontWeight: 600 }}
+                            />
+                            <span style={{ fontSize: '12px', color: '#334155', fontWeight: 600 }}>
+                              {rowMeta?.rIt?.unit || '-'}
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#475569', textAlign: 'right' }}>
+                              {rowMeta?.rate ? `${symbol}${rowMeta.rate.toFixed(2)}` : '-'}
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#0f172a', fontWeight: 700, textAlign: 'right' }}>
+                              {symbol}{(rowMeta?.amt || 0).toFixed(2)}
+                            </span>
+                            {bomComponents.length > 1 ? (
+                              <button
+                                type="button"
+                                onClick={() => setBomComponents(bomComponents.filter((_, i) => i !== idx))}
+                                style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: 0, textAlign: 'center' }}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            ) : <span />}
+                          </div>
+                        );
+                      })}
+
+                      {/* Excel Total Row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 0.8fr 0.9fr 0.6fr 0.9fr 1fr 32px', gap: '8px', padding: '10px 14px', background: '#f8fafc', fontSize: '13px', fontWeight: 800, color: '#0f172a' }}>
+                        <span>Total Raw Input</span>
+                        <span></span>
+                        <span style={{ textAlign: 'right', color: '#0369a1' }}>{totalInputQty.toFixed(2)}</span>
+                        <span style={{ color: '#0369a1' }}>{firstRawUnit}</span>
+                        <span></span>
+                        <span style={{ textAlign: 'right', color: '#0f172a' }}>{symbol}{baseRawAmt.toFixed(2)}</span>
+                        <span></span>
+                      </div>
+                    </div>
+
+                    {/* Two Side-by-Side Excel Summary Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.15fr', gap: '16px', marginBottom: '12px' }}>
+                      {/* Left Card: Waste % & Finish Output */}
+                      <div style={{ border: '1px solid #cbd5e1', borderRadius: '10px', padding: '14px', background: '#f8fafc' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
+                          2. Process Waste &amp; Finish Output
                         </div>
-                        <div style={{ background: '#fff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                          <div style={{ fontSize: '11px', color: '#64748b' }}>Labour + Overhead / Nos</div>
-                          <div style={{ fontSize: '14px', fontWeight: 700, color: '#0369a1', marginTop: '2px' }}>{symbol}{(labourPerUnit + overheadPerUnit).toFixed(2)}</div>
-                          <div style={{ fontSize: '10px', color: '#64748b' }}>{symbol}{labourPerUnit.toFixed(0)} + {symbol}{overheadPerUnit.toFixed(0)}</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 1fr 1.1fr', gap: '8px', marginBottom: '10px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>Waste %</label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              max="99"
+                              value={bomComponents[0]?.wastage_percent ?? '0'}
+                              onChange={(e) => {
+                                const w = e.target.value;
+                                setBomComponents(bomComponents.map((c) => ({ ...c, wastage_percent: w })));
+                              }}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', fontWeight: 600 }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                              Output ({fUnit}) *
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.01"
+                              required
+                              value={outputQty}
+                              onChange={(e) => setOutputQty(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', fontWeight: 700 }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#15803d', marginBottom: '4px' }}>
+                              Output ({fAlt})
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder={fConv > 0 ? String(batchOut * fConv) : 'e.g. 4 or 2.5'}
+                              value={bomAltOutputQty}
+                              onChange={(e) => setBomAltOutputQty(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #86efac', fontSize: '13px', background: '#f0fdf4', fontWeight: 700, color: '#15803d' }}
+                            />
+                          </div>
                         </div>
-                        <div style={{ background: '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac' }}>
-                          <div style={{ fontSize: '11px', color: '#166534', fontWeight: 600 }}>Total Cost / Nos</div>
-                          <div style={{ fontSize: '15px', fontWeight: 800, color: '#15803d', marginTop: '2px' }}>{symbol}{totalPerUnit.toFixed(2)}</div>
-                          <div style={{ fontSize: '10px', color: '#166534' }}>Batch ({batchOut}): {symbol}{totalBatchCost.toFixed(2)}</div>
+
+                        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748b' }}>Waste ({wastePct}%):</span>
+                            <strong style={{ color: '#dc2626' }}>-{wasteQty.toFixed(3)} {firstRawUnit}</strong>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748b' }}>Net Finish Weight:</span>
+                            <strong style={{ color: '#0f172a' }}>{netFinishWeight.toFixed(3)} {firstRawUnit}</strong>
+                          </div>
+                          {firstRawUnit.toLowerCase() === 'kg' && fUnit.toLowerCase() !== 'kg' && weightPerUnit > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed #e2e8f0', paddingTop: '6px' }}>
+                              <span style={{ color: '#0369a1', fontWeight: 600 }}>Weight per 1 {fUnit}:</span>
+                              <strong style={{ color: '#0369a1' }}>{(weightPerUnit * 1000).toFixed(1)} gram ({weightPerUnit.toFixed(3)} Kg)</strong>
+                            </div>
+                          )}
+                          {hasAlt && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed #e2e8f0', paddingTop: '6px' }}>
+                              <span style={{ color: '#15803d', fontWeight: 600 }}>1 {fAlt} Weight &amp; Ratio:</span>
+                              <strong style={{ color: '#15803d' }}>
+                                {netFinishWeight > 0 ? `${((netFinishWeight / resolvedAltOut) * 1000).toFixed(0)}g / ${fAlt} • ` : ''}
+                                {batchOut} {fUnit} = {resolvedAltOut.toLocaleString('en-IN', { maximumFractionDigits: 2 })} {fAlt}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Card: Labour, Factory Expense & Final Padtar */}
+                      <div style={{ border: '1px solid #cbd5e1', borderRadius: '10px', padding: '14px', background: '#f8fafc' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
+                          3. Labour, Expense &amp; Padtar ({symbol} / {fUnit})
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                              Labour Work ({symbol} / {fUnit})
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={bomLaborCost}
+                              onChange={(e) => setBomLaborCost(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                              Factory Expense ({symbol} / {fUnit})
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={bomOverheadCost}
+                              onChange={(e) => setBomOverheadCost(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748b' }}>Cost of Material / {fUnit}:</span>
+                            <strong style={{ color: '#0f172a' }}>{symbol}{materialPerOut.toFixed(2)}</strong>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748b' }}>Total Expense / {fUnit} (Labour + Exp):</span>
+                            <strong style={{ color: '#0369a1' }}>{symbol}{totalExpensePerOut.toFixed(2)}</strong>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f0fdf4', border: '1px solid #86efac', padding: '8px 10px', borderRadius: '6px', marginTop: '2px' }}>
+                            <span style={{ color: '#166534', fontWeight: 700, fontSize: '13px' }}>Final Padtar ({hasAlt ? fAlt : fUnit}):</span>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ color: '#15803d', fontWeight: 800, fontSize: '16px' }}>
+                                {symbol}{(hasAlt ? (finalPadtarPerOut * batchOut) / resolvedAltOut : finalPadtarPerOut).toFixed(2)} / {hasAlt ? fAlt : fUnit}
+                              </div>
+                              {hasAlt && (
+                                <div style={{ color: '#475569', fontWeight: 700, fontSize: '12px' }}>
+                                  = {symbol}{finalPadtarPerOut.toFixed(2)} / {fUnit}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  );
-                })()}
-              </div>
+                  </>
+                );
+              })()}
 
               {finishedItemId && bomComponents.some((c) => c.raw_item === finishedItemId) && (
                 <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#b45309', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', marginTop: '8px' }}>
-                  Note: Finished Product and Raw Material are the same item. For accurate costing, use separate items for Raw Material and Finished Goods.
+                  Warning: Finished Product and Raw Material cannot be the same item.
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
-                <button type="button" onClick={() => setShowBomModal(false)} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}>
-                  Cancel
-                </button>
-                <button type="submit" style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '14px' }}>
+                <button type="button" onClick={() => setShowBomModal(false)} style={{ padding: '9px 18px', borderRadius: '7px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                <button type="submit" style={{ padding: '9px 22px', borderRadius: '7px', border: 'none', background: '#0f172a', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
                   {editingBomId ? 'Update BOM Recipe' : 'Save BOM Recipe'}
                 </button>
               </div>
@@ -1305,7 +1549,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
       {/* CREATE / EDIT PRODUCTION ORDER MODAL */}
       {showOrderModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '760px', maxHeight: '92vh', overflowY: 'auto', padding: '22px' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '900px', maxHeight: '92vh', overflowY: 'auto', padding: '22px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>
                 {editingOrderId ? `Edit Production Order (${editingVoucherNo})` : 'Record Production Order (Manufacturing Journal)'}
@@ -1396,7 +1640,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   >
                     {boms.map((b) => (
                       <option key={b.id} value={b.id}>
-                        {b.bom_code} — {b.finished_item_name}
+                        {b.bom_code} — {b.finished_item_name} ({b.name})
                       </option>
                     ))}
                   </select>
@@ -1426,6 +1670,21 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                     }}
                     style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', boxSizing: 'border-box', fontWeight: 700 }}
                   />
+                  {(() => {
+                    const selBom = boms.find((b: any) => String(b.id) === String(selectedBomId));
+                    const fIt = items.find((x: any) => String(x.id) === String(selBom?.finished_item));
+                    const bomRatio = Number(selBom?.alt_output_qty || 0) > 0 && Number(selBom?.output_qty || 0) > 0
+                      ? Number(selBom.alt_output_qty) / Number(selBom.output_qty)
+                      : 0;
+                    const conv = bomRatio > 0 ? bomRatio : (fIt?.alt_unit ? Number(fIt?.conversion_factor || 0) : 0);
+                    const altLbl = fIt?.alt_unit || selBom?.finished_item_alt_unit || (bomRatio > 0 ? 'Nos' : '');
+                    const uLbl = fIt?.unit || selBom?.finished_item_unit || 'Unit';
+                    return altLbl && conv > 0 && Number(actualQty) > 0 ? (
+                      <div style={{ fontSize: '11px', color: '#15803d', fontWeight: 700, marginTop: '4px' }}>
+                        = {(Number(actualQty) * conv).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {altLbl} (1 {uLbl} = {conv.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {altLbl})
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               </div>
 
@@ -1534,7 +1793,25 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
               <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', fontSize: '13px' }}>
                 <span>Raw Material: <strong>{symbol} {estRawTotal.toFixed(2)}</strong></span>
                 <span>Net Production Cost: <strong>{symbol} {estNetTotal.toFixed(2)}</strong></span>
-                <span style={{ color: '#0369a1' }}>Finished Unit Cost: <strong>{symbol} {estUnitCost.toFixed(2)}</strong></span>
+                <span style={{ color: '#0369a1' }}>
+                  {(() => {
+                    const selBom = boms.find((b: any) => String(b.id) === String(selectedBomId));
+                    const fIt = items.find((x: any) => String(x.id) === String(selBom?.finished_item));
+                    const fUnit = fIt?.unit || selBom?.finished_item_unit || 'Unit';
+                    const bomRatio = Number(selBom?.alt_output_qty || 0) > 0 && Number(selBom?.output_qty || 0) > 0
+                      ? Number(selBom.alt_output_qty) / Number(selBom.output_qty)
+                      : 0;
+                    const conv = bomRatio > 0 ? bomRatio : (fIt?.alt_unit ? Number(fIt?.conversion_factor || 0) : 0);
+                    const altLbl = fIt?.alt_unit || selBom?.finished_item_alt_unit || (bomRatio > 0 ? 'Nos' : '');
+                    const hasAlt = Boolean(altLbl && conv > 0 && String(altLbl).toLowerCase() !== String(fUnit).toLowerCase());
+                    return (
+                      <>
+                        Finished Unit Cost: <strong>{symbol} {(hasAlt ? estUnitCost / conv : estUnitCost).toFixed(2)} / {hasAlt ? altLbl : fUnit}</strong>
+                        {hasAlt ? <span style={{ color: '#64748b', marginLeft: '6px' }}>(= {symbol} {estUnitCost.toFixed(2)} / {fUnit})</span> : null}
+                      </>
+                    );
+                  })()}
+                </span>
               </div>
 
               {sameUnitRawTotal > 0 && !hasMassBalanceError && (
@@ -1681,7 +1958,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
       )}
       {viewOrder && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300, padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', padding: '22px' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', width: '100%', maxWidth: '840px', maxHeight: '90vh', overflowY: 'auto', padding: '22px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '16px' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}>Manufacturing Voucher: {viewOrder.voucher_no}</h2>

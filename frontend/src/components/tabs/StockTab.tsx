@@ -413,19 +413,38 @@ export const StockTab: FC<StockTabProps> = ({
               { header: 'Category', accessor: 'category' },
               {
                 header: `Rate (${symbol})`,
-                accessor: (r) => `${symbol} ${Number(r.standard_rate || 0).toFixed(2)}`,
+                accessor: (r) => {
+                  const rateVal = Number(r.standard_rate || 0);
+                  const conv = Number(r.conversion_factor || 0);
+                  const hasAlt = Boolean(r.alt_unit && conv > 0 && String(r.alt_unit).toLowerCase() !== String(r.unit || '').toLowerCase());
+                  return (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <span>{symbol} {(hasAlt ? rateVal / conv : rateVal).toFixed(2)} / {hasAlt ? r.alt_unit : (r.unit || 'Nos')}</span>
+                      {hasAlt && (
+                        <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                          {symbol} {rateVal.toFixed(2)} / {r.unit || 'Nos'}
+                        </span>
+                      )}
+                    </div>
+                  );
+                },
               },
               {
                 header: activeUnitObj ? `${activeUnitObj.name} Stock` : 'Current Stock',
                 accessor: (r) => (
-                  <span>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <strong>{getEffStock(r)} {r.unit || 'Nos'}</strong>
+                    {r.alt_unit && Number(r.conversion_factor || 0) > 0 && (
+                      <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
+                        {(getEffStock(r) * Number(r.conversion_factor)).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {r.alt_unit}
+                      </span>
+                    )}
                     {isUnitFiltered && (
-                      <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '6px' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>
                         (Company Total: {r.current_stock || 0})
                       </span>
                     )}
-                  </span>
+                  </div>
                 ),
               },
               {
@@ -454,6 +473,8 @@ export const StockTab: FC<StockTabProps> = ({
                         item_name: r.item_name,
                         category: r.category,
                         unit: r.unit,
+                        alt_unit: (r as any).alt_unit || '',
+                        conversion_factor: String(Number((r as any).conversion_factor || 1)),
                         standard_rate: String(r.standard_rate),
                         selling_rate: String((r as any).selling_rate ?? r.standard_rate),
                         current_stock: String(r.current_stock),

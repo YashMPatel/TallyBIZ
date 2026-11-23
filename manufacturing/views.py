@@ -76,8 +76,10 @@ def _serialize_bom(bom):
         'finished_item_name': bom.finished_item.item_name,
         'finished_item_code': bom.finished_item.item_code,
         'finished_item_unit': bom.finished_item.unit,
+        'finished_item_alt_unit': getattr(bom.finished_item, 'alt_unit', '') or '',
         'finished_item_stock': float(bom.finished_item.current_stock or 0),
         'output_qty': float(bom.output_qty),
+        'alt_output_qty': float(bom.alt_output_qty or 0) if float(bom.alt_output_qty or 0) > 0 else round(float(bom.output_qty) * (float(getattr(bom.finished_item, 'conversion_factor', 0) or 0) if getattr(bom.finished_item, 'alt_unit', '') else 0), 3),
         'labor_cost': float(bom.labor_cost),
         'overhead_cost': float(bom.overhead_cost),
         'raw_material_cost': float(raw_cost),
@@ -370,8 +372,6 @@ class BOMListCreateView(APIView):
         fg = Item.objects.filter(id=finished_id).first()
         if not fg:
             return Response({'error': 'Invalid finished item.'}, status=400)
-        if BillOfMaterial.objects.filter(company=company, finished_item=fg, is_active=True).exists():
-            return Response({'error': f'BOM already exists for "{fg.item_name}". Please Edit the existing BOM to update labour or expense charges.'}, status=400)
         if any(str(c.get('raw_item')) == str(fg.id) for c in comps):
             return Response({'error': 'Finished Product and Raw Material cannot be the same item.'}, status=400)
         code = (data.get('bom_code') or '').strip()
@@ -385,6 +385,7 @@ class BOMListCreateView(APIView):
                 name=(data.get('name') or f'{fg.item_name} Recipe').strip(),
                 finished_item=fg,
                 output_qty=_to_dec(data.get('output_qty') or 1, '0.01'),
+                alt_output_qty=_to_dec(data.get('alt_output_qty') or 0, '0.001'),
                 labor_cost=_to_dec(data.get('labor_cost') or 0, '0.01'),
                 overhead_cost=_to_dec(data.get('overhead_cost') or 0, '0.01'),
                 notes=(data.get('notes') or '').strip(),
@@ -419,6 +420,8 @@ class BOMDetailView(APIView):
                 bom.name = data['name'].strip()
             if data.get('output_qty'):
                 bom.output_qty = _to_dec(data['output_qty'], '0.01')
+            if 'alt_output_qty' in data:
+                bom.alt_output_qty = _to_dec(data.get('alt_output_qty') or 0, '0.001')
             if 'labor_cost' in data:
                 bom.labor_cost = _to_dec(data['labor_cost'], '0.01')
             if 'overhead_cost' in data:

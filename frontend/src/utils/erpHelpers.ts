@@ -44,6 +44,7 @@ export const inferTaxRate = (netTotal: number | string, taxAmount: number | stri
 export interface LineForm {
   uid: string;
   item_id: string;
+  billed_unit?: string;
   quantity: string;
   rate: string;
   discount_percentage?: string;
@@ -55,19 +56,27 @@ let lineCounter = 0;
 export const newLine = (): LineForm => ({
   uid: Math.random().toString(36).substring(2, 9),
   item_id: '',
+  billed_unit: '',
   quantity: '1',
   rate: '0',
   discount_percentage: '0',
   is_foc: false,
 });
-export const lineFromItem = (item: any): LineForm => ({
-  uid: `${++lineCounter}`,
-  item_id: String(item.item || (item.item_id ? item.item_id : '')),
-  quantity: String(item.quantity || '1'),
-  rate: String(item.rate || '0'),
-  discount_percentage: String(item.discount_percentage ?? '0'),
-  is_foc: Boolean(item.is_foc),
-});
+export const lineFromItem = (item: any): LineForm => {
+  const bQty = Number(item.billed_qty || 0);
+  const pQty = Number(item.quantity || 0);
+  const hasAlt = bQty > 0 && pQty > 0 && Math.abs(bQty - pQty) > 0.0001;
+  const effRate = hasAlt ? (Number(item.rate || 0) * (pQty / bQty)).toFixed(2) : String(item.rate || '0');
+  return {
+    uid: `${++lineCounter}`,
+    item_id: String(item.item || (item.item_id ? item.item_id : '')),
+    billed_unit: String(item.billed_unit || ''),
+    quantity: String(hasAlt ? bQty : (item.quantity || '1')),
+    rate: effRate,
+    discount_percentage: String(item.discount_percentage ?? '0'),
+    is_foc: Boolean(item.is_foc),
+  };
+};
 
 export const fieldStyle: CSSProperties = {
   width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box'

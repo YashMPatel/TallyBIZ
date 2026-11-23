@@ -20,6 +20,12 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
   currencySymbol = '₹',
   onChange,
 }) => {
+  const getBaseRate = (it: Item) => {
+    const sellVal = Number((it as any).selling_rate || 0);
+    const costVal = Number(it.standard_rate || 0);
+    return priceMode === 'selling' && sellVal > 0 ? sellVal : costVal;
+  };
+
   const handleLineChange = (index: number, field: keyof LineForm, value: any) => {
     const updated = [...lines];
     updated[index] = { ...updated[index], [field]: value };
@@ -29,9 +35,21 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
         (i) => i.id !== undefined && String(i.id) === String(value)
       );
       if (selectedItem) {
-        const sellVal = Number((selectedItem as any).selling_rate || 0);
-        const costVal = Number(selectedItem.standard_rate || 0);
-        updated[index].rate = (priceMode === 'selling' && sellVal > 0 ? sellVal : costVal).toString();
+        updated[index].billed_unit = selectedItem.unit || 'Nos';
+        updated[index].rate = getBaseRate(selectedItem).toString();
+      }
+    } else if (field === 'billed_unit') {
+      const selectedItem = items.find(
+        (i) => i.id !== undefined && String(i.id) === String(updated[index].item_id)
+      );
+      if (selectedItem) {
+        const baseRate = getBaseRate(selectedItem);
+        const conv = Number(selectedItem.conversion_factor || 1);
+        const isAlt =
+          selectedItem.alt_unit &&
+          String(value).toLowerCase() === String(selectedItem.alt_unit).toLowerCase() &&
+          conv > 0;
+        updated[index].rate = (isAlt ? baseRate / conv : baseRate).toFixed(2);
       }
     }
     onChange(updated);
@@ -53,9 +71,9 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
           <tr>
             <th style={{ padding: '8px 10px', textAlign: 'left' }}>Item *</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '80px' }}>HSN</th>
-            <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Unit</th>
-            {showStock && <th style={{ padding: '8px 10px', textAlign: 'center', width: '70px' }}>Stock</th>}
-            <th style={{ padding: '8px 10px', textAlign: 'center', width: '70px' }}>Qty *</th>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '78px' }}>Unit</th>
+            {showStock && <th style={{ padding: '8px 10px', textAlign: 'center', width: '85px' }}>Stock</th>}
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '95px' }}>Qty *</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '110px' }}>Rate ({currencySymbol}) *</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '50px' }}>FOC</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
@@ -74,6 +92,15 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
             const selectedItem = items.find(
               (i) => i.id !== undefined && String(i.id) === String(line.item_id)
             );
+            const conv = Number(selectedItem?.conversion_factor || 1);
+            const hasAlt = Boolean(
+              selectedItem?.alt_unit &&
+                conv > 0 &&
+                String(selectedItem.alt_unit).toLowerCase() !== String(selectedItem.unit || '').toLowerCase()
+            );
+            const activeUnit = line.billed_unit || selectedItem?.unit || 'Nos';
+            const isAltSelected =
+              hasAlt && String(activeUnit).toLowerCase() === String(selectedItem?.alt_unit).toLowerCase();
 
             return (
               <tr key={line.uid || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
@@ -85,14 +112,17 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                   >
                     <option value="">-- Choose Item --</option>
-                    {items.filter((opt) => !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc))).map((it, itIdx) => (
-                      <option
-                        key={it.id !== undefined ? it.id : itIdx}
-                        value={it.id !== undefined ? String(it.id) : ''}
-                      >
-                        {it.item_name} ({it.item_code}) • {it.unit || 'Nos'}{it.hsn_code ? ` • HSN: ${it.hsn_code}` : ''}{showStock ? ` — Stock: ${it.current_stock ?? 0}` : ''}
-                      </option>
-                    ))}
+                    {items.filter((opt) => !lines.some((other, oIdx) => oIdx !== idx && other.item_id && String(other.item_id) === String(opt.id) && Boolean(other.is_foc) === Boolean(line.is_foc))).map((it, itIdx) => {
+                      const itHasAlt = it.alt_unit && Number(it.conversion_factor || 0) > 0;
+                      return (
+                        <option
+                          key={it.id !== undefined ? it.id : itIdx}
+                          value={it.id !== undefined ? String(it.id) : ''}
+                        >
+                          {it.item_name} ({it.item_code}) • {it.unit || 'Nos'}{itHasAlt ? ` (1 ${it.unit} = ${Number(it.conversion_factor)} ${it.alt_unit})` : ''}{it.hsn_code ? ` • HSN: ${it.hsn_code}` : ''}{showStock ? ` — Stock: ${it.current_stock ?? 0}` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </td>
                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>
@@ -104,23 +134,51 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     style={{ width: '74px', padding: '5px', borderRadius: '4px', border: '1px solid #cbd5e1', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}
                   />
                 </td>
-                <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: '12px', color: '#475569' }}>
-                  {selectedItem?.unit || '-'}
+                <td style={{ padding: '6px 6px', textAlign: 'center', fontSize: '12px', color: '#475569' }}>
+                  {hasAlt && priceMode === 'selling' ? (
+                    <select
+                      value={activeUnit}
+                      onChange={(e) => handleLineChange(idx, 'billed_unit', e.target.value)}
+                      style={{ padding: '5px 4px', borderRadius: '4px', border: '1px solid #0284c7', background: '#f0f9ff', color: '#0369a1', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      <option value={selectedItem!.unit}>{selectedItem!.unit}</option>
+                      <option value={selectedItem!.alt_unit}>{selectedItem!.alt_unit}</option>
+                    </select>
+                  ) : (
+                    selectedItem?.unit || '-'
+                  )}
                 </td>
                 {showStock && (
-                  <td style={{ padding: '6px 10px', textAlign: 'center', color: '#64748b' }}>
-                    {selectedItem ? selectedItem.current_stock : '-'}
+                  <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
+                    {selectedItem ? (
+                      <div>
+                        <div>{selectedItem.current_stock} {selectedItem.unit}</div>
+                        {hasAlt && (
+                          <div style={{ fontSize: '10px', color: '#0369a1' }}>
+                            ({(Number(selectedItem.current_stock || 0) * conv).toFixed(0)} {selectedItem.alt_unit})
+                          </div>
+                        )}
+                      </div>
+                    ) : '-'}
                   </td>
                 )}
-                <td style={{ padding: '6px 10px' }}>
+                <td style={{ padding: '6px 8px' }}>
                   <input
                     type="number"
-                    min="1"
+                    step="any"
+                    min="0.01"
                     required
                     value={line.quantity}
                     onChange={(e) => handleLineChange(idx, 'quantity', e.target.value)}
                     style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', textAlign: 'center' }}
                   />
+                  {hasAlt && qty > 0 && (
+                    <div style={{ fontSize: '10px', color: isAltSelected ? '#15803d' : '#0369a1', fontWeight: 600, textAlign: 'center', marginTop: '2px' }}>
+                      {isAltSelected
+                        ? `= ${(qty / conv).toFixed(2)} ${selectedItem!.unit}`
+                        : `= ${(qty * conv).toFixed(0)} ${selectedItem!.alt_unit}`}
+                    </div>
+                  )}
                 </td>
                 <td style={{ padding: '6px 10px' }}>
                   <input

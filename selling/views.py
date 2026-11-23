@@ -104,18 +104,36 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
             raise ValidationError({'error': f'{item_obj.item_name}: quantity must be above zero and rate not negative.'})
 
         is_foc = bool(it.get('is_foc', False))
-        qty = Decimal(str(it.get('quantity') or it.get('qty', 1) or 1))
-        rate = Decimal('0.00') if is_foc else Decimal(str(it.get('rate') or 0))
+        raw_qty = Decimal(str(it.get('quantity') or it.get('qty', 1) or 1))
+        raw_rate = Decimal('0.00') if is_foc else Decimal(str(it.get('rate') or 0))
+        billed_unit = str(it.get('billed_unit') or item_obj.unit or '').strip()
+        alt_unit = str(getattr(item_obj, 'alt_unit', '') or '').strip()
+        conv = Decimal(str(getattr(item_obj, 'conversion_factor', 1) or 1))
+        if alt_unit and billed_unit.lower() == alt_unit.lower() and conv > 0:
+            billed_qty = raw_qty
+            qty = (raw_qty / conv).quantize(Decimal('0.01'))
+            rate = (raw_rate * conv).quantize(Decimal('0.01'))
+            gross_amt = (billed_qty * raw_rate).quantize(Decimal('0.01'))
+        else:
+            billed_unit = str(item_obj.unit or billed_unit)
+            billed_qty = raw_qty
+            qty = raw_qty
+            rate = raw_rate
+            gross_amt = (qty * rate).quantize(Decimal('0.01'))
+        if qty <= 0:
+            raise ValidationError({'error': f'{item_obj.item_name}: converted stock quantity must be above zero.'})
         disc_pct = Decimal('0.00') if is_foc else Decimal(str(it.get('discount_percentage') or 0))
-        disc_amt = (qty * rate * disc_pct / 100).quantize(Decimal('0.01'))
+        disc_amt = (gross_amt * disc_pct / 100).quantize(Decimal('0.01'))
         SalesInvoiceItem.objects.create(
             invoice=invoice,
             item=item_obj,
             hsn_code=(it.get('hsn_code') or ('9988' if is_job_work else item_obj.hsn_code) or '')[:20],
             description=it.get('description') or item_obj.item_name,
             quantity=qty,
+            billed_unit=billed_unit,
+            billed_qty=billed_qty,
             rate=rate,
-            amount=qty * rate - disc_amt,
+            amount=gross_amt - disc_amt,
             discount_percentage=disc_pct,
             discount_amount=disc_amt,
             is_foc=is_foc
