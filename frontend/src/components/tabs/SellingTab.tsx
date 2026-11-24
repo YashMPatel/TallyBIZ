@@ -811,11 +811,19 @@ export const SellingTab: FC<SellingTabProps> = ({
                         {(() => {
                           const isPi = String(inv.invoice_number || '').toUpperCase().startsWith('PI-');
                           const isConvertedPi = isPi && inv.status === 'Rejected' && String((inv as any).rejection_reason || '').includes('Converted');
+                          const sourcePi = !isPi
+                            ? invoices.find(
+                                (p: any) =>
+                                  String(p.invoice_number || '').toUpperCase().startsWith('PI-') &&
+                                  String(p.rejection_reason || '').includes(inv.invoice_number)
+                              )
+                            : null;
                           const linkedReq = salesRequests.find(
                             (r: any) =>
                               r.existing_invoice_no === inv.invoice_number ||
                               r.proforma_invoice_no === inv.invoice_number ||
-                              r.sales_ref === inv.invoice_number
+                              r.sales_ref === inv.invoice_number ||
+                              (sourcePi && (r.proforma_invoice_no === sourcePi.invoice_number || r.sales_ref === sourcePi.invoice_number))
                           );
                           if (isConvertedPi) {
                             return (
@@ -873,6 +881,25 @@ export const SellingTab: FC<SellingTabProps> = ({
                                 {dispBatches.length > 0
                                   ? `Dispatched (${dispBatches.map((b: any) => b.dispatch_no).join(', ')})`
                                   : `Confirmed • In Factory (${linkedReq.request_no})`}
+                              </span>
+                            );
+                          }
+                          if (!isPi && (inv.status === 'Approved' || sourcePi)) {
+                            return (
+                              <span
+                                title={sourcePi ? `Converted from ${sourcePi.invoice_number}` : 'Tax Invoice Approved & Stock Deducted'}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  background: '#f1f5f9',
+                                  color: '#475569',
+                                  border: '1px solid #e2e8f0',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {sourcePi ? `From ${sourcePi.invoice_number} • Invoiced` : 'Invoiced • Locked'}
                               </span>
                             );
                           }

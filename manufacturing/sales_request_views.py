@@ -154,6 +154,36 @@ class ProductionSalesRequestListCreateAPIView(APIView):
         ensure_default_units(comp)
 
         data = request.data
+        refs = [
+            str(data.get('sales_ref') or '').strip(),
+            str(data.get('proforma_invoice_no') or '').strip(),
+            str(data.get('existing_invoice_no') or '').strip(),
+        ]
+        refs = [rf for rf in dict.fromkeys(refs) if rf]
+        if refs:
+            from selling.models import SalesInvoice
+            approved_inv = SalesInvoice.objects.filter(
+                company=comp, invoice_number__in=refs, status='Approved'
+            ).exclude(invoice_number__istartswith='PI-').first()
+            if approved_inv:
+                return Response(
+                    {'error': f'Tax Invoice {approved_inv.invoice_number} is already Approved. Duplicate Factory order blocked.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            for existing_req in ProductionSalesRequest.objects.filter(company=comp).exclude(status='REJECTED'):
+                snap_ex = existing_req.mrp_snapshot or {}
+                ex_refs = {
+                    str(existing_req.sales_ref or '').strip(),
+                    str(snap_ex.get('proforma_invoice_no') or '').strip(),
+                    str(snap_ex.get('existing_invoice_no') or '').strip(),
+                }
+                matched = [rf for rf in refs if rf in ex_refs]
+                if matched:
+                    return Response(
+                        {'error': f'Factory request {existing_req.request_no} already exists for {matched[0]} ({existing_req.status}). Duplicate order blocked.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
         req_qty = Decimal(str(data.get('requested_qty') or 0)).quantize(Decimal('0.01'))
         if req_qty <= 0:
             return Response({'error': 'Order quantity must be greater than 0.'}, status=status.HTTP_400_BAD_REQUEST)
