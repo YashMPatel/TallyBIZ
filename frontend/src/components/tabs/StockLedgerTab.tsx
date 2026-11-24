@@ -1,6 +1,8 @@
-import type { FC } from 'react';
+import { useState, useEffect, useCallback, type FC } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { StockLedgerRow, Item } from '../../types/erp';
+import { API_BASE } from '../../utils/erpHelpers';
 
 interface StockLedgerItem {
   id?: number | string;
@@ -35,7 +37,45 @@ export const StockLedgerTab: FC<StockLedgerTabProps> = ({
   setStockItemFilter,
 }) => {
   const symbol = localStorage.getItem('active_company_symbol') || '₹';
-  const ledgerRows = (stockLedger || []) as StockLedgerItem[];
+  const [ledgerRows, setLedgerRows] = useState<StockLedgerItem[]>(() => (stockLedger || []) as StockLedgerItem[]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchLatestLedger = useCallback(async () => {
+    const compId = localStorage.getItem('active_company_id') || '';
+    const unitId = localStorage.getItem('active_unit_id') || '';
+    const token = localStorage.getItem('access_token');
+    if (!compId) return;
+    setRefreshing(true);
+    try {
+      const params = new URLSearchParams({ company_id: compId });
+      if (unitId && unitId !== 'all') params.set('unit_id', unitId);
+      if (stockItemFilter && stockItemFilter !== 'all') params.set('item', stockItemFilter);
+      const res = await fetch(`${API_BASE}/stock/stock-ledger/?${params.toString()}`, {
+        headers: {
+          'X-Company-Id': compId,
+          ...(unitId && unitId !== 'all' ? { 'X-Unit-Id': unitId } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : data.results || [];
+        setLedgerRows([...rows].sort((a: any, b: any) => Number(b.id || 0) - Number(a.id || 0)));
+      }
+    } catch {
+      // keep existing rows on transient network error
+    } finally {
+      setRefreshing(false);
+    }
+  }, [stockItemFilter]);
+
+  useEffect(() => {
+    setLedgerRows((stockLedger || []) as StockLedgerItem[]);
+  }, [stockLedger]);
+
+  useEffect(() => {
+    fetchLatestLedger();
+  }, [fetchLatestLedger, stockLedger]);
 
   return (
     <div>
@@ -44,6 +84,14 @@ export const StockLedgerTab: FC<StockLedgerTabProps> = ({
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 6px 0' }}>Stock Movement & Valuation Ledger</h1>
           <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Chronological register of inward receipts, outward issues & item balances</p>
         </div>
+        <button
+          type="button"
+          onClick={fetchLatestLedger}
+          disabled={refreshing}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', color: '#0f172a', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
+        >
+          <RefreshCw size={15} /> {refreshing ? 'Refreshing...' : 'Refresh Ledger'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', background: '#fff', padding: '14px 18px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>

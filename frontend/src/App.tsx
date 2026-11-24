@@ -476,6 +476,14 @@ function MainERPApp() {
   }, [isAuthenticated, activeCompany?.id, loadData]);
 
   useEffect(() => {
+    const cid = activeCompany?.id || localStorage.getItem('active_company_id');
+    if (isAuthenticated && cid && activeTab) {
+      void loadData(cid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => {
     if (showInvoiceModal || showPurchaseModal || showItemModal) {
       const compId = activeCompany?.id || localStorage.getItem('active_company_id') || '';
       const compParam = compId ? `company_id=${compId}` : '';
