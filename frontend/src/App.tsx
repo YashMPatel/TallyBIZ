@@ -1838,6 +1838,7 @@ function MainERPApp() {
                       ...itemForm,
                       item_code: autoCode,
                       category: cat,
+                      ...(cat === 'Free / Utility' && !editingId ? { standard_rate: '0', selling_rate: '0', current_stock: '0' } : {}),
                       hsn_code: (!(itemForm as any).hsn_code && sug) ? sug.hsn : ((itemForm as any).hsn_code || ''),
                       gst_rate: sug ? sug.gst : ((itemForm as any).gst_rate || '18'),
                     } as any);
@@ -1849,6 +1850,7 @@ function MainERPApp() {
                     <option value="Textiles">Textiles</option>
                     <option value="Hardware">Hardware</option>
                     <option value="Packaging">Packaging</option>
+                    <option value="Free / Utility">Free / Utility (Unlimited / Zero-Cost)</option>
                   </select>
                 </div>
               </div>

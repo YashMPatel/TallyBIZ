@@ -222,6 +222,7 @@ export function getNextItemCode(items: Array<{ item_code?: string }>, category: 
     'Textiles': 'TXT',
     'Hardware': 'HRD',
     'Packaging': 'PKG',
+    'Free / Utility': 'UTL',
     'General': 'ITM',
   };
   const prefix = prefixMap[category] || 'ITM';
@@ -236,4 +237,12 @@ export function getNextItemCode(items: Array<{ item_code?: string }>, category: 
     }
   }
   return `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
+}
+
+
+export function isUtilityItem(it: any): boolean {
+  if (!it) return false;
+  const cat = String(it.category || '').trim().toLowerCase();
+  const code = String(it.item_code || it.code || '').trim().toUpperCase();
+  return cat === 'free / utility' || cat === 'utility' || cat === 'free' || code.startsWith('UTL-');
 }
