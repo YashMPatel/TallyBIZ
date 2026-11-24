@@ -414,7 +414,7 @@ export const SellingTab: FC<SellingTabProps> = ({
 
   // Merge prop invoices + direct fetched invoices so newly generated invoices always appear immediately
   const mergedInvoicesMap = new Map<number, SalesInvoice>();
-  [...directInvoices, ...filteredInvoices].forEach((inv) => {
+  [...filteredInvoices, ...directInvoices].forEach((inv) => {
     if (inv && inv.id) mergedInvoicesMap.set(inv.id, inv);
   });
   const displayInvoices = Array.from(mergedInvoicesMap.values())
@@ -810,7 +810,8 @@ export const SellingTab: FC<SellingTabProps> = ({
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {(() => {
                           const isPi = String(inv.invoice_number || '').toUpperCase().startsWith('PI-');
-                          const isConvertedPi = isPi && inv.status === 'Rejected' && String((inv as any).rejection_reason || '').includes('Converted');
+                          const rejReason = String((inv as any).rejection_reason || '');
+                          const isConvertedPi = isPi && (rejReason.includes('Converted') || inv.status === 'Rejected');
                           const sourcePi = !isPi
                             ? invoices.find(
                                 (p: any) =>
@@ -837,7 +838,7 @@ export const SellingTab: FC<SellingTabProps> = ({
                                   color: '#166534',
                                 }}
                               >
-                                {(inv as any).rejection_reason}
+                                {rejReason || 'Converted / Locked'}
                               </span>
                             );
                           }
