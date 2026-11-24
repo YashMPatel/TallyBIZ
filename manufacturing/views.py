@@ -164,6 +164,19 @@ def _serialize_order(order, include_vouchers=True):
         'gl_entries': gl_entries,
     }
 
+
+def _is_free_utility_item(item_obj):
+    if not item_obj:
+        return False
+    cat = str(getattr(item_obj, 'category', '') or '').strip().lower()
+    name = str(getattr(item_obj, 'item_name', '') or '').strip().lower()
+    rate = Decimal(str(getattr(item_obj, 'standard_rate', 0) or 0))
+    if cat in ('free', 'utility', 'free / utility', 'water'):
+        return True
+    if rate == Decimal('0.00') and ('water' in name or 'free' in name):
+        return True
+    return False
+
 def _post_production(order, approver):
     if order.status == 'APPROVED':
         return
@@ -173,11 +186,15 @@ def _post_production(order, approver):
         req_by_item[line.raw_item_id] = req_by_item.get(line.raw_item_id, Decimal('0.000')) + Decimal(line.actual_qty)
     for item_id, total_req in req_by_item.items():
         fresh_it = Item.objects.get(pk=item_id)
+        if _is_free_utility_item(fresh_it):
+            continue
         avail = Decimal(fresh_it.current_stock or 0)
         if avail < total_req:
             raise ValueError(f'Insufficient stock for {fresh_it.item_name}: Available {avail} {fresh_it.unit}, Required {total_req} {fresh_it.unit}')
     for line in lines:
         it = Item.objects.get(pk=line.raw_item_id)
+        if _is_free_utility_item(it):
+            continue
         it.current_stock = Decimal(it.current_stock or 0) - Decimal(line.actual_qty)
         it.save(update_fields=['current_stock'])
         StockLedgerEntry.objects.create(
@@ -618,6 +635,8 @@ class ProductionOrderListCreateView(APIView):
                 )
                 _apply_order_lines(order, bom, data)
                 for cl in order.consumptions.select_related('raw_item').all():
+                    if _is_free_utility_item(cl.raw_item):
+                        continue
                     avail_rm = Decimal(cl.raw_item.current_stock or 0)
                     if avail_rm < Decimal(cl.actual_qty):
                         raise ValueError(

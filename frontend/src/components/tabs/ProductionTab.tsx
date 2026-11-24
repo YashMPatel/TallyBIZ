@@ -31,6 +31,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [reqRmPurchase, setReqRmPurchase] = useState<boolean>(true);
   const [schedBusy, setSchedBusy] = useState<boolean>(false);
   const [dispatchingBatchId, setDispatchingBatchId] = useState<string | null>(null);
+  const [reqViewFilter, setReqViewFilter] = useState<'active' | 'completed'>('active');
 
   const openScheduleModal = (req: any) => {
     setSchedModalReq(req);
@@ -82,6 +83,39 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to dispatch batch');
       setSuccessMsg(`Dispatched ${data.dispatched_qty} units (Challan ${data.dispatch_no}) to Sales! Sales can now generate 1-Click Invoice.`);
+      window.location.reload();
+    } catch (err) {
+      setErrorMsg(getErrorMessage(err));
+    } finally {
+      setDispatchingBatchId(null);
+    }
+  };
+
+  const handleDirectDispatchReadyStock = async (req: any) => {
+    const remQty = Math.max(0, Number(req.requested_qty || 0) - Number(req.dispatched_qty || 0));
+    if (remQty <= 0) return;
+    const veh = window.prompt(
+      `Direct Dispatch ${remQty} ${req.finished_unit || 'Nos'} of ${req.finished_item_name} from Factory Ready Stock (${req.mfg_ready_stock || 0} available).\n\nEnter Vehicle No (optional) and click OK to dispatch:`,
+      ''
+    );
+    if (veh === null) return;
+    setDispatchingBatchId(`direct-${req.id}`);
+    setErrorMsg('');
+    try {
+      const compId = localStorage.getItem('active_company_id') || '';
+      const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${req.id}/dispatch/?company_id=${compId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          direct_dispatch: true,
+          qty: remQty,
+          vehicle_no: veh.trim(),
+          dispatch_notes: 'Direct Dispatch from Ready Stock',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to dispatch ready stock');
+      setSuccessMsg(`Direct Dispatched ${data.dispatched_qty} ${req.finished_unit || ''} (Challan ${data.dispatch_no}) from Ready Stock to Sales!`);
       window.location.reload();
     } catch (err) {
       setErrorMsg(getErrorMessage(err));
@@ -616,7 +650,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
             cursor: 'pointer',
           }}
         >
-          Incoming Sales Requests ({salesRequests.length}) {salesRequests.filter((r) => r.status === 'PENDING_MFG').length > 0 ? `• ${salesRequests.filter((r) => r.status === 'PENDING_MFG').length} New` : ''}
+          Incoming Sales Requests ({salesRequests.filter((r) => r.status !== 'COMPLETED').length}) {salesRequests.filter((r) => r.status === 'PENDING_MFG').length > 0 ? `• ${salesRequests.filter((r) => r.status === 'PENDING_MFG').length} New` : ''}
         </button>
         <button
           onClick={() => setSubTab('jobwork')}
@@ -867,14 +901,56 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         </div>
       ) : subTab === 'requests' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {salesRequests.length === 0 ? (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setReqViewFilter('active')}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                background: reqViewFilter === 'active' ? '#7c3aed' : '#fff',
+                color: reqViewFilter === 'active' ? '#fff' : '#334155',
+                fontWeight: 700,
+                fontSize: '12.5px',
+                cursor: 'pointer',
+              }}
+            >
+              Active / Pending ({salesRequests.filter((x: any) => x.status !== 'COMPLETED').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setReqViewFilter('completed')}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                background: reqViewFilter === 'completed' ? '#15803d' : '#fff',
+                color: reqViewFilter === 'completed' ? '#fff' : '#334155',
+                fontWeight: 700,
+                fontSize: '12.5px',
+                cursor: 'pointer',
+              }}
+            >
+              Completed History ({salesRequests.filter((x: any) => x.status === 'COMPLETED').length})
+            </button>
+          </div>
+          {salesRequests.filter((x: any) => reqViewFilter === 'active' ? x.status !== 'COMPLETED' : x.status === 'COMPLETED').length === 0 ? (
             <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '28px', textAlign: 'center', color: '#64748b' }}>
-              No incoming sales orders yet. Orders submitted from Sales appear here automatically.
+              {reqViewFilter === 'active'
+                ? 'All caught up! No pending sales requests awaiting production or dispatch.'
+                : 'No completed sales requests yet.'}
             </div>
           ) : (
-            salesRequests.map((r: any) => {
+            salesRequests
+              .filter((x: any) => reqViewFilter === 'active' ? x.status !== 'COMPLETED' : x.status === 'COMPLETED')
+              .map((r: any) => {
               const schedule: any[] = r.delivery_schedule || [];
               const raw = r.raw_material || {};
+              const remToDispatch = Math.max(0, Number(r.requested_qty || 0) - Number(r.dispatched_qty || 0));
+              const mfgReady = Number(r.mfg_ready_stock || 0);
+              const tradingReady = Number(r.trading_ready_stock || 0);
+              const canDirectDispatch = r.status !== 'COMPLETED' && remToDispatch > 0 && mfgReady >= remToDispatch;
               return (
                 <div key={r.id} style={{ background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
@@ -917,14 +993,40 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        onClick={() => openScheduleModal(r)}
-                        style={{ background: '#7c3aed', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
-                      >
-                        {schedule.length > 0 ? 'Edit Date-Wise Schedule' : '+ Submit Date-Wise Delivery Schedule'}
-                      </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: mfgReady >= remToDispatch && remToDispatch > 0 ? '#dcfce7' : '#f1f5f9', color: mfgReady >= remToDispatch && remToDispatch > 0 ? '#166534' : '#475569' }}>
+                          Factory Ready: {mfgReady.toFixed(2)} {r.finished_unit || 'Nos'}
+                        </span>
+                        {tradingReady > 0 && (
+                          <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 700, background: '#e0f2fe', color: '#0369a1' }}>
+                            Trading Ready: {tradingReady.toFixed(2)} {r.finished_unit || 'Nos'}
+                          </span>
+                        )}
+                      </div>
+                      {r.status !== 'COMPLETED' && (
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {canDirectDispatch && (
+                            <button
+                              type="button"
+                              disabled={dispatchingBatchId === `direct-${r.id}`}
+                              onClick={() => handleDirectDispatchReadyStock(r)}
+                              style={{ background: '#059669', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                            >
+                              {dispatchingBatchId === `direct-${r.id}`
+                                ? 'Dispatching...'
+                                : `Direct Dispatch Ready Stock (${remToDispatch.toFixed(2)} ${r.finished_unit || ''})`}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openScheduleModal(r)}
+                            style={{ background: canDirectDispatch ? '#f1f5f9' : '#7c3aed', color: canDirectDispatch ? '#334155' : '#fff', border: canDirectDispatch ? '1px solid #cbd5e1' : 'none', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                          >
+                            {schedule.length > 0 ? 'Edit Production Schedule' : '+ Date-Wise Production Schedule'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 

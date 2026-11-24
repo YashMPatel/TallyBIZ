@@ -32,7 +32,7 @@ def _get_or_create_item(comp, item_id=None, item_name='', category='General', un
         obj = Item.objects.filter(company=comp, item_name__iexact=item_name.strip()).first()
     if obj:
         changed = []
-        if unit and obj.unit != unit:
+        if unit and not obj.unit:
             obj.unit = unit
             changed.append('unit')
         if hsn_code and obj.hsn_code != hsn_code:
@@ -114,6 +114,10 @@ class ProductionSalesRequestListCreateAPIView(APIView):
                 'party_challan_no': snap.get('party_challan_no', ''),
                 'existing_invoice_id': snap.get('existing_invoice_id'),
                 'existing_invoice_no': snap.get('existing_invoice_no', ''),
+                'proforma_invoice_id': snap.get('proforma_invoice_id'),
+                'proforma_invoice_no': snap.get('proforma_invoice_no', ''),
+                'mfg_ready_stock': float(_unit_item_stock(comp, r.mfg_unit, r.finished_item_id)) if r.finished_item_id else 0.0,
+                'trading_ready_stock': float(_unit_item_stock(comp, r.from_unit, r.finished_item_id)) if r.finished_item_id else 0.0,
                 'line_items_summary': snap.get('line_items_summary', []),
                 'finished_item_id': r.finished_item_id,
                 'finished_item_name': r.finished_item.item_name if r.finished_item else '',
@@ -384,28 +388,62 @@ class ProductionSalesRequestDispatchAPIView(APIView):
 
     @transaction.atomic
     def post(self, request, pk):
+        from stock.models import StockBatch
+        from backend.erp_workflow import transfer_batches_fifo
+
         comp = get_active_company(request)
         req_obj = ProductionSalesRequest.objects.filter(company=comp, id=pk).select_related('finished_item', 'mfg_unit', 'from_unit', 'bom').first()
         if not req_obj:
             return Response({'error': 'Order request not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        batch_id = str(request.data.get('batch_id') or '').strip()
         snap = dict(req_obj.mrp_snapshot or {})
         schedule = list(snap.get('delivery_schedule') or [])
-
-        target_batch = None
-        for b in schedule:
-            if str(b.get('id')) == batch_id:
-                target_batch = b
-                break
-
-        if not target_batch:
-            return Response({'error': 'Scheduled batch not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if target_batch.get('status') == 'DISPATCHED':
-            return Response({'error': 'This batch is already dispatched.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        disp_qty = Decimal(str(target_batch.get('qty') or 0)).quantize(Decimal('0.01'))
+        direct_dispatch = bool(request.data.get('direct_dispatch'))
         disp_date = timezone.now().date()
+
+        if direct_dispatch:
+            already_disp = sum(Decimal(str(x.get('qty') or 0)) for x in schedule if x.get('status') == 'DISPATCHED')
+            rem_need = max(Decimal('0.00'), Decimal(str(req_obj.requested_qty or 0)) - already_disp).quantize(Decimal('0.01'))
+            req_override = Decimal(str(request.data.get('qty') or 0)).quantize(Decimal('0.01'))
+            disp_qty = req_override if req_override > 0 else rem_need
+            if disp_qty <= 0:
+                return Response({'error': 'This order is already fully dispatched.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            mfg_bal_check = _unit_item_stock(comp, req_obj.mfg_unit, req_obj.finished_item_id) if req_obj.mfg_unit else Decimal('0.00')
+            if mfg_bal_check < disp_qty:
+                return Response({
+                    'error': f'Ready stock in Manufacturing ({mfg_bal_check} {req_obj.finished_item.unit}) is less than dispatch qty ({disp_qty}). Use Date-Wise Production Schedule to manufacture first.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Remove any un-dispatched scheduled placeholders if fulfilling entire remainder directly
+            schedule = [b for b in schedule if b.get('status') == 'DISPATCHED']
+            target_batch = {
+                'id': f"DD-{uuid.uuid4().hex[:6]}",
+                'date': str(disp_date),
+                'qty': float(disp_qty),
+                'challan_no': (request.data.get('challan_no') or '').strip(),
+                'vehicle_no': (request.data.get('vehicle_no') or '').strip().upper(),
+                'dispatch_notes': (request.data.get('dispatch_notes') or 'Direct Dispatch from Ready Stock').strip(),
+                'status': 'SCHEDULED',
+                'dispatch_no': '',
+                'dispatched_at': '',
+                'invoiced': False,
+                'invoice_no': '',
+            }
+            schedule.append(target_batch)
+        else:
+            batch_id = str(request.data.get('batch_id') or '').strip()
+            target_batch = None
+            for b in schedule:
+                if str(b.get('id')) == batch_id:
+                    target_batch = b
+                    break
+            if not target_batch:
+                return Response({'error': 'Scheduled batch not found.'}, status=status.HTTP_404_NOT_FOUND)
+            if target_batch.get('status') == 'DISPATCHED':
+                return Response({'error': 'This batch is already dispatched.'}, status=status.HTTP_400_BAD_REQUEST)
+            disp_qty = Decimal(str(target_batch.get('qty') or 0)).quantize(Decimal('0.01'))
+
         trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
 
         import re
@@ -419,68 +457,99 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         disp_vno = custom_challan or f"DSP-{max_dsp + 1:04d}"
 
         is_job_work = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
-        raw_info = snap.get('raw_material') or {}
-        if not is_job_work and req_obj.mfg_unit and raw_info.get('raw_item_id') and float(raw_info.get('raw_qty') or 0) > 0 and req_obj.requested_qty > 0:
-            ratio = disp_qty / Decimal(str(req_obj.requested_qty))
-            waste_m = Decimal('1') + (Decimal(str(raw_info.get('raw_wastage') or 0)) / Decimal('100'))
-            rm_used = (Decimal(str(raw_info['raw_qty'])) * ratio * waste_m).quantize(Decimal('0.01'))
-            rm_item = Item.objects.filter(id=raw_info['raw_item_id']).first()
-            if rm_item and rm_used > 0:
-                rm_bal = _unit_item_stock(comp, req_obj.mfg_unit, rm_item.id)
+        unit_cost = Decimal(str(snap.get('cost_rate') or req_obj.finished_item.standard_rate or 0))
+
+        if not is_job_work and req_obj.mfg_unit:
+            mfg_bal = _unit_item_stock(comp, req_obj.mfg_unit, req_obj.finished_item_id)
+            # Only produce & consume RM for the SHORTFALL not already available in Manufacturing ready stock!
+            produce_qty = max(Decimal('0.00'), disp_qty - max(Decimal('0.00'), mfg_bal)).quantize(Decimal('0.01'))
+
+            if produce_qty > 0:
+                raw_info = snap.get('raw_material') or {}
+                if raw_info.get('raw_item_id') and float(raw_info.get('raw_qty') or 0) > 0 and req_obj.requested_qty > 0:
+                    ratio = produce_qty / Decimal(str(req_obj.requested_qty))
+                    waste_m = Decimal('1') + (Decimal(str(raw_info.get('raw_wastage') or 0)) / Decimal('100'))
+                    rm_used = (Decimal(str(raw_info['raw_qty'])) * ratio * waste_m).quantize(Decimal('0.01'))
+                    rm_item = Item.objects.filter(id=raw_info['raw_item_id']).first()
+                    if rm_item and rm_used > 0:
+                        rm_bal = _unit_item_stock(comp, req_obj.mfg_unit, rm_item.id)
+                        StockLedgerEntry.objects.create(
+                            company=comp,
+                            unit=req_obj.mfg_unit,
+                            posting_date=disp_date,
+                            item=rm_item,
+                            voucher_type='Material Issue',
+                            voucher_no=disp_vno,
+                            actual_qty=-rm_used,
+                            qty_after_transaction=rm_bal - rm_used,
+                            valuation_rate=Decimal(str(raw_info.get('raw_purchase_rate') or rm_item.standard_rate or 0)),
+                        )
+                        rm_tot = StockLedgerEntry.objects.filter(company=comp, item=rm_item).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
+                        rm_item.current_stock = rm_tot
+                        rm_item.save(update_fields=['current_stock'])
+
+                prod_batch = StockBatch.objects.create(
+                    company=comp,
+                    unit=req_obj.mfg_unit,
+                    item=req_obj.finished_item,
+                    batch_no=f"LOT-{disp_vno}",
+                    source_type='Production Receipt',
+                    source_voucher=disp_vno,
+                    party_name=req_obj.mfg_unit.name,
+                    received_date=disp_date,
+                    initial_qty=produce_qty,
+                    remaining_qty=produce_qty,
+                    purchase_rate=unit_cost,
+                )
+                mfg_bal = mfg_bal + produce_qty
                 StockLedgerEntry.objects.create(
                     company=comp,
                     unit=req_obj.mfg_unit,
                     posting_date=disp_date,
-                    item=rm_item,
-                    voucher_type='Material Issue',
+                    item=req_obj.finished_item,
+                    voucher_type='Production Receipt',
                     voucher_no=disp_vno,
-                    actual_qty=-rm_used,
-                    qty_after_transaction=rm_bal - rm_used,
-                    valuation_rate=Decimal(str(raw_info.get('raw_purchase_rate') or rm_item.standard_rate or 0)),
+                    actual_qty=produce_qty,
+                    qty_after_transaction=mfg_bal,
+                    valuation_rate=unit_cost,
+                    batch=prod_batch,
+                    batch_no=prod_batch.batch_no,
                 )
-                rm_tot = StockLedgerEntry.objects.filter(company=comp, item=rm_item).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
-                rm_item.current_stock = rm_tot
-                rm_item.save(update_fields=['current_stock'])
 
-        unit_cost = Decimal(str(snap.get('cost_rate') or req_obj.finished_item.standard_rate or 0))
-        if not is_job_work and req_obj.mfg_unit:
-            mfg_bal = _unit_item_stock(comp, req_obj.mfg_unit, req_obj.finished_item_id)
-            StockLedgerEntry.objects.create(
-                company=comp,
-                unit=req_obj.mfg_unit,
-                posting_date=disp_date,
-                item=req_obj.finished_item,
-                voucher_type='Production Receipt',
-                voucher_no=disp_vno,
-                actual_qty=disp_qty,
-                qty_after_transaction=mfg_bal + disp_qty,
-                valuation_rate=unit_cost,
-            )
-            StockLedgerEntry.objects.create(
-                company=comp,
-                unit=req_obj.mfg_unit,
-                posting_date=disp_date,
-                item=req_obj.finished_item,
-                voucher_type='Stock Transfer',
-                voucher_no=disp_vno,
-                actual_qty=-disp_qty,
-                qty_after_transaction=mfg_bal,
-                valuation_rate=unit_cost,
-            )
-
-        if not is_job_work:
+            # Transfer from Manufacturing -> Trading using real FIFO StockBatches
             trd_bal = _unit_item_stock(comp, trading_u, req_obj.finished_item_id)
-            StockLedgerEntry.objects.create(
-                company=comp,
-                unit=trading_u,
-                posting_date=disp_date,
-                item=req_obj.finished_item,
-                voucher_type='Stock Transfer',
-                voucher_no=disp_vno,
-                actual_qty=disp_qty,
-                qty_after_transaction=trd_bal + disp_qty,
-                valuation_rate=unit_cost,
-            )
+            moves = transfer_batches_fifo(comp, req_obj.mfg_unit, trading_u, req_obj.finished_item, disp_qty, disp_date, disp_vno, unit_cost)
+            run_mfg = mfg_bal
+            run_trd = trd_bal
+            for src_b, dst_b, slice_q in moves:
+                run_mfg -= slice_q
+                run_trd += slice_q
+                StockLedgerEntry.objects.create(
+                    company=comp,
+                    unit=req_obj.mfg_unit,
+                    posting_date=disp_date,
+                    item=req_obj.finished_item,
+                    voucher_type='Stock Transfer',
+                    voucher_no=disp_vno,
+                    actual_qty=-slice_q,
+                    qty_after_transaction=run_mfg,
+                    valuation_rate=unit_cost,
+                    batch=src_b,
+                    batch_no=(src_b.batch_no if src_b else ''),
+                )
+                StockLedgerEntry.objects.create(
+                    company=comp,
+                    unit=trading_u,
+                    posting_date=disp_date,
+                    item=req_obj.finished_item,
+                    voucher_type='Stock Transfer',
+                    voucher_no=disp_vno,
+                    actual_qty=slice_q,
+                    qty_after_transaction=run_trd,
+                    valuation_rate=unit_cost,
+                    batch=dst_b,
+                    batch_no=(dst_b.batch_no if dst_b else ''),
+                )
 
             total_item_stock = StockLedgerEntry.objects.filter(company=comp, item=req_obj.finished_item).aggregate(q=Sum('actual_qty'))['q'] or Decimal('0.00')
             req_obj.finished_item.current_stock = total_item_stock
@@ -502,7 +571,6 @@ class ProductionSalesRequestDispatchAPIView(APIView):
         if existing_inv_no or existing_inv_id:
             target_batch['invoiced'] = True
             target_batch['invoice_no'] = existing_inv_no
-            # Rule 55(5): each lot's challan references the invoice; the issued invoice itself is never edited.
 
         snap['delivery_schedule'] = schedule
         req_obj.mrp_snapshot = snap
@@ -523,12 +591,16 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
 
     @transaction.atomic
     def post(self, request, pk):
+        from backend.erp_workflow import approve_and_post_sales_invoice
+        from selling.serializers import SalesInvoiceSerializer
+
         comp = get_active_company(request)
         req_obj = ProductionSalesRequest.objects.filter(company=comp, id=pk).select_related('finished_item', 'from_unit').first()
         if not req_obj:
             return Response({'error': 'Order request not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         batch_id = str(request.data.get('batch_id') or '').strip()
+        proceed_partial = bool((request.data or {}).get('proceed_partial'))
         snap = dict(req_obj.mrp_snapshot or {})
         schedule = list(snap.get('delivery_schedule') or [])
 
@@ -545,6 +617,151 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         if target_batch.get('invoiced'):
             return Response({'error': f"Already invoiced under {target_batch.get('invoice_no')}."}, status=status.HTTP_400_BAD_REQUEST)
 
+        comp = req_obj.company or comp
+        trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
+        is_jw = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
+
+        # If linked to a Proforma Invoice, preserve ALL original items, billed units & individual rates!
+        pi_id = snap.get('proforma_invoice_id')
+        pi_no = (snap.get('proforma_invoice_no') or '').strip()
+        pi_obj = None
+        if pi_id:
+            pi_obj = SalesInvoice.objects.filter(company=comp, id=pi_id).first()
+        elif pi_no:
+            pi_obj = SalesInvoice.objects.filter(company=comp, invoice_number__iexact=pi_no).first()
+
+        if pi_obj and str(pi_obj.invoice_number or '').upper().startswith('PI-') and pi_obj.items.exists():
+            pi_lines = list(pi_obj.items.select_related('item').all())
+            ready_lines = []
+            missing_items = []
+            if is_jw:
+                ready_lines = pi_lines
+            else:
+                avail_map = {}
+                for ln in pi_lines:
+                    if ln.item_id not in avail_map:
+                        avail_map[ln.item_id] = max(Decimal('0.00'), _unit_item_stock(comp, trading_u, ln.item_id))
+                    need_q = Decimal(str(ln.quantity or 0))
+                    if avail_map[ln.item_id] >= need_q:
+                        ready_lines.append(ln)
+                        avail_map[ln.item_id] -= need_q
+                    else:
+                        missing_items.append({
+                            'line_id': ln.id,
+                            'item_id': ln.item_id,
+                            'item_code': ln.item.item_code,
+                            'item_name': ln.item.item_name,
+                            'required_qty': float(need_q),
+                            'available_qty': float(avail_map[ln.item_id]),
+                            'unit': ln.item.unit or 'Nos',
+                            'rate': float(ln.rate or 0),
+                        })
+
+            if missing_items and not proceed_partial:
+                return Response({
+                    'needs_confirmation': True,
+                    'proforma_number': pi_obj.invoice_number,
+                    'ready_count': len(ready_lines),
+                    'missing_count': len(missing_items),
+                    'ready_items': [
+                        {
+                            'item_name': l.item.item_name,
+                            'item_code': l.item.item_code,
+                            'quantity': float(l.quantity),
+                            'unit': l.item.unit or 'Nos',
+                            'rate': float(l.rate or 0),
+                        }
+                        for l in ready_lines
+                    ],
+                    'missing_items': missing_items,
+                    'message': f"{len(missing_items)} item(s) from {pi_obj.invoice_number} missing/not ready in Trading stock. Proceed Partial Invoice for {len(ready_lines)} ready item(s), or Cancel & wait?",
+                }, status=status.HTTP_200_OK)
+
+            lines_to_invoice = ready_lines if missing_items else pi_lines
+            if not lines_to_invoice:
+                return Response({'error': 'No Proforma items have sufficient stock in Trading Division yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            cnt = SalesInvoice.objects.filter(company=comp).exclude(invoice_number__istartswith='PI-').count() + 1
+            inv_no = f"INV-{cnt:04d}"
+            while SalesInvoice.objects.filter(company=comp, invoice_number=inv_no).exists():
+                cnt += 1
+                inv_no = f"INV-{cnt:04d}"
+
+            p_date = timezone.now().date()
+            due_date = p_date + timezone.timedelta(days=30)
+            net_total = sum((Decimal(str(l.amount or 0)) for l in lines_to_invoice), Decimal('0.00')).quantize(Decimal('0.01'))
+            tax_rate = Decimal(str(pi_obj.tax_rate or 0))
+            tax_amount = ((net_total * tax_rate) / Decimal('100.00')).quantize(Decimal('0.01'))
+            adj = Decimal(str(pi_obj.adjustment or 0)) if not missing_items else Decimal('0.00')
+            grand_total = (net_total + tax_amount + adj).quantize(Decimal('0.01'))
+
+            inv = SalesInvoice.objects.create(
+                company=comp,
+                unit=trading_u,
+                customer=pi_obj.customer,
+                customer_name=pi_obj.customer_name or req_obj.customer_name or 'Customer',
+                invoice_type=pi_obj.invoice_type,
+                party_challan_no=pi_obj.party_challan_no or (snap.get('party_challan_no') or '').strip()[:80],
+                invoice_number=inv_no,
+                posting_date=p_date,
+                due_date=due_date,
+                tax_rate=tax_rate,
+                net_total=net_total,
+                tax_amount=tax_amount,
+                adjustment=adj,
+                grand_total=grand_total,
+                status='Draft',
+            )
+            for line in lines_to_invoice:
+                SalesInvoiceItem.objects.create(
+                    invoice=inv,
+                    item=line.item,
+                    hsn_code=line.hsn_code,
+                    description=line.description,
+                    quantity=line.quantity,
+                    billed_unit=line.billed_unit,
+                    billed_qty=line.billed_qty,
+                    rate=line.rate,
+                    discount_percentage=line.discount_percentage,
+                    discount_amount=line.discount_amount,
+                    is_foc=line.is_foc,
+                    amount=line.amount,
+                )
+
+            # Auto-approve & post stock, FIFO StockBatches, and GL immediately!
+            approve_and_post_sales_invoice(inv)
+
+            target_batch['invoiced'] = True
+            target_batch['invoice_no'] = inv_no
+            snap['delivery_schedule'] = schedule
+            req_obj.mrp_snapshot = snap
+            req_obj.save(update_fields=['mrp_snapshot'])
+
+            if not missing_items:
+                pi_obj.status = 'Rejected'
+                pi_obj.rejection_reason = f'Converted to Tax Invoice {inv_no}'
+                pi_obj.save(update_fields=['status', 'rejection_reason'])
+            else:
+                invoiced_ids = [l.id for l in lines_to_invoice]
+                pi_obj.items.filter(id__in=invoiced_ids).delete()
+                rem_net = sum((Decimal(str(l.amount or 0)) for l in pi_obj.items.all()), Decimal('0.00')).quantize(Decimal('0.01'))
+                rem_tax = ((rem_net * tax_rate) / Decimal('100.00')).quantize(Decimal('0.01'))
+                pi_obj.net_total = rem_net
+                pi_obj.tax_amount = rem_tax
+                pi_obj.grand_total = (rem_net + rem_tax).quantize(Decimal('0.01'))
+                pi_obj.rejection_reason = f'Partial Tax Invoice {inv_no} generated; {len(missing_items)} item(s) remaining'
+                pi_obj.save(update_fields=['net_total', 'tax_amount', 'grand_total', 'rejection_reason'])
+
+            return Response({
+                'invoice_id': inv.id,
+                'invoice_number': inv.invoice_number,
+                'grand_total': float(grand_total),
+                'partial': bool(missing_items),
+                'invoice': SalesInvoiceSerializer(inv).data,
+                'delivery_schedule': schedule,
+            }, status=status.HTTP_201_CREATED)
+
+        # Standalone non-Proforma Manufacturing Request -> 1-Click Approved Tax Invoice
         qty = Decimal(str(target_batch.get('qty') or 0)).quantize(Decimal('0.01'))
         rate = Decimal(str(snap.get('selling_rate') or req_obj.finished_item.selling_rate or req_obj.finished_item.standard_rate or 0)).quantize(Decimal('0.01'))
         gst_rate = Decimal(str(req_obj.finished_item.gst_rate if req_obj.finished_item.gst_rate is not None else 18)).quantize(Decimal('0.01'))
@@ -553,8 +770,6 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         tax_amount = ((net_total * gst_rate) / Decimal('100.00')).quantize(Decimal('0.01'))
         grand_total = (net_total + tax_amount).quantize(Decimal('0.01'))
 
-        comp = req_obj.company or comp
-        trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
         cust_obj = None
         if req_obj.customer_name:
             cust_obj, _ = Customer.objects.get_or_create(company=comp, customer_name=req_obj.customer_name)
@@ -568,7 +783,6 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
         p_date = timezone.now().date()
         due_date = p_date + timezone.timedelta(days=30)
 
-        is_jw = str(snap.get('order_type') or 'OWN').upper() == 'JOB_WORK'
         inv = SalesInvoice.objects.create(
             company=comp,
             unit=trading_u,
@@ -591,6 +805,8 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             item=req_obj.finished_item,
             description=f"{req_obj.finished_item.item_name} (HSN: {req_obj.finished_item.hsn_code or '-'} | Order: {req_obj.sales_ref} | Challan: {target_batch.get('dispatch_no')})",
             quantity=qty,
+            billed_unit=req_obj.finished_item.unit or 'Nos',
+            billed_qty=qty,
             rate=rate,
             discount_percentage=Decimal('0.00'),
             discount_amount=Decimal('0.00'),
@@ -599,57 +815,20 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             hsn_code='9988' if is_jw else (req_obj.finished_item.hsn_code or ''),
         )
 
+        # Auto-approve & post stock, FIFO StockBatches, and GL immediately!
+        approve_and_post_sales_invoice(inv)
+
         target_batch['invoiced'] = True
         target_batch['invoice_no'] = inv_no
         snap['delivery_schedule'] = schedule
         req_obj.mrp_snapshot = snap
         req_obj.save(update_fields=['mrp_snapshot'])
 
-        pi_id = snap.get('proforma_invoice_id')
-        pi_no = (snap.get('proforma_invoice_no') or '').strip()
-        if pi_id or pi_no:
-            pi_obj = SalesInvoice.objects.filter(company=comp, id=pi_id).first() if pi_id else SalesInvoice.objects.filter(company=comp, invoice_number__iexact=pi_no).first()
-            if pi_obj and str(pi_obj.invoice_number or '').upper().startswith('PI-'):
-                pi_obj.status = 'Rejected'
-                pi_obj.rejection_reason = f'Converted to Tax Invoice {inv_no}'
-                pi_obj.save(update_fields=['status', 'rejection_reason'])
-
-        inv_payload = {
-            'id': inv.id,
-            'invoice_number': inv.invoice_number,
-            'customer': inv.customer_id,
-            'customer_name': inv.customer_name,
-            'posting_date': str(inv.posting_date),
-            'due_date': str(inv.due_date) if inv.due_date else '',
-            'tax_rate': str(inv.tax_rate),
-            'net_total': str(inv.net_total),
-            'tax_amount': str(inv.tax_amount),
-            'adjustment': str(inv.adjustment),
-            'grand_total': str(inv.grand_total),
-            'status': inv.status,
-            'created_by_name': 'Sales Team',
-            'approved_by_name': '',
-            'items': [
-                {
-                    'item': req_obj.finished_item_id,
-                    'item_name': req_obj.finished_item.item_name,
-                    'hsn_code': req_obj.finished_item.hsn_code,
-                    'unit': req_obj.finished_item.unit,
-                    'description': f"{req_obj.finished_item.item_name} (Order: {req_obj.sales_ref})",
-                    'quantity': str(qty),
-                    'rate': str(rate),
-                    'discount_percentage': '0.00',
-                    'discount_amount': '0.00',
-                    'is_foc': False,
-                    'amount': str(net_total),
-                }
-            ],
-        }
         return Response({
             'invoice_id': inv.id,
             'invoice_number': inv.invoice_number,
             'grand_total': float(grand_total),
-            'invoice': inv_payload,
+            'invoice': SalesInvoiceSerializer(inv).data,
             'delivery_schedule': schedule,
         }, status=status.HTTP_201_CREATED)
 

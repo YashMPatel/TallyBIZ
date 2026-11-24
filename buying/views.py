@@ -103,7 +103,13 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
             is_foc=is_foc
         )
 
-        # 4. Create Purchase Lot / Batch & Stock Ledger inward entry
+        # 4. Skip inventory stock for Expense / Fixed Asset / Utility / Service items (e.g. Laptop, Furniture, Mobile Bill, Stationery)
+        item_cat = str(getattr(item_obj, 'category', '') or '').strip().lower()
+        is_non_stock = item_cat in ('expense', 'office expense', 'fixed asset', 'asset', 'utility', 'service', 'consumable')
+        if is_non_stock:
+            continue
+
+        # Create Purchase Lot / Batch & Stock Ledger inward entry
         custom_batch = (str(it.get('batch_no') or '')).strip()
         if not custom_batch:
             b_idx = StockBatch.objects.filter(company=comp, item=item_obj).count() + 1
@@ -145,9 +151,10 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
         itm.company = comp
         itm.save()
 
-    # 6. Double-entry General Ledger
+    # 6. Double-entry General Ledger (unit-scoped so HO expenses/purchases reflect in HO)
     GLEntry.objects.create(
         company=comp,
+        unit=getattr(invoice, 'unit', None),
         posting_date=invoice.posting_date,
         account='Purchases',
         party_type='Supplier',

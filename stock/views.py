@@ -224,19 +224,28 @@ class InterUnitStockTransferAPIView(APIView):
                 vno = f"TRF-{cnt:04d}"
                 pdate = timezone.now().date()
                 rate = Decimal(str(src_item.standard_rate or 0))
+                from backend.erp_workflow import transfer_batches_fifo
                 dst_avail = StockLedgerEntry.objects.filter(company=comp, unit=to_bu, item=src_item).aggregate(s=Sum('actual_qty'))['s'] or Decimal('0.00')
-                StockLedgerEntry.objects.create(
-                    company=comp, unit=from_bu, posting_date=pdate, item=src_item,
-                    voucher_type='Stock Transfer', voucher_no=vno,
-                    actual_qty=-qty,
-                    qty_after_transaction=avail - qty, valuation_rate=rate
-                )
-                StockLedgerEntry.objects.create(
-                    company=comp, unit=to_bu, posting_date=pdate, item=src_item,
-                    voucher_type='Stock Transfer', voucher_no=vno,
-                    actual_qty=qty,
-                    qty_after_transaction=dst_avail + qty, valuation_rate=rate
-                )
+                moves = transfer_batches_fifo(comp, from_bu, to_bu, src_item, qty, pdate, vno, rate)
+                run_src = avail
+                run_dst = dst_avail
+                for src_b, dst_b, slice_q in moves:
+                    run_src -= slice_q
+                    run_dst += slice_q
+                    StockLedgerEntry.objects.create(
+                        company=comp, unit=from_bu, posting_date=pdate, item=src_item,
+                        voucher_type='Stock Transfer', voucher_no=vno,
+                        actual_qty=-slice_q,
+                        qty_after_transaction=run_src, valuation_rate=rate,
+                        batch=src_b, batch_no=(src_b.batch_no if src_b else '')
+                    )
+                    StockLedgerEntry.objects.create(
+                        company=comp, unit=to_bu, posting_date=pdate, item=src_item,
+                        voucher_type='Stock Transfer', voucher_no=vno,
+                        actual_qty=slice_q,
+                        qty_after_transaction=run_dst, valuation_rate=rate,
+                        batch=dst_b, batch_no=(dst_b.batch_no if dst_b else '')
+                    )
             return Response({'message': f'Transferred {qty} {src_item.unit} of {src_item.item_name} from {from_bu.name} to {to_bu.name} ({vno}).'}, status=status.HTTP_201_CREATED)
 
         from_comp = Company.objects.filter(id=int(from_cid)).first()

@@ -50,7 +50,7 @@ def _scope_qs(qs, model, doc):
     return qs
 
 
-def _create_sl_entry(StockLedgerEntry, item_obj, comp, p_date, v_type, v_no, in_qty, out_qty, actual_qty, new_bal, rate_val, unit_obj=None):
+def _create_sl_entry(StockLedgerEntry, item_obj, comp, p_date, v_type, v_no, in_qty, out_qty, actual_qty, new_bal, rate_val, unit_obj=None, batch_obj=None, batch_no=''):
     return _safe_create(
         StockLedgerEntry,
         item=item_obj,
@@ -67,7 +67,131 @@ def _create_sl_entry(StockLedgerEntry, item_obj, comp, p_date, v_type, v_no, in_
         balance_qty=new_bal,
         valuation_rate=rate_val,
         stock_value=(new_bal * rate_val).quantize(Decimal('0.01')),
+        batch=batch_obj,
+        batch_no=(batch_no or (batch_obj.batch_no if batch_obj else ''))[:80],
     )
+
+
+def deduct_batches_fifo(comp, unit_obj, item_obj, qty):
+    """Deduct qty FIFO from StockBatch in unit_obj (falling back to untagged company batches).
+    Returns list of (batch_obj_or_None, slice_qty)."""
+    StockBatch = apps.get_model('stock', 'StockBatch')
+    rem = Decimal(str(qty or 0)).quantize(Decimal('0.01'))
+    if rem <= 0:
+        return []
+
+    qs_base = StockBatch.objects.select_for_update().filter(
+        item=item_obj, remaining_qty__gt=0
+    )
+    if comp:
+        qs_base = qs_base.filter(company=comp)
+
+    batches = []
+    seen = set()
+    if unit_obj:
+        for b in qs_base.filter(unit=unit_obj).order_by('received_date', 'id'):
+            batches.append(b)
+            seen.add(b.id)
+    for b in qs_base.filter(unit__isnull=True).order_by('received_date', 'id'):
+        if b.id not in seen:
+            batches.append(b)
+            seen.add(b.id)
+    # Fallback to other company batches if unit-level batches weren't tagged on older transfers
+    for b in qs_base.order_by('received_date', 'id'):
+        if b.id not in seen:
+            batches.append(b)
+            seen.add(b.id)
+
+    allocations = []
+    for b in batches:
+        if rem <= 0:
+            break
+        b_rem = Decimal(str(b.remaining_qty or 0))
+        if b_rem <= 0:
+            continue
+        take = min(rem, b_rem).quantize(Decimal('0.01'))
+        b.remaining_qty = (b_rem - take).quantize(Decimal('0.01'))
+        b.save(update_fields=['remaining_qty'])
+        allocations.append((b, take))
+        rem = (rem - take).quantize(Decimal('0.01'))
+
+    if rem > 0:
+        allocations.append((None, rem))
+    return allocations
+
+
+def transfer_batches_fifo(comp, from_unit, to_unit, item_obj, qty, p_date, vno, cost_rate):
+    """Move qty FIFO from from_unit StockBatches into matching StockBatches in to_unit.
+    Returns list of (src_batch_or_None, dst_batch_or_None, slice_qty)."""
+    StockBatch = apps.get_model('stock', 'StockBatch')
+    rem = Decimal(str(qty or 0)).quantize(Decimal('0.01'))
+    if rem <= 0:
+        return []
+
+    qs_base = StockBatch.objects.select_for_update().filter(
+        item=item_obj, remaining_qty__gt=0
+    )
+    if comp:
+        qs_base = qs_base.filter(company=comp)
+
+    batches = []
+    seen = set()
+    if from_unit:
+        for b in qs_base.filter(unit=from_unit).order_by('received_date', 'id'):
+            batches.append(b)
+            seen.add(b.id)
+    for b in qs_base.filter(unit__isnull=True).order_by('received_date', 'id'):
+        if b.id not in seen:
+            batches.append(b)
+            seen.add(b.id)
+
+    moves = []
+    for b in batches:
+        if rem <= 0:
+            break
+        b_rem = Decimal(str(b.remaining_qty or 0))
+        if b_rem <= 0:
+            continue
+        take = min(rem, b_rem).quantize(Decimal('0.01'))
+        b.remaining_qty = (b_rem - take).quantize(Decimal('0.01'))
+        b.save(update_fields=['remaining_qty'])
+
+        dst_b = None
+        if to_unit:
+            dst_b = StockBatch.objects.create(
+                company=comp or getattr(item_obj, 'company', None),
+                unit=to_unit,
+                item=item_obj,
+                batch_no=b.batch_no,
+                source_type='Stock Transfer',
+                source_voucher=vno,
+                party_name=(from_unit.name if from_unit else ''),
+                received_date=p_date,
+                initial_qty=take,
+                remaining_qty=take,
+                purchase_rate=b.purchase_rate or cost_rate,
+            )
+        moves.append((b, dst_b, take))
+        rem = (rem - take).quantize(Decimal('0.01'))
+
+    if rem > 0:
+        dst_b = None
+        if to_unit:
+            dst_b = StockBatch.objects.create(
+                company=comp or getattr(item_obj, 'company', None),
+                unit=to_unit,
+                item=item_obj,
+                batch_no=f"LOT-{vno}",
+                source_type='Stock Transfer',
+                source_voucher=vno,
+                party_name=(from_unit.name if from_unit else ''),
+                received_date=p_date,
+                initial_qty=rem,
+                remaining_qty=rem,
+                purchase_rate=cost_rate,
+            )
+        moves.append((None, dst_b, rem))
+    return moves
 
 
 def validate_sales_invoice_stock(items_data, company_id=None):
@@ -82,7 +206,14 @@ def validate_sales_invoice_stock(items_data, company_id=None):
         if not item_obj:
             raise ValidationError({'error': f'Item #{item_id} not found.'})
 
-        avail = Decimal(str(getattr(item_obj, 'current_stock', 0) or 0))
+        from django.db.models import Sum
+        StockLedgerEntry = apps.get_model('stock', 'StockLedgerEntry')
+        curr_st = Decimal(str(getattr(item_obj, 'current_stock', 0) or 0))
+        qs_sle = StockLedgerEntry.objects.filter(item=item_obj)
+        if company_id:
+            qs_sle = qs_sle.filter(company_id=company_id)
+        sle_st = Decimal(str(qs_sle.aggregate(q=Sum('actual_qty'))['q'] or 0))
+        avail = max(curr_st, sle_st)
         if avail < qty:
             raise ValidationError({
                 'error': f'Insufficient Stock for {item_obj.item_name} ({item_obj.item_code}): Available {avail}, Requested {qty}. Negative stock is not allowed.'
@@ -156,19 +287,25 @@ def approve_and_post_sales_invoice(invoice):
                     continue
                 move_qty = min(shortfall, donor_avail)
                 trf_vno = f"AUTO-TRF-{invoice.invoice_number}-{line_idx}"
-                donor_after = donor_avail - move_qty
-                unit_avail = unit_avail + move_qty
-
-                _create_sl_entry(
-                    StockLedgerEntry, item_obj, comp, p_date,
-                    'Stock Transfer', trf_vno,
-                    Decimal('0.00'), move_qty, -move_qty, donor_after, cost_rate, donor_u
-                )
-                _create_sl_entry(
-                    StockLedgerEntry, item_obj, comp, p_date,
-                    'Stock Transfer', trf_vno,
-                    move_qty, Decimal('0.00'), move_qty, unit_avail, cost_rate, target_unit
-                )
+                moves = transfer_batches_fifo(comp, donor_u, target_unit, item_obj, move_qty, p_date, trf_vno, cost_rate)
+                run_donor = donor_avail
+                run_target = unit_avail
+                for src_b, dst_b, slice_q in moves:
+                    run_donor -= slice_q
+                    run_target += slice_q
+                    _create_sl_entry(
+                        StockLedgerEntry, item_obj, comp, p_date,
+                        'Stock Transfer', trf_vno,
+                        Decimal('0.00'), slice_q, -slice_q, run_donor, cost_rate, donor_u,
+                        batch_obj=src_b, batch_no=(src_b.batch_no if src_b else '')
+                    )
+                    _create_sl_entry(
+                        StockLedgerEntry, item_obj, comp, p_date,
+                        'Stock Transfer', trf_vno,
+                        slice_q, Decimal('0.00'), slice_q, run_target, cost_rate, target_unit,
+                        batch_obj=dst_b, batch_no=(dst_b.batch_no if dst_b else '')
+                    )
+                unit_avail = run_target
                 if donor_u.unit_type == 'MANUFACTURING':
                     mfg_donor_unit = donor_u
                     inter_div_supply_total += (move_qty * cost_rate).quantize(Decimal('0.01'))
@@ -179,15 +316,19 @@ def approve_and_post_sales_invoice(invoice):
                 'error': f'Insufficient Stock for {item_obj.item_name}: Available {unit_avail}, Requested {qty}.'
             })
 
-        unit_bal_after = unit_avail - qty
         item_obj.current_stock = new_total
         item_obj.save(update_fields=['current_stock'])
 
-        _create_sl_entry(
-            StockLedgerEntry, item_obj, comp, p_date,
-            'Sales Invoice', invoice.invoice_number,
-            Decimal('0.00'), qty, -qty, unit_bal_after, rate_val, target_unit
-        )
+        allocs = deduct_batches_fifo(comp, target_unit, item_obj, qty)
+        run_bal = unit_avail
+        for b_obj, slice_q in allocs:
+            run_bal -= slice_q
+            _create_sl_entry(
+                StockLedgerEntry, item_obj, comp, p_date,
+                'Sales Invoice', invoice.invoice_number,
+                Decimal('0.00'), slice_q, -slice_q, run_bal, rate_val, target_unit,
+                batch_obj=b_obj, batch_no=(b_obj.batch_no if b_obj else '')
+            )
 
     net_total = Decimal(str(invoice.net_total or 0))
     tax_amount = Decimal(str(invoice.tax_amount or 0))

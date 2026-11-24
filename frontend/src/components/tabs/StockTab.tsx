@@ -77,6 +77,30 @@ export const StockTab: FC<StockTabProps> = ({
       .catch(() => {});
   }, []);
 
+  const getPrioritizedToUnits = useCallback((allUnits: any[], fromId: string) => {
+    const fromObj = allUnits.find((u: any) => String(u.id) === String(fromId));
+    const fromType = String(fromObj?.unit_type || '').toUpperCase();
+    const candidates = allUnits.filter((u: any) => String(u.id) !== String(fromId));
+    const rank = (u: any) => {
+      const ut = String(u.unit_type || '').toUpperCase();
+      if (fromType === 'MANUFACTURING') {
+        if (ut === 'TRADING') return 0;
+        if (ut === 'HO') return 3;
+        return 1;
+      }
+      if (fromType === 'TRADING') {
+        if (ut === 'MANUFACTURING') return 0;
+        if (ut === 'HO') return 3;
+        return 1;
+      }
+      if (ut === 'TRADING') return 0;
+      if (ut === 'MANUFACTURING') return 1;
+      if (ut === 'HO') return 3;
+      return 2;
+    };
+    return [...candidates].sort((a, b) => rank(a) - rank(b));
+  }, []);
+
   useEffect(() => {
     const compId = localStorage.getItem('active_company_id');
     if (!compId) return;
@@ -86,8 +110,12 @@ export const StockTab: FC<StockTabProps> = ({
         if (Array.isArray(rows)) {
           setUnits(rows);
           if (rows.length >= 2) {
-            const defaultFrom = isUnitFiltered ? activeUnitId : String(rows[1].id);
-            const defaultTo = String(rows.find((u: any) => String(u.id) !== defaultFrom)?.id || rows[0].id);
+            const mfgOrNonHo = rows.find((u: any) => String(u.unit_type || '').toUpperCase() === 'MANUFACTURING')
+              || rows.find((u: any) => String(u.unit_type || '').toUpperCase() !== 'HO')
+              || rows[0];
+            const defaultFrom = isUnitFiltered ? activeUnitId : String(mfgOrNonHo.id);
+            const sortedTo = getPrioritizedToUnits(rows, defaultFrom);
+            const defaultTo = String(sortedTo[0]?.id || rows[0].id);
             setTrfFromUnit(defaultFrom);
             setTrfToUnit(defaultTo);
           }
@@ -95,7 +123,7 @@ export const StockTab: FC<StockTabProps> = ({
       })
       .catch(() => {});
     loadTransfers();
-  }, [activeUnitId, isUnitFiltered, loadTransfers]);
+  }, [activeUnitId, isUnitFiltered, loadTransfers, getPrioritizedToUnits]);
 
   useEffect(() => {
     if (!showTransferModal || !trfFromUnit) return;
@@ -259,6 +287,15 @@ export const StockTab: FC<StockTabProps> = ({
               onClick={() => {
                 setTrfMsg(null);
                 setTrfQty('');
+                if (units.length >= 2) {
+                  const mfgOrNonHo = units.find((u: any) => String(u.unit_type || '').toUpperCase() === 'MANUFACTURING')
+                    || units.find((u: any) => String(u.unit_type || '').toUpperCase() !== 'HO')
+                    || units[0];
+                  const nextFrom = isUnitFiltered ? activeUnitId : String(mfgOrNonHo.id);
+                  const sortedTo = getPrioritizedToUnits(units, nextFrom);
+                  setTrfFromUnit(nextFrom);
+                  setTrfToUnit(String(sortedTo[0]?.id || units[0].id));
+                }
                 setShowTransferModal(true);
               }}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#7c3aed', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
@@ -410,24 +447,15 @@ export const StockTab: FC<StockTabProps> = ({
             columns={[
               { header: 'Code', accessor: 'item_code' },
               {
-                header: 'Item Name / Recipe (BOM)',
-                accessor: (r: any) => (
-                  <div>
-                    <div style={{ fontWeight: 700, color: '#0f172a' }}>{r.item_name}</div>
-                    {r._bomGroup && (
-                      <div style={{ marginTop: '3px', display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', padding: '1px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                        {r._bomGroup.bom_code ? `${r._bomGroup.bom_code} • ` : ''}{r._bomGroup.bom_name}
-                      </div>
-                    )}
-                  </div>
-                ),
+                header: 'Item Name',
+                accessor: (r: any) => <div style={{ fontWeight: 700, color: '#0f172a' }}>{r.item_name}</div>,
               },
               { header: 'Category', accessor: 'category' },
               {
                 header: `Rate (${symbol})`,
                 accessor: (r: any) => {
-                  const rateVal = r._bomGroup ? Number(r._bomGroup.unit_rate || 0) : Number(r.standard_rate || 0);
-                  const conv = r._bomGroup ? Number(r._bomGroup.conversion_factor || r.conversion_factor || 0) : Number(r.conversion_factor || 0);
+                  const rateVal = Number(r.standard_rate || 0);
+                  const conv = Number(r.conversion_factor || 0);
                   const hasAlt = Boolean(r.alt_unit && conv > 0 && String(r.alt_unit).toLowerCase() !== String(r.unit || '').toLowerCase());
                   return (
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
@@ -444,17 +472,17 @@ export const StockTab: FC<StockTabProps> = ({
               {
                 header: activeUnitObj ? `${activeUnitObj.name} Stock` : 'Current Stock',
                 accessor: (r: any) => {
-                  const qtyVal = r._bomGroup ? Number(r._bomGroup.stock_qty || 0) : getEffStock(r);
-                  const conv = r._bomGroup ? Number(r._bomGroup.conversion_factor || r.conversion_factor || 0) : Number(r.conversion_factor || 0);
+                  const qtyVal = getEffStock(r);
+                  const conv = Number(r.conversion_factor || 0);
                   return (
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                       <strong>{qtyVal} {r.unit || 'Nos'}</strong>
-                      {r.alt_unit && conv > 0 && (
+                      {r.alt_unit && conv > 0 && String(r.alt_unit).toLowerCase() !== String(r.unit || '').toLowerCase() && (
                         <span style={{ fontSize: '11px', background: '#eff6ff', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '999px', fontWeight: 600 }}>
                           {(qtyVal * conv).toLocaleString('en-IN', { maximumFractionDigits: 2 })} {r.alt_unit}
                         </span>
                       )}
-                      {isUnitFiltered && !r._bomGroup && (
+                      {isUnitFiltered && (
                         <span style={{ fontSize: '11px', color: '#64748b' }}>
                           (Company Total: {r.current_stock || 0})
                         </span>
@@ -466,9 +494,7 @@ export const StockTab: FC<StockTabProps> = ({
               {
                 header: `Stock Value (${symbol})`,
                 accessor: (r: any) => {
-                  const val = r._bomGroup
-                    ? Number(r._bomGroup.stock_value || 0)
-                    : getEffStock(r) * Number(r.standard_rate || 0);
+                  const val = getEffStock(r) * Number(r.standard_rate || 0);
                   return (
                     <strong style={{ color: '#0284c7' }}>
                       {symbol} {val.toFixed(2)}
@@ -510,20 +536,7 @@ export const StockTab: FC<StockTabProps> = ({
                 ),
               },
             ]}
-            data={paginatedItems.flatMap((it: any) => {
-              const groups: any[] = Array.isArray(it.bom_stock_groups) ? it.bom_stock_groups : [];
-              if (groups.length > 1) {
-                return groups.map((g: any, idx: number) => ({
-                  ...it,
-                  _rowKey: `${it.id}-bom-${idx}`,
-                  _bomGroup: g,
-                }));
-              }
-              if (groups.length === 1) {
-                return [{ ...it, _bomGroup: groups[0] }];
-              }
-              return [it];
-            })}
+            data={paginatedItems}
             emptyMessage={activeUnitObj ? `No stock items available in ${activeUnitObj.name} yet. Purchase or Transfer stock into this division.` : 'No inventory items found.'}
           />
         </>
@@ -828,7 +841,12 @@ export const StockTab: FC<StockTabProps> = ({
                   <select
                     required
                     value={trfFromUnit}
-                    onChange={(e) => setTrfFromUnit(e.target.value)}
+                    onChange={(e) => {
+                      const nextFrom = e.target.value;
+                      setTrfFromUnit(nextFrom);
+                      const sortedTo = getPrioritizedToUnits(units, nextFrom);
+                      if (sortedTo.length > 0) setTrfToUnit(String(sortedTo[0].id));
+                    }}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                   >
                     {units.map((u) => (
@@ -844,7 +862,7 @@ export const StockTab: FC<StockTabProps> = ({
                     onChange={(e) => setTrfToUnit(e.target.value)}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                   >
-                    {units.map((u) => (
+                    {getPrioritizedToUnits(units, trfFromUnit).map((u) => (
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                   </select>

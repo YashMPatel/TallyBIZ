@@ -52,6 +52,14 @@ export const SellingTab: FC<SellingTabProps> = ({
   const symbol = dashboardSummary.currency_symbol || (localStorage.getItem('active_company_symbol') || '₹');
   const [showForwardMfgModal, setShowForwardMfgModal] = useState(false);
   const [showDispatchTracker, setShowDispatchTracker] = useState(false);
+  const [dispatchTrackerFilter, setDispatchTrackerFilter] = useState<'active' | 'completed'>('active');
+  const [partialConfirmModal, setPartialConfirmModal] = useState<{
+    mode: 'proforma' | 'batch';
+    inv?: SalesInvoice;
+    reqId?: number;
+    batchId?: string;
+    data: any;
+  } | null>(null);
   const [mfgUnits, setMfgUnits] = useState<any[]>([]);
   const [allItems, setAllItems] = useState<any[]>([]);
 
@@ -307,20 +315,29 @@ export const SellingTab: FC<SellingTabProps> = ({
     }
   };
 
-  const handleOneClickInvoice = async (reqId: number, batchId: string) => {
+  const handleOneClickInvoice = async (reqId: number, batchId: string, proceedPartial = false) => {
     setInvoicingBatchId(batchId);
     setFwdErr('');
     try {
       const compId = localStorage.getItem('active_company_id') || '';
+      const token = localStorage.getItem('access_token');
       const res = await fetch(`${API_BASE}/manufacturing/sales-requests/${reqId}/create-invoice/?company_id=${compId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batch_id: batchId }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ batch_id: batchId, proceed_partial: proceedPartial }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate invoice');
 
-      // Shift batch out of active dispatch list & insert straight into bottom Sales Invoices table
+      if (data.needs_confirmation) {
+        setPartialConfirmModal({ mode: 'batch', reqId, batchId, data });
+        return;
+      }
+
+      setPartialConfirmModal(null);
       setSalesRequests((prev) =>
         prev.map((r) =>
           r.id === reqId ? { ...r, delivery_schedule: data.delivery_schedule || r.delivery_schedule } : r
@@ -330,7 +347,10 @@ export const SellingTab: FC<SellingTabProps> = ({
         setDirectInvoices((prev) => [data.invoice, ...prev.filter((x) => x.id !== data.invoice.id)]);
       }
       loadInvoicesDirect();
-      setFwdMsg(`Batch shifted to Sales Invoices below! Invoice ${data.invoice_number} (${symbol}${Number(data.grand_total).toFixed(2)}) generated.`);
+      loadSalesRequests();
+      setFwdMsg(
+        `Approved Tax Invoice ${data.invoice_number} (${symbol}${Number(data.grand_total).toFixed(2)}) generated & stock/batches deducted!`
+      );
       const tblEl = document.getElementById('sales-invoices-register');
       if (tblEl) tblEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (err) {
@@ -340,7 +360,7 @@ export const SellingTab: FC<SellingTabProps> = ({
     }
   };
 
-  const handleConvertProformaToTax = async (inv: SalesInvoice) => {
+  const handleConvertProformaToTax = async (inv: SalesInvoice, proceedPartial = false) => {
     if (!inv.id) return;
     setSendingInvId(inv.id);
     setFwdErr('');
@@ -353,25 +373,44 @@ export const SellingTab: FC<SellingTabProps> = ({
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        body: JSON.stringify({ proceed_partial: proceedPartial }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to convert Proforma to Tax Invoice');
+
+      if (data.needs_confirmation) {
+        setPartialConfirmModal({ mode: 'proforma', inv, data });
+        return;
+      }
+
+      setPartialConfirmModal(null);
       if (data.invoice) {
         setDirectInvoices((prev) => [
           data.invoice,
           ...prev.map((x) =>
-            x.id === inv.id ? { ...x, status: 'Rejected', rejection_reason: `Converted to ${data.invoice_number}` } : x
+            x.id === inv.id && !data.partial
+              ? { ...x, status: 'Rejected', rejection_reason: `Converted to Tax Invoice ${data.invoice_number}` }
+              : x
           ),
         ]);
       }
       loadInvoicesDirect();
-      setFwdMsg(data.message || `Tax Invoice ${data.invoice_number} generated!`);
+      loadSalesRequests();
+      setFwdMsg(data.message || `Approved Tax Invoice ${data.invoice_number} generated & stock deducted!`);
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
       setSendingInvId(null);
     }
   };
+
+  const isSalesReqClosed = (x: any) =>
+    x.status === 'COMPLETED' &&
+    (x.delivery_schedule || []).length > 0 &&
+    (x.delivery_schedule || []).every((b: any) => b.invoiced);
+  const activeDispatchReqs = salesRequests.filter((x: any) => !isSalesReqClosed(x));
+  const completedDispatchReqs = salesRequests.filter((x: any) => isSalesReqClosed(x));
+  const visibleDispatchReqs = dispatchTrackerFilter === 'active' ? activeDispatchReqs : completedDispatchReqs;
 
   // Merge prop invoices + direct fetched invoices so newly generated invoices always appear immediately
   const mergedInvoicesMap = new Map<number, SalesInvoice>();
@@ -536,7 +575,7 @@ export const SellingTab: FC<SellingTabProps> = ({
                 fontWeight: 700,
               }}
             >
-              Dispatch ({salesRequests.length}) {showDispatchTracker ? '▲' : '▼'}
+              Dispatch ({activeDispatchReqs.length}) {showDispatchTracker ? '▲' : '▼'}
             </button>
             <button
               type="button"
@@ -550,13 +589,49 @@ export const SellingTab: FC<SellingTabProps> = ({
 
         {showDispatchTracker && (
           <div style={{ marginTop: '14px' }}>
-        {salesRequests.length === 0 ? (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setDispatchTrackerFilter('active')}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  background: dispatchTrackerFilter === 'active' ? '#0284c7' : '#fff',
+                  color: dispatchTrackerFilter === 'active' ? '#fff' : '#334155',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Active / Pending ({activeDispatchReqs.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setDispatchTrackerFilter('completed')}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  background: dispatchTrackerFilter === 'completed' ? '#15803d' : '#fff',
+                  color: dispatchTrackerFilter === 'completed' ? '#fff' : '#334155',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Completed &amp; Invoiced ({completedDispatchReqs.length})
+              </button>
+            </div>
+        {visibleDispatchReqs.length === 0 ? (
           <div style={{ fontSize: '13px', color: '#64748b', padding: '14px', background: '#f8fafc', borderRadius: '8px' }}>
-            No manufacturing orders yet. Click <strong>+ New Order to Manufacturing</strong> above to enter a customer order with raw material &amp; HSN in one form.
+            {dispatchTrackerFilter === 'active'
+              ? 'No active/pending manufacturing orders.'
+              : 'No completed & invoiced manufacturing orders yet.'}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {salesRequests.map((r: any) => {
+            {visibleDispatchReqs.map((r: any) => {
               const schedule: any[] = r.delivery_schedule || [];
               const raw = r.raw_material || {};
               return (
@@ -907,6 +982,94 @@ export const SellingTab: FC<SellingTabProps> = ({
       </div>
 
       {/* ALL-IN-ONE ORDER ENTRY MODAL */}
+      {partialConfirmModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            padding: '16px',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '12px',
+              width: '100%',
+              maxWidth: '580px',
+              padding: '22px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.22)',
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '17px', fontWeight: 800, color: '#b45309' }}>
+              Stock Shortfall Alert — {partialConfirmModal.data?.proforma_number || 'Proforma'}
+            </h3>
+            <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#334155', lineHeight: 1.5 }}>
+              {partialConfirmModal.data?.message}
+            </p>
+
+            {(partialConfirmModal.data?.ready_items || []).length > 0 && (
+              <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#166534', marginBottom: '6px' }}>
+                  Ready to Invoice Now ({partialConfirmModal.data.ready_items.length}):
+                </div>
+                {partialConfirmModal.data.ready_items.map((it: any, i: number) => (
+                  <div key={i} style={{ fontSize: '12.5px', color: '#14532d', display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                    <span><strong>{it.item_name}</strong> ({it.item_code}) — {it.quantity} {it.unit}</span>
+                    <span>@ {symbol}{Number(it.rate || 0).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(partialConfirmModal.data?.missing_items || []).length > 0 && (
+              <div style={{ marginBottom: '16px', padding: '10px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#991b1b', marginBottom: '6px' }}>
+                  Missing / Short Stock ({partialConfirmModal.data.missing_items.length}) — Will stay pending on Proforma:
+                </div>
+                {partialConfirmModal.data.missing_items.map((it: any, i: number) => (
+                  <div key={i} style={{ fontSize: '12.5px', color: '#7f1d1d', display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                    <span><strong>{it.item_name}</strong> ({it.item_code})</span>
+                    <span>Need {it.required_qty} {it.unit} • Avail {it.available_qty} {it.unit}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setPartialConfirmModal(null)}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#334155', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+              >
+                Wait Until Stock Ready
+              </button>
+              {(partialConfirmModal.data?.ready_count || 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ctx = partialConfirmModal;
+                    setPartialConfirmModal(null);
+                    if (ctx.mode === 'proforma' && ctx.inv) {
+                      handleConvertProformaToTax(ctx.inv, true);
+                    } else if (ctx.mode === 'batch' && ctx.reqId && ctx.batchId) {
+                      handleOneClickInvoice(ctx.reqId, ctx.batchId, true);
+                    }
+                  }}
+                  style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+                >
+                  Proceed Partial Tax Invoice ({partialConfirmModal.data.ready_count} Ready Item{partialConfirmModal.data.ready_count > 1 ? 's' : ''})
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showForwardMfgModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: '12px' }}>
           <div style={{ background: '#fff', borderRadius: '12px', width: '700px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '22px' }}>

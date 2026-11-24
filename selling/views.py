@@ -109,7 +109,7 @@ def sync_sales_to_inventory_and_gl(invoice, items_data, comp):
         billed_unit = str(it.get('billed_unit') or item_obj.unit or '').strip()
         alt_unit = str(getattr(item_obj, 'alt_unit', '') or '').strip()
         conv = Decimal(str(getattr(item_obj, 'conversion_factor', 1) or 1))
-        if alt_unit and billed_unit.lower() == alt_unit.lower() and conv > 0:
+        if alt_unit and alt_unit.lower() != str(item_obj.unit or '').strip().lower() and billed_unit.lower() == alt_unit.lower() and conv > 0:
             billed_qty = raw_qty
             qty = (raw_qty / conv).quantize(Decimal('0.01'))
             rate = (raw_rate * conv).quantize(Decimal('0.01'))
@@ -399,6 +399,8 @@ class SalesInvoiceApproveAPIView(APIView):
 class ConvertProformaToTaxInvoiceAPIView(APIView):
     @transaction.atomic
     def post(self, request, pk):
+        from django.db.models import Sum
+        from stock.models import StockLedgerEntry
         comp = get_request_company(request)
         pi = get_object_or_404(SalesInvoice, pk=pk)
         if comp and pi.company_id and pi.company_id != comp.id:
@@ -407,6 +409,71 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
             return Response({'error': 'Only Proforma Invoices (PI-...) can be converted to Tax Invoice.'}, status=status.HTTP_400_BAD_REQUEST)
 
         use_comp = pi.company or comp
+        is_jw = str(pi.invoice_type or 'SALES').upper() == 'JOB_WORK'
+        proceed_partial = bool((request.data or {}).get('proceed_partial'))
+        pi_lines = list(pi.items.select_related('item').all())
+        if not pi_lines:
+            return Response({'error': 'Proforma invoice has no line items.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check stock availability per line (using company-wide ready stock; auto-transfer handles unit move)
+        ready_lines = []
+        missing_items = []
+        if is_jw:
+            ready_lines = pi_lines
+        else:
+            avail_map = {}
+            for ln in pi_lines:
+                if ln.item_id not in avail_map:
+                    total_avail = Decimal(str(ln.item.current_stock or 0))
+                    if use_comp:
+                        sle_tot = StockLedgerEntry.objects.filter(company=use_comp, item_id=ln.item_id).aggregate(q=Sum('actual_qty'))['q']
+                        if sle_tot is not None:
+                            total_avail = max(Decimal('0.00'), Decimal(str(sle_tot)))
+                    avail_map[ln.item_id] = max(Decimal('0.00'), total_avail)
+
+                need_q = Decimal(str(ln.quantity or 0))
+                if avail_map[ln.item_id] >= need_q:
+                    ready_lines.append(ln)
+                    avail_map[ln.item_id] -= need_q
+                else:
+                    missing_items.append({
+                        'line_id': ln.id,
+                        'item_id': ln.item_id,
+                        'item_code': ln.item.item_code,
+                        'item_name': ln.item.item_name,
+                        'required_qty': float(need_q),
+                        'available_qty': float(avail_map[ln.item_id]),
+                        'unit': ln.item.unit or 'Nos',
+                        'rate': float(ln.rate or 0),
+                    })
+
+        if missing_items and not proceed_partial:
+            return Response({
+                'needs_confirmation': True,
+                'proforma_number': pi.invoice_number,
+                'ready_count': len(ready_lines),
+                'missing_count': len(missing_items),
+                'ready_items': [
+                    {
+                        'item_name': l.item.item_name,
+                        'item_code': l.item.item_code,
+                        'quantity': float(l.quantity),
+                        'unit': l.item.unit or 'Nos',
+                        'rate': float(l.rate or 0),
+                    }
+                    for l in ready_lines
+                ],
+                'missing_items': missing_items,
+                'message': f"{len(missing_items)} item(s) missing or short in stock. Proceed with {len(ready_lines)} ready item(s) (Partial Tax Invoice) or wait until stock is ready?",
+            }, status=status.HTTP_200_OK)
+
+        lines_to_invoice = ready_lines if missing_items else pi_lines
+        if not lines_to_invoice:
+            return Response({
+                'error': 'None of the Proforma items have sufficient ready stock. Please transfer/produce stock or send to Factory first.',
+                'missing_items': missing_items,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         count = SalesInvoice.objects.filter(company=use_comp).exclude(invoice_number__istartswith='PI-').count() + 1
         inv_no = f"INV-{count:04d}"
         while SalesInvoice.objects.filter(company=use_comp, invoice_number=inv_no).exists():
@@ -421,6 +488,12 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
                 due_days = diff
         due_date = p_date + timezone.timedelta(days=due_days)
 
+        net_total = sum((Decimal(str(l.amount or 0)) for l in lines_to_invoice), Decimal('0.00')).quantize(Decimal('0.01'))
+        tax_rate = Decimal(str(pi.tax_rate or 0))
+        tax_amount = ((net_total * tax_rate) / Decimal('100.00')).quantize(Decimal('0.01'))
+        adj = Decimal(str(pi.adjustment or 0)) if not missing_items else Decimal('0.00')
+        grand_total = (net_total + tax_amount + adj).quantize(Decimal('0.01'))
+
         user = _resolve_request_user(request)
         tax_inv = SalesInvoice.objects.create(
             company=use_comp,
@@ -432,15 +505,15 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
             invoice_number=inv_no,
             posting_date=p_date,
             due_date=due_date,
-            tax_rate=pi.tax_rate,
-            net_total=pi.net_total,
-            tax_amount=pi.tax_amount,
-            adjustment=pi.adjustment,
-            grand_total=pi.grand_total,
+            tax_rate=tax_rate,
+            net_total=net_total,
+            tax_amount=tax_amount,
+            adjustment=adj,
+            grand_total=grand_total,
             status='Draft',
             created_by=user or pi.created_by,
         )
-        for line in pi.items.all():
+        for line in lines_to_invoice:
             SalesInvoiceItem.objects.create(
                 invoice=tax_inv,
                 item=line.item,
@@ -456,13 +529,33 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
                 amount=line.amount,
             )
 
-        pi.status = 'Rejected'
-        pi.rejection_reason = f'Converted to Tax Invoice {inv_no}'
-        pi.save(update_fields=['status', 'rejection_reason'])
+        # Immediately post stock, FIFO StockBatch deductions, and GL entries
+        approve_and_post_sales_invoice(tax_inv)
+        if user and hasattr(tax_inv, 'approved_by') and not tax_inv.approved_by_id:
+            tax_inv.approved_by = user
+            tax_inv.approval_date = timezone.now()
+            tax_inv.save(update_fields=['approved_by', 'approval_date'])
+
+        if not missing_items:
+            pi.status = 'Rejected'
+            pi.rejection_reason = f'Converted to Tax Invoice {inv_no}'
+            pi.save(update_fields=['status', 'rejection_reason'])
+        else:
+            # Remove already-invoiced lines from Proforma so only remaining items stay pending
+            invoiced_ids = [l.id for l in lines_to_invoice]
+            pi.items.filter(id__in=invoiced_ids).delete()
+            rem_net = sum((Decimal(str(l.amount or 0)) for l in pi.items.all()), Decimal('0.00')).quantize(Decimal('0.01'))
+            rem_tax = ((rem_net * tax_rate) / Decimal('100.00')).quantize(Decimal('0.01'))
+            pi.net_total = rem_net
+            pi.tax_amount = rem_tax
+            pi.grand_total = (rem_net + rem_tax).quantize(Decimal('0.01'))
+            pi.rejection_reason = f'Partial Tax Invoice {inv_no} generated; {len(missing_items)} item(s) remaining'
+            pi.save(update_fields=['net_total', 'tax_amount', 'grand_total', 'rejection_reason'])
 
         ser = SalesInvoiceSerializer(tax_inv)
         return Response({
-            'message': f'Proforma {pi.invoice_number} converted to Tax Invoice {inv_no}!',
+            'message': f"Proforma {pi.invoice_number} converted to Approved Tax Invoice {inv_no} (Stock & Batches deducted)!",
             'invoice_number': inv_no,
+            'partial': bool(missing_items),
             'invoice': ser.data,
         }, status=status.HTTP_201_CREATED)
