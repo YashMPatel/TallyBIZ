@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, type FC } from 'react';
 import { Plus, Download, Search, Edit2, ArrowLeftRight, X, ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 import { DataTable } from '../DataTable';
 import type { Item } from '../../types/erp';
-import { API_BASE, exportToCSV , getNextItemCode } from '../../utils/erpHelpers';
+import { API_BASE, exportToCSV , getNextItemCode, isUtilityItem } from '../../utils/erpHelpers';
 
 interface StockTabProps {
   items: Item[];
@@ -148,21 +148,30 @@ export const StockTab: FC<StockTabProps> = ({
   const getEffStock = (it: any) =>
     isUnitFiltered && it.unit_stock !== undefined ? Number(it.unit_stock) : Number(it.current_stock || 0);
 
+  const activeUnitObj = units.find((u) => String(u.id) === String(activeUnitId));
+  const isMfgUnit = activeUnitObj?.unit_type === 'MANUFACTURING';
+
   const divisionItems = useMemo(
-    () => (isUnitFiltered ? items.filter((it) => getEffStock(it) !== 0) : items),
-    [items, isUnitFiltered, activeUnitId]
+    () =>
+      isUnitFiltered
+        ? items.filter((it) => getEffStock(it) !== 0 || (isMfgUnit && isUtilityItem(it)))
+        : items,
+    [items, isUnitFiltered, activeUnitId, isMfgUnit]
   );
 
   const divisionFilteredItems = useMemo(
-    () => (isUnitFiltered ? filteredItems.filter((it) => getEffStock(it) !== 0) : filteredItems),
-    [filteredItems, isUnitFiltered, activeUnitId]
+    () =>
+      isUnitFiltered
+        ? filteredItems.filter((it) => getEffStock(it) !== 0 || (isMfgUnit && isUtilityItem(it)))
+        : filteredItems,
+    [filteredItems, isUnitFiltered, activeUnitId, isMfgUnit]
   );
 
   const totalValuation = divisionItems.reduce(
     (sum, it) => sum + getEffStock(it) * Number(it.standard_rate || 0),
     0
   );
-  const lowStockCount = divisionItems.filter((it) => getEffStock(it) <= 5).length;
+  const lowStockCount = divisionItems.filter((it) => !isUtilityItem(it) && getEffStock(it) <= 5).length;
 
   const totalItemPages = Math.max(1, Math.ceil(divisionFilteredItems.length / itemPageSize));
   const safeItemPage = Math.min(itemPage, totalItemPages);
@@ -268,7 +277,6 @@ export const StockTab: FC<StockTabProps> = ({
     }
   };
 
-  const activeUnitObj = units.find((u) => String(u.id) === String(activeUnitId));
 
   return (
     <div>
@@ -472,6 +480,13 @@ export const StockTab: FC<StockTabProps> = ({
               {
                 header: activeUnitObj ? `${activeUnitObj.name} Stock` : 'Current Stock',
                 accessor: (r: any) => {
+                  if (isUtilityItem(r)) {
+                    return (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '999px', fontWeight: 700 }}>
+                        Unlimited ({r.unit || 'Utility'})
+                      </span>
+                    );
+                  }
                   const qtyVal = getEffStock(r);
                   const conv = Number(r.conversion_factor || 0);
                   return (

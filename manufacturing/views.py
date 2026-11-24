@@ -47,8 +47,9 @@ def _serialize_bom(bom):
         rate = Decimal(c.raw_item.standard_rate or 0)
         line_cost = (eff_qty * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         raw_cost += line_cost
+        is_util = _is_free_utility_item(c.raw_item)
         avail = Decimal(c.raw_item.current_stock or 0)
-        if eff_qty > 0:
+        if eff_qty > 0 and not is_util:
             batches = int(avail // eff_qty)
             max_batches = batches if max_batches is None else min(max_batches, batches)
         comps.append({
@@ -57,6 +58,7 @@ def _serialize_bom(bom):
             'raw_item_name': c.raw_item.item_name,
             'raw_item_code': c.raw_item.item_code,
             'unit': c.raw_item.unit,
+            'is_utility': is_util,
             'available_stock': float(avail),
             'rate': float(rate),
             'qty_required': float(c.qty_required),
@@ -99,6 +101,7 @@ def _serialize_order(order, include_vouchers=True):
             'raw_item': c.raw_item.id,
             'raw_item_name': c.raw_item.item_name,
             'unit': c.raw_item.unit,
+            'is_utility': _is_free_utility_item(c.raw_item),
             'available_stock': float(c.raw_item.current_stock or 0),
             'planned_qty': float(c.planned_qty),
             'actual_qty': float(c.actual_qty),
@@ -168,6 +171,9 @@ def _serialize_order(order, include_vouchers=True):
 def _is_free_utility_item(item_obj):
     if not item_obj:
         return False
+    cat = str(getattr(item_obj, 'category', '') or '').strip().lower()
+    code = str(getattr(item_obj, 'item_code', '') or '').strip().upper()
+    return cat in ('free / utility', 'utility', 'free') or code.startswith('UTL-')
     cat = str(getattr(item_obj, 'category', '') or '').strip().lower()
     name = str(getattr(item_obj, 'item_name', '') or '').strip().lower()
     rate = Decimal(str(getattr(item_obj, 'standard_rate', 0) or 0))
@@ -515,8 +521,9 @@ class MRPCheckView(APIView):
         for c in bom.components.all():
             w_mult = Decimal('1.00') + (Decimal(c.wastage_percent) / Decimal('100'))
             req = (Decimal(c.qty_required) * w_mult * mult).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
+            is_util = _is_free_utility_item(c.raw_item)
             avail = Decimal(c.raw_item.current_stock or 0)
-            shortage = max(Decimal('0.000'), req - avail)
+            shortage = Decimal('0.000') if is_util else max(Decimal('0.000'), req - avail)
             if shortage > 0:
                 can_produce = False
             rate = Decimal(c.raw_item.standard_rate or 0)

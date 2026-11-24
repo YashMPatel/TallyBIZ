@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Factory, Plus, CheckCircle, XCircle, AlertTriangle, Layers, Trash2, RefreshCw, Eye, Edit2 } from 'lucide-react';
-import { API_BASE, getErrorMessage } from '../../utils/erpHelpers';
+import { API_BASE, getErrorMessage , isUtilityItem } from '../../utils/erpHelpers';
 
 interface ProductionTabProps {
   items: any[];
@@ -166,7 +166,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const [orderPartyName, setOrderPartyName] = useState('');
   const [orderPartyChallan, setOrderPartyChallan] = useState('');
   const [orderRemarks, setOrderRemarks] = useState('');
-  const [orderConsumptions, setOrderConsumptions] = useState<Array<{ raw_item: number; raw_item_name: string; unit: string; available_stock: number; rate: number; planned_qty: number; actual_qty: string }>>([]);
+  const [orderConsumptions, setOrderConsumptions] = useState<Array<{ raw_item: number; raw_item_name: string; unit: string; is_utility?: boolean; available_stock: number; rate: number; planned_qty: number; actual_qty: string }>>([]);
 
   // View Voucher Modal State
   const [viewOrder, setViewOrder] = useState<any | null>(null);
@@ -235,6 +235,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         raw_item: c.raw_item,
         raw_item_name: c.raw_item_name,
         unit: c.unit || 'Nos',
+        is_utility: Boolean(c.is_utility || isUtilityItem(items.find((x) => Number(x.id) === Number(c.raw_item)))),
         available_stock: Number(c.available_stock || 0),
         rate: Number(c.rate || 0),
         planned_qty: req,
@@ -364,6 +365,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
         raw_item: c.raw_item,
         raw_item_name: c.raw_item_name,
         unit: c.unit || 'Nos',
+        is_utility: Boolean(c.is_utility || isUtilityItem(liveItem)),
         available_stock: c.available_stock !== undefined ? Number(c.available_stock) : (liveItem ? Number(liveItem.current_stock || 0) : 0),
         rate: Number(c.rate || 0),
         planned_qty: Number(c.planned_qty || c.actual_qty || 0),
@@ -527,7 +529,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
   const estRawTotal = orderConsumptions.reduce((acc, c) => acc + Number(c.actual_qty || 0) * Number(c.rate || 0), 0);
   const estNetTotal = Math.max(0, estRawTotal + Number(orderLaborCost || 0) + Number(orderOverheadCost || 0) - Number(scrapValue || 0));
   const estUnitCost = Number(actualQty) > 0 ? estNetTotal / Number(actualQty) : 0;
-  const hasShortage = orderConsumptions.some((c) => Number(c.actual_qty || 0) > Number(c.available_stock || 0));
+  const hasShortage = orderConsumptions.some((c) => !c.is_utility && Number(c.actual_qty || 0) > Number(c.available_stock || 0));
   const selectedBomObj = boms.find((b) => String(b.id) === String(selectedBomId));
   const fgUnitLower = String(selectedBomObj?.finished_item_unit || '').trim().toLowerCase();
   const sameUnitRawTotal = orderConsumptions.reduce((acc, c) => (String(c.unit || '').trim().toLowerCase() === fgUnitLower ? acc + Number(c.actual_qty || 0) : acc), 0);
@@ -1434,7 +1436,7 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                                 })
                                 .map((it) => (
                                   <option key={it.id} value={it.id}>
-                                    {it.item_name} (Stock: {it.current_stock} {it.unit})
+                                    {it.item_name} {isUtilityItem(it) ? `[Free / Utility — Unlimited ${it.unit}]` : `(Stock: ${it.current_stock} ${it.unit})`}
                                   </option>
                                 ))}
                             </select>
@@ -1805,12 +1807,12 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                   </thead>
                   <tbody>
                     {orderConsumptions.map((c, idx) => {
-                      const short = Number(c.actual_qty || 0) > Number(c.available_stock || 0);
+                      const short = !c.is_utility && Number(c.actual_qty || 0) > Number(c.available_stock || 0);
                       return (
                         <tr key={c.raw_item} style={{ borderBottom: '1px solid #f1f5f9', background: short ? '#fef2f2' : '#fff' }}>
                           <td style={{ padding: '8px 12px', fontWeight: 600 }}>{c.raw_item_name}</td>
                           <td style={{ padding: '8px 12px', textAlign: 'right', color: short ? '#dc2626' : '#16a34a', fontWeight: 600 }}>
-                            {c.available_stock} {c.unit}
+                            {c.is_utility ? `Unlimited (${c.unit})` : `${c.available_stock} ${c.unit}`}
                           </td>
                           <td style={{ padding: '8px 12px', textAlign: 'right' }}>
                             <input
