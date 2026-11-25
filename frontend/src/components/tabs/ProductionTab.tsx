@@ -990,7 +990,11 @@ export const ProductionTab: React.FC<ProductionTabProps> = ({
                       <div style={{ fontSize: '12px', color: '#475569', marginTop: '4px' }}>
                         Order Date: {r.posting_date}
                         {r.selling_rate > 0 ? ` • Sell Rate: ${symbol}${r.selling_rate}` : ''}
-                        {raw.raw_item_name ? ` • Raw Material: ${raw.raw_qty} ${raw.raw_unit} ${raw.raw_item_name} (@ ${symbol}${raw.raw_purchase_rate})` : ''}
+                        {Array.isArray(r.raw_materials) && r.raw_materials.length > 0
+                          ? ` • Raw Materials (${r.raw_materials.length}): ${r.raw_materials.map((rm: any) => `${rm.raw_qty} ${rm.raw_unit} ${rm.raw_item_name}`).join(' + ')}`
+                          : raw.raw_item_name
+                          ? ` • Raw Material: ${raw.raw_qty} ${raw.raw_unit} ${raw.raw_item_name} (@ ${symbol}${raw.raw_purchase_rate})`
+                          : ''}
                         {r.notes ? ` • Notes: ${r.notes}` : ''}
                       </div>
                     </div>

@@ -345,6 +345,21 @@ class SalesInvoiceRetrieveUpdateDestroyAPIView(generics.RetrieveUpdateDestroyAPI
         comp = instance.company or get_request_company(request)
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
 
+        if str(getattr(instance, 'status', '')).strip().lower() == 'approved':
+            user = _resolve_request_user(request)
+            is_priv = bool(
+                user and (
+                    getattr(user, 'is_superuser', False)
+                    or getattr(user, 'is_staff', False)
+                    or (hasattr(user, 'profile') and str(getattr(user.profile, 'role', '')).upper() in ('ADMIN', 'MANAGER'))
+                )
+            )
+            req_unit = resolve_active_unit(request, comp)
+            if req_unit and getattr(req_unit, 'unit_type', '') == 'TRADING':
+                raise ValidationError({'error': 'This invoice is Approved & Locked in Trading Division. Please get approval from HO or Admin.'})
+            if not is_priv:
+                raise ValidationError({'error': 'This invoice is Approved & Locked. Please get approval from HO or Admin.'})
+
         with transaction.atomic():
             if 'customer' in data and data['customer']:
                 cust = Customer.objects.filter(id=int(data['customer']), company=comp).first()
@@ -510,7 +525,7 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
             tax_amount=tax_amount,
             adjustment=adj,
             grand_total=grand_total,
-            status='Draft',
+            status='Pending Approval',
             created_by=user or pi.created_by,
         )
         for line in lines_to_invoice:
@@ -528,13 +543,6 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
                 is_foc=line.is_foc,
                 amount=line.amount,
             )
-
-        # Immediately post stock, FIFO StockBatch deductions, and GL entries
-        approve_and_post_sales_invoice(tax_inv)
-        if user and hasattr(tax_inv, 'approved_by') and not tax_inv.approved_by_id:
-            tax_inv.approved_by = user
-            tax_inv.approval_date = timezone.now()
-            tax_inv.save(update_fields=['approved_by', 'approval_date'])
 
         if not missing_items:
             pi.status = 'Rejected'
@@ -554,7 +562,7 @@ class ConvertProformaToTaxInvoiceAPIView(APIView):
 
         ser = SalesInvoiceSerializer(tax_inv)
         return Response({
-            'message': f"Proforma {pi.invoice_number} converted to Approved Tax Invoice {inv_no} (Stock & Batches deducted)!",
+            'message': f"Proforma {pi.invoice_number} converted to Tax Invoice {inv_no} and sent to HO / Admin for Approval!",
             'invoice_number': inv_no,
             'partial': bool(missing_items),
             'invoice': ser.data,

@@ -16,6 +16,7 @@ import {
 
 interface SellingTabProps {
   user?: any;
+  businessUnits?: any[];
   invoices: SalesInvoice[];
   filteredInvoices: SalesInvoice[];
   customers: Customer[];
@@ -35,6 +36,7 @@ const UOM_LIST = ['Nos', 'Ltr', 'Mtr', 'Kg', 'Box', 'Pcs', 'Ton', 'Roll', 'Sqft'
 
 export const SellingTab: FC<SellingTabProps> = ({
   user,
+  businessUnits = [],
   invoices,
   filteredInvoices,
   customers,
@@ -81,14 +83,18 @@ export const SellingTab: FC<SellingTabProps> = ({
   const [fwdSellRate, setFwdSellRate] = useState('');
   const [fwdCostRate, setFwdCostRate] = useState('');
 
-  const [fwdRawMode, setFwdRawMode] = useState<'existing' | 'new'>('existing');
-  const [fwdRawItemId, setFwdRawItemId] = useState('');
-  const [fwdRawName, setFwdRawName] = useState('');
-  const [fwdRawUnit, setFwdRawUnit] = useState('Ltr');
-  const [fwdRawHsn, setFwdRawHsn] = useState('');
-  const [fwdRawQty, setFwdRawQty] = useState('1000');
-  const [fwdRawBuyRate, setFwdRawBuyRate] = useState('');
-  const [fwdRawWastage, setFwdRawWastage] = useState('0');
+  const [fwdRawRows, setFwdRawRows] = useState<Array<{
+    mode: 'existing' | 'new';
+    item_id: string;
+    item_name: string;
+    unit: string;
+    hsn_code: string;
+    qty: string;
+    purchase_rate: string;
+    wastage: string;
+  }>>([
+    { mode: 'existing', item_id: '', item_name: '', unit: 'Kg', hsn_code: '', qty: '1000', purchase_rate: '', wastage: '0' },
+  ]);
 
   const [fwdMsg, setFwdMsg] = useState('');
   const [fwdErr, setFwdErr] = useState('');
@@ -196,15 +202,24 @@ export const SellingTab: FC<SellingTabProps> = ({
             setFwdSellRate(String(fg.selling_rate || ''));
             setFwdCostRate(String(fg.standard_rate || ''));
           }
-          setFwdRawMode('existing');
           const rm = iList.find((x: any) => String(x.category).toLowerCase().includes('raw')) || iList[0];
-          setFwdRawItemId(String(rm.id));
-          setFwdRawUnit(rm.unit || 'Ltr');
-          setFwdRawHsn(rm.hsn_code || '3907');
-          setFwdRawBuyRate(String(rm.standard_rate || '250'));
+          setFwdRawRows([
+            {
+              mode: 'existing',
+              item_id: String(rm.id),
+              item_name: '',
+              unit: rm.unit || 'Kg',
+              hsn_code: rm.hsn_code || '',
+              qty: '1000',
+              purchase_rate: String(rm.standard_rate || ''),
+              wastage: '0',
+            },
+          ]);
         } else {
           setFwdFinMode('existing');
-          setFwdRawMode('new');
+          setFwdRawRows([
+            { mode: 'new', item_id: '', item_name: '', unit: 'Kg', hsn_code: '', qty: '1000', purchase_rate: '', wastage: '0' },
+          ]);
         }
       })
       .catch(() => {});
@@ -216,6 +231,18 @@ export const SellingTab: FC<SellingTabProps> = ({
     setFwdBusy(true);
     try {
       const compId = localStorage.getItem('active_company_id') || '';
+      const cleanedRms = fwdRawRows
+        .filter((r) => (r.mode === 'existing' ? Boolean(r.item_id) : Boolean(r.item_name.trim())))
+        .map((r) => ({
+          raw_item_id: r.mode === 'existing' ? r.item_id : '',
+          raw_item_name: r.mode === 'new' ? r.item_name.trim() : '',
+          raw_unit: r.unit || 'Kg',
+          raw_hsn: r.hsn_code || '',
+          raw_qty: r.qty || 0,
+          raw_purchase_rate: r.purchase_rate || 0,
+          raw_wastage: r.wastage || 0,
+        }));
+      const firstRm = cleanedRms[0];
       const payload: any = {
         mfg_unit_id: fwdMfgUnitId,
         order_type: fwdOrderType,
@@ -228,11 +255,12 @@ export const SellingTab: FC<SellingTabProps> = ({
         finished_gst: fwdFinGst,
         selling_rate: fwdSellRate || 0,
         cost_rate: fwdCostRate || 0,
-        raw_unit: fwdRawUnit,
-        raw_hsn: fwdRawHsn,
-        raw_qty: fwdRawQty || 0,
-        raw_purchase_rate: fwdRawBuyRate || 0,
-        raw_wastage: fwdRawWastage || 0,
+        raw_unit: firstRm?.raw_unit || 'Kg',
+        raw_hsn: firstRm?.raw_hsn || '',
+        raw_qty: firstRm?.raw_qty || 0,
+        raw_purchase_rate: firstRm?.raw_purchase_rate || 0,
+        raw_wastage: firstRm?.raw_wastage || 0,
+        raw_materials: cleanedRms,
         notes: fwdNotes,
         created_by: user?.username || 'Sales Team',
       };
@@ -241,10 +269,10 @@ export const SellingTab: FC<SellingTabProps> = ({
       } else {
         payload.finished_item_name = fwdFinName;
       }
-      if (fwdRawMode === 'existing' && fwdRawItemId) {
-        payload.raw_item_id = fwdRawItemId;
-      } else if (fwdRawName.trim()) {
-        payload.raw_item_name = fwdRawName.trim();
+      if (firstRm?.raw_item_id) {
+        payload.raw_item_id = firstRm.raw_item_id;
+      } else if (firstRm?.raw_item_name) {
+        payload.raw_item_name = firstRm.raw_item_name;
       }
 
       const res = await fetch(`${API_BASE}/manufacturing/sales-requests/?company_id=${compId}`, {
@@ -349,7 +377,7 @@ export const SellingTab: FC<SellingTabProps> = ({
       loadInvoicesDirect();
       loadSalesRequests();
       setFwdMsg(
-        `Approved Tax Invoice ${data.invoice_number} (${symbol}${Number(data.grand_total).toFixed(2)}) generated & stock/batches deducted!`
+        `Tax Invoice ${data.invoice_number} (${symbol}${Number(data.grand_total).toFixed(2)}) created & sent to HO / Admin for Approval!`
       );
       const tblEl = document.getElementById('sales-invoices-register');
       if (tblEl) tblEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -396,7 +424,7 @@ export const SellingTab: FC<SellingTabProps> = ({
       }
       loadInvoicesDirect();
       loadSalesRequests();
-      setFwdMsg(data.message || `Approved Tax Invoice ${data.invoice_number} generated & stock deducted!`);
+      setFwdMsg(data.message || `Tax Invoice ${data.invoice_number} created & sent to HO / Admin for Approval!`);
     } catch (err) {
       alert(getErrorMessage(err));
     } finally {
@@ -412,9 +440,9 @@ export const SellingTab: FC<SellingTabProps> = ({
   const completedDispatchReqs = salesRequests.filter((x: any) => isSalesReqClosed(x));
   const visibleDispatchReqs = dispatchTrackerFilter === 'active' ? activeDispatchReqs : completedDispatchReqs;
 
-  // Merge prop invoices + direct fetched invoices so newly generated invoices always appear immediately
+  // Merge direct fetched invoices + fresh prop invoices so edited/approved records never show stale data
   const mergedInvoicesMap = new Map<number, SalesInvoice>();
-  [...filteredInvoices, ...directInvoices].forEach((inv) => {
+  [...directInvoices, ...filteredInvoices].forEach((inv) => {
     if (inv && inv.id) mergedInvoicesMap.set(inv.id, inv);
   });
   const displayInvoices = Array.from(mergedInvoicesMap.values())
@@ -445,8 +473,9 @@ export const SellingTab: FC<SellingTabProps> = ({
               setFwdQty('1000');
               setFwdSellRate('');
               setFwdCostRate('');
-              setFwdRawQty('1000');
-              setFwdRawWastage('0');
+              setFwdRawRows([
+                { mode: 'existing', item_id: '', item_name: '', unit: 'Kg', hsn_code: '', qty: '1000', purchase_rate: '', wastage: '0' },
+              ]);
               setFwdCustomer('');
               setFwdNotes('');
               setShowForwardMfgModal(true);
@@ -885,22 +914,35 @@ export const SellingTab: FC<SellingTabProps> = ({
                               </span>
                             );
                           }
-                          if (!isPi && (inv.status === 'Approved' || sourcePi)) {
+                          if (!isPi && (inv.status === 'Approved' || inv.status === 'Pending Approval' || sourcePi)) {
+                            const isPendingApproval = inv.status !== 'Approved';
                             return (
                               <span
-                                title={sourcePi ? `Converted from ${sourcePi.invoice_number}` : 'Tax Invoice Approved & Stock Deducted'}
+                                title={
+                                  isPendingApproval
+                                    ? 'Awaiting HO / Admin Approval in Approvals Hub before stock & GL posting'
+                                    : sourcePi
+                                    ? `Converted from ${sourcePi.invoice_number}`
+                                    : 'Tax Invoice Approved & Stock Deducted'
+                                }
                                 style={{
                                   padding: '4px 8px',
                                   borderRadius: '4px',
                                   fontSize: '11px',
                                   fontWeight: 700,
-                                  background: '#f1f5f9',
-                                  color: '#475569',
-                                  border: '1px solid #e2e8f0',
+                                  background: isPendingApproval ? '#fef3c7' : '#f1f5f9',
+                                  color: isPendingApproval ? '#92400e' : '#475569',
+                                  border: isPendingApproval ? '1px solid #fcd34d' : '1px solid #e2e8f0',
                                   whiteSpace: 'nowrap',
                                 }}
                               >
-                                {sourcePi ? `From ${sourcePi.invoice_number} • Invoiced` : 'Invoiced • Locked'}
+                                {isPendingApproval
+                                  ? sourcePi
+                                    ? `From ${sourcePi.invoice_number} • Pending HO Approval`
+                                    : 'Pending HO Approval'
+                                  : sourcePi
+                                  ? `From ${sourcePi.invoice_number} • Invoiced`
+                                  : 'Invoiced • Locked'}
                               </span>
                             );
                           }
@@ -966,6 +1008,18 @@ export const SellingTab: FC<SellingTabProps> = ({
                         </button>
                         <button
                           onClick={() => {
+                            const curUnitId = localStorage.getItem('active_unit_id') || 'all';
+                            const curUnit = (businessUnits || []).find((u: any) => String(u.id) === String(curUnitId));
+                            const isHoOrAll = curUnitId === 'all' || String(curUnit?.unit_type || '').toUpperCase() === 'HO';
+                            const roleUp = String(user?.role || '').toUpperCase().replace(/\s+/g, '_');
+                            const isPrivUser = roleUp === 'ADMIN' || roleUp === 'MANAGER' || Boolean(user?.is_superuser || user?.is_staff);
+                            const isApprovedLocked = inv.status === 'Approved' && (!isHoOrAll || !isPrivUser);
+                            if (isApprovedLocked) {
+                              const lockMsg = `Invoice ${inv.invoice_number} is Approved & Locked. Please get approval from HO or Admin before editing.`;
+                              setFwdErr(lockMsg);
+                              alert(lockMsg);
+                              return;
+                            }
                             setEditingId(inv.id ?? null);
                             const invType = (inv as any).invoice_type || 'SALES';
                             const lines = inv.items && inv.items.length > 0
@@ -1259,78 +1313,156 @@ export const SellingTab: FC<SellingTabProps> = ({
               </div>
 
               <div style={{ background: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', padding: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#92400e' }}>3. RAW MATERIAL REQUIRED FOR THIS ORDER</span>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button type="button" onClick={() => setFwdRawMode('existing')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: fwdRawMode === 'existing' ? '#d97706' : '#fff', color: fwdRawMode === 'existing' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Select Existing RM</button>
-                    <button type="button" onClick={() => setFwdRawMode('new')} style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: fwdRawMode === 'new' ? '#d97706' : '#fff', color: fwdRawMode === 'new' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>+ Type New RM</button>
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#92400e' }}>3. RAW MATERIALS REQUIRED FOR THIS ORDER ({fwdRawRows.length} ITEM{fwdRawRows.length > 1 ? 'S' : ''})</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFwdRawRows((prev) => [
+                        ...prev,
+                        { mode: 'new', item_id: '', item_name: '', unit: 'Kg', hsn_code: '', qty: '', purchase_rate: '', wastage: '0' },
+                      ])
+                    }
+                    style={{ padding: '4px 10px', borderRadius: '5px', border: 'none', background: '#d97706', color: '#fff', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    + Add Raw Material
+                  </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '8px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Raw Material Name</label>
-                    {fwdRawMode === 'existing' ? (
-                      <select
-                        value={fwdRawItemId}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          setFwdRawItemId(id);
-                          const it = allItems.find((x) => String(x.id) === id);
-                          if (it) {
-                            setFwdRawUnit(it.unit || 'Nos');
-                            setFwdRawHsn(it.hsn_code || '');
-                            setFwdRawBuyRate(String(it.standard_rate || ''));
-                          }
-                        }}
-                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}
-                      >
-                        <option value="">-- Choose Raw Material --</option>
-                        {allItems.filter((it) => !String(it.category || '').toLowerCase().includes('finish')).map((it) => (
-                          <option key={it.id} value={it.id}>{it.item_name} ({it.unit}) — Stock: {it.current_stock}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        placeholder="e.g. Industrial Base Resin"
-                        value={fwdRawName}
-                        onChange={(e) => {
-                          const nm = e.target.value;
-                          setFwdRawName(nm);
-                          const sug = suggestHsnFromNameOrCategory(nm, 'Raw Material');
-                          if (sug) setFwdRawHsn(sug.hsn);
-                        }}
-                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Qty Needed</label>
-                    <input type="number" step="0.01" placeholder="e.g. 1000" value={fwdRawQty} onChange={(e) => setFwdRawQty(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Unit</label>
-                    <select value={fwdRawUnit} onChange={(e) => setFwdRawUnit(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
-                      {UOM_LIST.map((u) => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {fwdRawRows.map((row, idx) => {
+                    const updateRow = (patch: Partial<typeof row>) =>
+                      setFwdRawRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+                    return (
+                      <div key={idx} style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '7px', padding: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#78350f' }}>RM #{idx + 1}</span>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => updateRow({ mode: 'existing' })}
+                              style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: row.mode === 'existing' ? '#d97706' : '#fff', color: row.mode === 'existing' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              Select Existing RM
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateRow({ mode: 'new' })}
+                              style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d97706', background: row.mode === 'new' ? '#d97706' : '#fff', color: row.mode === 'new' ? '#fff' : '#d97706', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              + Type New RM
+                            </button>
+                            {fwdRawRows.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setFwdRawRows((prev) => prev.filter((_, i) => i !== idx))}
+                                style={{ padding: '2px 7px', borderRadius: '4px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '10px', marginBottom: '8px' }}>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>Raw Material Name</label>
+                            {row.mode === 'existing' ? (
+                              <select
+                                value={row.item_id}
+                                onChange={(e) => {
+                                  const id = e.target.value;
+                                  const it = allItems.find((x) => String(x.id) === id);
+                                  updateRow({
+                                    item_id: id,
+                                    ...(it
+                                      ? {
+                                          unit: it.unit || 'Kg',
+                                          hsn_code: it.hsn_code || '',
+                                          purchase_rate: String(it.standard_rate || ''),
+                                        }
+                                      : {}),
+                                  });
+                                }}
+                                style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}
+                              >
+                                <option value="">-- Choose Raw Material --</option>
+                                {allItems.filter((it) => !String(it.category || '').toLowerCase().includes('finish')).map((it) => (
+                                  <option key={it.id} value={it.id}>{it.item_name} ({it.unit}) — Stock: {it.current_stock}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                placeholder="e.g. Polyester Lycra / Cotton Lycra"
+                                value={row.item_name}
+                                onChange={(e) => {
+                                  const nm = e.target.value;
+                                  const sug = suggestHsnFromNameOrCategory(nm, 'Raw Material');
+                                  updateRow({ item_name: nm, ...(sug ? { hsn_code: sug.hsn } : {}) });
+                                }}
+                                style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }}
+                              />
+                            )}
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Qty Needed</label>
+                            <input type="number" step="0.01" placeholder="e.g. 500" value={row.qty} onChange={(e) => updateRow({ qty: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Unit</label>
+                            <select value={row.unit} onChange={(e) => updateRow({ unit: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', background: '#fff' }}>
+                              {UOM_LIST.map((u) => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>RM HSN Code</label>
+                            <input type="text" placeholder="e.g. 5402" value={row.hsn_code} onChange={(e) => updateRow({ hsn_code: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Purchase Rate ({symbol})</label>
+                            <input type="number" step="0.01" placeholder="e.g. 180" value={row.purchase_rate} onChange={(e) => updateRow({ purchase_rate: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 600 }}>Wastage %</label>
+                            <input type="number" step="0.1" value={row.wastage} onChange={(e) => updateRow({ wastage: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM HSN Code</label>
-                    <input type="text" placeholder="e.g. 3907" value={fwdRawHsn} onChange={(e) => setFwdRawHsn(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>RM Purchase Rate ({symbol})</label>
-                    <input type="number" step="0.01" placeholder="e.g. 250" value={fwdRawBuyRate} onChange={(e) => setFwdRawBuyRate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 600 }}>Wastage %</label>
-                    <input type="number" step="0.1" value={fwdRawWastage} onChange={(e) => setFwdRawWastage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
-                  </div>
-                </div>
+                {(() => {
+                  const totalRmCost = fwdRawRows.reduce((acc, r) => {
+                    const q = parseFloat(r.qty || '0') || 0;
+                    const rt = parseFloat(r.purchase_rate || '0') || 0;
+                    const w = parseFloat(r.wastage || '0') || 0;
+                    return acc + q * (1 + w / 100) * rt;
+                  }, 0);
+                  const ordQ = parseFloat(fwdQty || '0') || 0;
+                  const unitRmCost = ordQ > 0 ? totalRmCost / ordQ : 0;
+                  return (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed #f59e0b', fontSize: '12px', color: '#78350f', flexWrap: 'wrap', gap: '8px' }}>
+                      <span>
+                        Est. Total RM Cost: <strong>{symbol}{totalRmCost.toFixed(2)}</strong>
+                        {ordQ > 0 ? <> &bull; Per {fwdFinUnit}: <strong>{symbol}{unitRmCost.toFixed(2)}</strong></> : null}
+                      </span>
+                      {unitRmCost > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setFwdCostRate(unitRmCost.toFixed(2))}
+                          style={{ padding: '3px 8px', borderRadius: '4px', border: '1px solid #b45309', background: '#fff', color: '#b45309', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          Use as Mfg Cost Rate ({symbol}{unitRmCost.toFixed(2)})
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>

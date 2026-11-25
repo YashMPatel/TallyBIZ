@@ -565,7 +565,7 @@ function MainERPApp() {
   };
 
   const pendingApprovalsCount = 
-    invoices.filter(i => i.status !== 'Approved' && i.status !== 'Rejected').length + 
+    invoices.filter(i => i.status !== 'Approved' && i.status !== 'Rejected' && !String(i.invoice_number || '').toUpperCase().startsWith('PI-')).length + 
     purchases.filter(p => p.status !== 'Approved' && p.status !== 'Rejected').length;
 
   const handleSaveSupplier = async (e: FormEvent<HTMLFormElement>) => {
@@ -750,9 +750,10 @@ function MainERPApp() {
     };
 
     try {
+      const unitParam = activeUnitId && activeUnitId !== 'all' ? `?unit_id=${activeUnitId}` : '';
       const url = editingId 
-        ? `${API_BASE}/selling/invoices/${editingId}/` 
-        : `${API_BASE}/selling/invoices/`;
+        ? `${API_BASE}/selling/invoices/${editingId}/${unitParam}` 
+        : `${API_BASE}/selling/invoices/${unitParam}`;
       const method = editingId ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -1074,6 +1075,7 @@ function MainERPApp() {
 
           {activeTab === 'selling' && (activeUnitId === 'all' || unitsLoaded) && (
             <SellingTab
+                businessUnits={businessUnits}
               user={user}
               invoices={invoices}
               filteredInvoices={filteredInvoices}

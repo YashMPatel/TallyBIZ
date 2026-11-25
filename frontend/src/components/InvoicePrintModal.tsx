@@ -372,7 +372,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 <tr style={{ background: '#f1f5f9', borderTop: '1px solid #cbd5e1', borderBottom: '2px solid #cbd5e1' }}>
                   <th style={{ padding: '8px 8px', textAlign: 'left', width: '32px' }}>#</th>
                   <th style={{ padding: '8px 8px', textAlign: 'left' }}>Item Description</th>
-                  <th style={{ padding: '8px 8px', textAlign: 'right', width: '65px' }}>Qty</th>
+                  <th style={{ padding: '8px 8px', textAlign: 'right', width: '110px' }}>Qty</th>
                   <th style={{ padding: '8px 8px', textAlign: 'right', width: '90px' }}>Rate ({sym})</th>
                   <th style={{ padding: '8px 8px', textAlign: 'center', width: '55px' }}>Disc %</th>
                   <th style={{ padding: '8px 8px', textAlign: 'right', width: '110px' }}>Amount ({sym})</th>
@@ -384,6 +384,10 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                       const masterItem = itemsMaster.find((m) => m.id === itemRow.item);
                       const isFoc = (itemRow as any).is_foc;
                       const discPct = parseFloat((itemRow as any).discount_percentage || '0');
+                      const conv = Number((masterItem as any)?.conversion_factor || 0);
+                      const altUnit = String((masterItem as any)?.alt_unit || '').trim();
+                      const baseUnit = masterItem?.unit || (itemRow as any).billed_unit || 'Nos';
+                      const hasAlt = Boolean(altUnit && conv > 0 && altUnit.toLowerCase() !== baseUnit.toLowerCase());
 
                       return (
                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -395,6 +399,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                             <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
                               Code: {masterItem?.item_code || '-'} | {(invoice as any).invoice_type === 'JOB_WORK' ? 'SAC' : 'HSN'}: {(itemRow as any).hsn_code || ((invoice as any).invoice_type === 'JOB_WORK' ? '9988' : (masterItem as any)?.hsn_code || '-')} | Unit:{' '}
                               {(itemRow as any).billed_unit || masterItem?.unit || 'Nos'}
+                              {hasAlt ? ` | 1 ${baseUnit} = ${Number(conv.toFixed(4))} ${altUnit}` : ''}
                             </div>
                             {(itemRow as any).description && String((itemRow as any).description).includes('Dispatch') ? (
                               <div style={{ fontSize: '10px', color: '#0369a1', fontWeight: 600, marginTop: '4px', whiteSpace: 'pre-line', background: '#f0f9ff', padding: '4px 6px', borderRadius: '4px', borderLeft: '2px solid #0284c7' }}>
@@ -411,20 +416,21 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                               const pQty = Number(itemRow.quantity || 0);
                               const bUnit = (itemRow as any).billed_unit || masterItem?.unit || '';
                               const isAltBilled = bQty > 0 && Math.abs(bQty - pQty) > 0.0001;
-                              const conv = Number((masterItem as any)?.conversion_factor || 0);
                               if (isAltBilled) {
                                 return (
                                   <div>
-                                    <div>{bQty} {bUnit}</div>
-                                    <div style={{ fontSize: '10px', color: '#64748b' }}>({pQty} {masterItem?.unit})</div>
+                                    <div style={{ fontWeight: 600 }}>{bQty} {bUnit}</div>
+                                    <div style={{ fontSize: '10px', color: '#475569' }}>({Number(pQty.toFixed(3))} {masterItem?.unit})</div>
                                   </div>
                                 );
                               }
                               return (
                                 <div>
-                                  <div>{itemRow.quantity}</div>
-                                  {(masterItem as any)?.alt_unit && conv > 0 ? (
-                                    <div style={{ fontSize: '10px', color: '#64748b' }}>({(pQty * conv).toFixed(0)} {(masterItem as any).alt_unit})</div>
+                                  <div style={{ fontWeight: 600 }}>{itemRow.quantity} {baseUnit}</div>
+                                  {hasAlt ? (
+                                    <div style={{ fontSize: '10px', color: '#0369a1', fontWeight: 600 }}>
+                                      ({Number((pQty * conv).toFixed(3))} {altUnit})
+                                    </div>
                                   ) : null}
                                 </div>
                               );
@@ -451,6 +457,46 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                     })
                   : null}
               </tbody>
+              {invoiceItems.length > 0 && (() => {
+                const toKgFactor = (unitStr: string): number => {
+                  const u = unitStr.trim().toLowerCase();
+                  if (u === 'kg' || u === 'kgs' || u === 'kilogram' || u === 'kilograms') return 1;
+                  if (u === 'g' || u === 'gm' || u === 'gms' || u === 'gram' || u === 'grams') return 0.001;
+                  if (u === 'ton' || u === 'tons' || u === 'mt') return 1000;
+                  if (u === 'quintal' || u === 'qtl') return 100;
+                  return 0;
+                };
+                let totalWeightKg = 0;
+                invoiceItems.forEach((row) => {
+                  const mItem = itemsMaster.find((m) => m.id === row.item);
+                  const pQty = Number(row.quantity || 0);
+                  const bUnit = String(mItem?.unit || (row as any).billed_unit || '').trim();
+                  const baseKgMult = toKgFactor(bUnit);
+                  if (baseKgMult > 0) {
+                    totalWeightKg += pQty * baseKgMult;
+                    return;
+                  }
+                  const c = Number((mItem as any)?.conversion_factor || 0);
+                  const aUnit = String((mItem as any)?.alt_unit || '').trim();
+                  const altKgMult = toKgFactor(aUnit);
+                  if (altKgMult > 0 && c > 0) {
+                    totalWeightKg += pQty * c * altKgMult;
+                  }
+                });
+                if (totalWeightKg <= 0) return null;
+                return (
+                  <tfoot>
+                    <tr style={{ background: '#f8fafc', borderTop: '1.5px solid #cbd5e1', borderBottom: '1px solid #cbd5e1', fontSize: '11.5px' }}>
+                      <td colSpan={6} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 700, color: '#0f172a' }}>
+                        Total Net Weight:{' '}
+                        <span style={{ color: '#0369a1', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '2px 8px', borderRadius: '4px', marginLeft: '4px' }}>
+                          {Number(totalWeightKg.toFixed(3))} Kg
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                );
+              })()}
             </table>
           </div>
         </div>

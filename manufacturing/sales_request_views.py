@@ -128,6 +128,7 @@ class ProductionSalesRequestListCreateAPIView(APIView):
                 'selling_rate': float(snap.get('selling_rate') or (r.finished_item.selling_rate if r.finished_item else 0) or 0),
                 'cost_rate': float(snap.get('cost_rate') or (r.finished_item.standard_rate if r.finished_item else 0) or 0),
                 'raw_material': raw_info,
+                'raw_materials': list(snap.get('raw_materials') or ([raw_info] if raw_info else [])),
                 'bom_id': r.bom_id,
                 'bom_code': r.bom.bom_code if r.bom else '',
                 'requested_qty': float(r.requested_qty),
@@ -212,58 +213,94 @@ class ProductionSalesRequestListCreateAPIView(APIView):
         if not item_obj:
             return Response({'error': 'Please select or enter a Finished Product name.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        raw_qty = Decimal(str(data.get('raw_qty') or 0))
-        bom = None
-        raw_snapshot = {}
-        if (data.get('raw_item_id') or (data.get('raw_item_name') or '').strip()) and raw_qty > 0:
-            raw_unit = (data.get('raw_unit') or fin_unit or 'Nos').strip()
-            raw_hsn = (data.get('raw_hsn') or '').strip()
-            raw_purchase_rate = Decimal(str(data.get('raw_purchase_rate') or 0))
-            raw_wastage = min(Decimal('100.00'), max(Decimal('0.00'), Decimal(str(data.get('raw_wastage') or 0))))
+        raw_inputs = data.get('raw_materials')
+        if not isinstance(raw_inputs, list) or len(raw_inputs) == 0:
+            raw_inputs = [{
+                'raw_item_id': data.get('raw_item_id'),
+                'raw_item_name': data.get('raw_item_name') or '',
+                'raw_unit': data.get('raw_unit') or fin_unit or 'Nos',
+                'raw_hsn': data.get('raw_hsn') or '',
+                'raw_qty': data.get('raw_qty') or 0,
+                'raw_purchase_rate': data.get('raw_purchase_rate') or 0,
+                'raw_wastage': data.get('raw_wastage') or 0,
+            }]
 
-            raw_item_obj = _get_or_create_item(
+        resolved_rms = []
+        raw_list_snapshot = []
+        total_rm_cost = Decimal('0.00')
+        for rm_row in raw_inputs:
+            if not isinstance(rm_row, dict):
+                continue
+            r_qty = Decimal(str(rm_row.get('raw_qty') or 0))
+            if not (rm_row.get('raw_item_id') or (rm_row.get('raw_item_name') or '').strip()) or r_qty <= 0:
+                continue
+            r_unit = (rm_row.get('raw_unit') or fin_unit or 'Nos').strip()
+            r_hsn = (rm_row.get('raw_hsn') or '').strip()
+            r_rate = Decimal(str(rm_row.get('raw_purchase_rate') or 0))
+            r_wastage = min(Decimal('100.00'), max(Decimal('0.00'), Decimal(str(rm_row.get('raw_wastage') or 0))))
+
+            r_obj = _get_or_create_item(
                 comp,
-                item_id=data.get('raw_item_id'),
-                item_name=data.get('raw_item_name') or '',
+                item_id=rm_row.get('raw_item_id'),
+                item_name=rm_row.get('raw_item_name') or '',
                 category='Raw Material',
-                unit=raw_unit,
-                hsn_code=raw_hsn,
+                unit=r_unit,
+                hsn_code=r_hsn,
                 gst_rate=fin_gst,
-                cost_rate=raw_purchase_rate,
+                cost_rate=r_rate,
                 sell_rate=0,
             )
-            if raw_item_obj:
-                bcnt = BillOfMaterial.objects.filter(company=comp).count() + 1
+            if r_obj:
+                eff_rate = r_rate or Decimal(str(r_obj.standard_rate or 0))
+                total_rm_cost += r_qty * (Decimal('1') + r_wastage / Decimal('100')) * eff_rate
+                resolved_rms.append((r_obj, r_qty, r_wastage))
+                raw_list_snapshot.append({
+                    'raw_item_id': r_obj.id,
+                    'raw_item_name': r_obj.item_name,
+                    'raw_item_code': r_obj.item_code,
+                    'raw_unit': r_obj.unit,
+                    'raw_hsn': r_obj.hsn_code,
+                    'raw_qty': float(r_qty),
+                    'raw_purchase_rate': float(eff_rate),
+                    'raw_wastage': float(r_wastage),
+                })
+
+        bom = None
+        raw_snapshot = raw_list_snapshot[0] if raw_list_snapshot else {}
+        if resolved_rms:
+            bcnt = BillOfMaterial.objects.filter(company=comp).count() + 1
+            bcode = f"BOM-{bcnt:03d}"
+            while BillOfMaterial.objects.filter(company=comp, bom_code=bcode).exists():
+                bcnt += 1
                 bcode = f"BOM-{bcnt:03d}"
-                while BillOfMaterial.objects.filter(company=comp, bom_code=bcode).exists():
-                    bcnt += 1
-                    bcode = f"BOM-{bcnt:03d}"
-                bom = BillOfMaterial.objects.create(
-                    company=comp,
-                    bom_code=bcode,
-                    name=f"{item_obj.item_name} Recipe ({req_qty} {item_obj.unit})",
-                    finished_item=item_obj,
-                    output_qty=req_qty,
-                    labor_cost=Decimal(str(data.get('labor_cost') or 0)),
-                    overhead_cost=Decimal(str(data.get('overhead_cost') or 0)),
-                    is_active=True,
-                )
+            bom = BillOfMaterial.objects.create(
+                company=comp,
+                bom_code=bcode,
+                name=f"{item_obj.item_name} Recipe ({req_qty} {item_obj.unit})",
+                finished_item=item_obj,
+                output_qty=req_qty,
+                labor_cost=Decimal(str(data.get('labor_cost') or 0)),
+                overhead_cost=Decimal(str(data.get('overhead_cost') or 0)),
+                is_active=True,
+            )
+            merged_by_item = {}
+            for r_obj, r_qty, r_wastage in resolved_rms:
+                if r_obj.id in merged_by_item:
+                    merged_by_item[r_obj.id]['qty'] += r_qty
+                else:
+                    merged_by_item[r_obj.id] = {'obj': r_obj, 'qty': r_qty, 'wastage': r_wastage}
+            for entry in merged_by_item.values():
                 BOMComponent.objects.create(
                     bom=bom,
-                    raw_item=raw_item_obj,
-                    qty_required=raw_qty,
-                    wastage_percent=raw_wastage,
+                    raw_item=entry['obj'],
+                    qty_required=entry['qty'],
+                    wastage_percent=entry['wastage'],
                 )
-                raw_snapshot = {
-                    'raw_item_id': raw_item_obj.id,
-                    'raw_item_name': raw_item_obj.item_name,
-                    'raw_item_code': raw_item_obj.item_code,
-                    'raw_unit': raw_item_obj.unit,
-                    'raw_hsn': raw_item_obj.hsn_code,
-                    'raw_qty': float(raw_qty),
-                    'raw_purchase_rate': float(raw_purchase_rate or raw_item_obj.standard_rate or 0),
-                    'raw_wastage': float(raw_wastage),
-                }
+            if cost_rate <= 0 and total_rm_cost > 0 and req_qty > 0:
+                cost_rate = (total_rm_cost / req_qty).quantize(Decimal('0.01'))
+                if Decimal(str(item_obj.standard_rate or 0)) <= 0:
+                    item_obj.standard_rate = cost_rate
+                    item_obj.save(update_fields=['standard_rate'])
 
         if not bom:
             bom = BillOfMaterial.objects.filter(company=comp, finished_item=item_obj, is_active=True).first()
@@ -305,6 +342,7 @@ class ProductionSalesRequestListCreateAPIView(APIView):
                 'selling_rate': float(sell_rate or item_obj.selling_rate or 0),
                 'cost_rate': float(cost_rate or item_obj.standard_rate or 0),
                 'raw_material': raw_snapshot,
+                'raw_materials': raw_list_snapshot,
                 'delivery_schedule': [],
             },
             notes=(data.get('notes') or '').strip(),
@@ -363,39 +401,75 @@ class ProductionSalesRequestScheduleAPIView(APIView):
 
         rm_req_no = snap.get('rm_purchase_req_no')
         if request.data.get('request_rm_purchase') and not rm_req_no:
-            raw_info = snap.get('raw_material') or {}
-            if raw_info.get('raw_item_id') and float(raw_info.get('raw_qty') or 0) > 0:
+            rm_candidates = list(snap.get('raw_materials') or [])
+            if not rm_candidates and (snap.get('raw_material') or {}).get('raw_item_id'):
+                rm_candidates = [snap.get('raw_material')]
+            if not rm_candidates and req_obj.bom_id:
+                scale = (total_sched / req_obj.bom.output_qty) if req_obj.bom.output_qty > 0 else Decimal('1')
+                for bc in req_obj.bom.components.select_related('raw_item').all():
+                    rm_candidates.append({
+                        'raw_item_id': bc.raw_item_id,
+                        'raw_item_name': bc.raw_item.item_name,
+                        'raw_item_code': bc.raw_item.item_code,
+                        'raw_unit': bc.raw_item.unit,
+                        'raw_qty': float((bc.qty_required * scale).quantize(Decimal('0.01'))),
+                        'raw_purchase_rate': float(bc.raw_item.standard_rate or 0),
+                        'raw_wastage': float(bc.wastage_percent or 0),
+                    })
+
+            short_lines = []
+            short_titles = []
+            short_notes = []
+            total_short_amt = Decimal('0.00')
+            for raw_info in rm_candidates:
+                if not isinstance(raw_info, dict):
+                    continue
+                r_id = raw_info.get('raw_item_id')
+                if not r_id or float(raw_info.get('raw_qty') or 0) <= 0:
+                    continue
                 r_qty = (Decimal(str(raw_info['raw_qty'])) * (Decimal('1') + Decimal(str(raw_info.get('raw_wastage') or 0)) / Decimal('100'))).quantize(Decimal('0.01'))
-                avail_rm = _unit_item_stock(comp, req_obj.mfg_unit, raw_info['raw_item_id'])
-                short_rm = max(Decimal('0.00'), r_qty - avail_rm).quantize(Decimal('0.01'))
+                avail_mfg = _unit_item_stock(comp, req_obj.mfg_unit, r_id)
+                item_rec = Item.objects.filter(company=comp, id=r_id).first()
+                avail_total = max(avail_mfg, Decimal(str(item_rec.current_stock or 0))) if item_rec else avail_mfg
+                short_rm = max(Decimal('0.00'), r_qty - avail_total).quantize(Decimal('0.01'))
                 if short_rm > 0:
-                    r_rate = Decimal(str(raw_info.get('raw_purchase_rate') or 0))
-                    dcnt = DepartmentRequest.objects.filter(company=comp).count() + 1
-                    rm_req_no = f"REQ-{dcnt:04d}"
-                    trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
-                    DepartmentRequest.objects.create(
-                        company=comp,
-                        from_unit=req_obj.mfg_unit,
-                        to_unit=trading_u,
-                        request_no=rm_req_no,
-                        posting_date=timezone.now().date(),
-                        request_type='MATERIAL_PURCHASE',
-                        title=f"Raw Material Shortfall for {req_obj.sales_ref or req_obj.request_no}: {raw_info.get('raw_item_name')} ({short_rm} {raw_info.get('raw_unit', '')})",
-                        details=f"Customer: {req_obj.customer_name or '-'} | Needed: {r_qty}, Available in Mfg: {avail_rm}, Shortfall: {short_rm}",
-                        line_items=[{
-                            'item_id': raw_info['raw_item_id'],
-                            'item_code': raw_info.get('raw_item_code', ''),
-                            'item_name': raw_info.get('raw_item_name', ''),
-                            'qty': float(short_rm),
-                            'unit': raw_info.get('raw_unit', 'Nos'),
-                            'rate': float(r_rate),
-                            'amount': float((short_rm * r_rate).quantize(Decimal('0.01'))),
-                        }],
-                        amount=(short_rm * r_rate).quantize(Decimal('0.01')),
-                        status='OPEN',
-                        requested_by=request.headers.get('X-Username') or 'Manufacturing Manager',
-                    )
-                    snap['rm_purchase_req_no'] = rm_req_no
+                    r_rate = Decimal(str(raw_info.get('raw_purchase_rate') or (item_rec.standard_rate if item_rec else 0) or 0))
+                    line_amt = (short_rm * r_rate).quantize(Decimal('0.01'))
+                    total_short_amt += line_amt
+                    r_unit = raw_info.get('raw_unit') or (item_rec.unit if item_rec else 'Nos')
+                    r_name = raw_info.get('raw_item_name') or (item_rec.item_name if item_rec else f'Item #{r_id}')
+                    r_code = raw_info.get('raw_item_code') or (item_rec.item_code if item_rec else '')
+                    short_titles.append(f"{r_name} ({short_rm} {r_unit})")
+                    short_notes.append(f"{r_name}: Needed {r_qty}, Stock {avail_total}, Short {short_rm} {r_unit}")
+                    short_lines.append({
+                        'item_id': r_id,
+                        'item_code': r_code,
+                        'item_name': r_name,
+                        'qty': float(short_rm),
+                        'unit': r_unit,
+                        'rate': float(r_rate),
+                        'amount': float(line_amt),
+                    })
+
+            if short_lines:
+                dcnt = DepartmentRequest.objects.filter(company=comp).count() + 1
+                rm_req_no = f"REQ-{dcnt:04d}"
+                trading_u = BusinessUnit.objects.filter(company=comp, unit_type='TRADING').first() or req_obj.from_unit
+                DepartmentRequest.objects.create(
+                    company=comp,
+                    from_unit=req_obj.mfg_unit,
+                    to_unit=trading_u,
+                    request_no=rm_req_no,
+                    posting_date=timezone.now().date(),
+                    request_type='MATERIAL_PURCHASE',
+                    title=f"Raw Material Shortfall for {req_obj.sales_ref or req_obj.request_no}: {', '.join(short_titles)}",
+                    details=f"Customer: {req_obj.customer_name or '-'} | " + " ; ".join(short_notes),
+                    line_items=short_lines,
+                    amount=total_short_amt.quantize(Decimal('0.01')),
+                    status='OPEN',
+                    requested_by=request.headers.get('X-Username') or 'Manufacturing Manager',
+                )
+                snap['rm_purchase_req_no'] = rm_req_no
 
         snap['delivery_schedule'] = cleaned
         req_obj.mrp_snapshot = snap
@@ -740,7 +814,7 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
                 tax_amount=tax_amount,
                 adjustment=adj,
                 grand_total=grand_total,
-                status='Draft',
+                status='Pending Approval',
             )
             for line in lines_to_invoice:
                 SalesInvoiceItem.objects.create(
@@ -757,9 +831,6 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
                     is_foc=line.is_foc,
                     amount=line.amount,
                 )
-
-            # Auto-approve & post stock, FIFO StockBatches, and GL immediately!
-            approve_and_post_sales_invoice(inv)
 
             target_batch['invoiced'] = True
             target_batch['invoice_no'] = inv_no
@@ -828,7 +899,7 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             tax_amount=tax_amount,
             adjustment=Decimal('0.00'),
             grand_total=grand_total,
-            status='Draft',
+            status='Pending Approval',
         )
         SalesInvoiceItem.objects.create(
             invoice=inv,
@@ -844,9 +915,6 @@ class ProductionSalesRequestCreateInvoiceAPIView(APIView):
             amount=net_total,
             hsn_code='9988' if is_jw else (req_obj.finished_item.hsn_code or ''),
         )
-
-        # Auto-approve & post stock, FIFO StockBatches, and GL immediately!
-        approve_and_post_sales_invoice(inv)
 
         target_batch['invoiced'] = True
         target_batch['invoice_no'] = inv_no

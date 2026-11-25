@@ -154,8 +154,8 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
             {showStock && <th style={{ padding: '8px 10px', textAlign: 'center', width: '105px' }}>Stock</th>}
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '185px', minWidth: '175px' }}>Qty (Base / Alt) *</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '125px', minWidth: '120px' }}>Rate ({currencySymbol}) *</th>
-            <th style={{ padding: '8px 10px', textAlign: 'center', width: '50px' }}>FOC</th>
-            <th style={{ padding: '8px 10px', textAlign: 'center', width: '60px' }}>Disc %</th>
+            <th style={{ padding: '8px 6px', textAlign: 'center', width: '48px', minWidth: '48px' }}>FOC</th>
+            <th style={{ padding: '8px 6px', textAlign: 'center', width: '82px', minWidth: '82px' }}>Disc %</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '130px', minWidth: '125px' }}>Amount ({currencySymbol})</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '40px' }}></th>
           </tr>
@@ -201,7 +201,7 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     required
                     value={line.item_id}
                     onChange={(e) => handleLineChange(idx, 'item_id', e.target.value)}
-                    style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', maxWidth: '280px', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                   >
                     <option value="">-- Choose Item --</option>
                     {items.filter((opt) => {
@@ -337,15 +337,16 @@ export const LineItemsEditor: React.FC<LineItemsEditorProps> = ({
                     onChange={(e) => handleLineChange(idx, 'is_foc', e.target.checked)}
                   />
                 </td>
-                <td style={{ padding: '6px 10px' }}>
+                <td style={{ padding: '6px 6px', textAlign: 'center' }}>
                   <input
                     type="number"
+                    step="0.01"
                     min="0"
                     max="100"
                     disabled={line.is_foc}
-                    value={line.discount_percentage || '0'}
+                    value={line.discount_percentage ?? '0'}
                     onChange={(e) => handleLineChange(idx, 'discount_percentage', e.target.value)}
-                    style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', textAlign: 'center' }}
+                    style={{ width: '100%', minWidth: '64px', boxSizing: 'border-box', padding: '6px 4px', borderRadius: '4px', border: '1px solid #cbd5e1', textAlign: 'center', background: line.is_foc ? '#f1f5f9' : '#fff' }}
                   />
                 </td>
                 <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 'bold' }}>

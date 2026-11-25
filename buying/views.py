@@ -53,6 +53,7 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
     invoice.items.all().delete()
 
     affected_items = set()
+    item_rates = {}
 
     for it in items_data:
         it_val = it.get('item') or it.get('item_id') or it.get('description') or 'Item'
@@ -141,13 +142,16 @@ def sync_purchase_to_inventory_and_gl(invoice, items_data, comp):
             batch_no=batch_obj.batch_no
         )
         affected_items.add(item_obj)
+        if not is_foc and rate > Decimal('0.00'):
+            item_rates[item_obj.id] = rate
 
     # 5. Dynamic stock recalculation from actual ledger movements
     for itm in affected_items:
         tot = StockLedgerEntry.objects.filter(item=itm, company=comp).aggregate(s=Sum('actual_qty'))['s'] or Decimal('0.00')
         itm.current_stock = tot
-        if rate > Decimal('0.00'):
-            itm.standard_rate = rate
+        line_rate = item_rates.get(itm.id)
+        if line_rate and line_rate > Decimal('0.00'):
+            itm.standard_rate = line_rate
         itm.company = comp
         itm.save()
 
